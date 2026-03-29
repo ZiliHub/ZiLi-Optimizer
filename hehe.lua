@@ -41,437 +41,458 @@ end
 -- 2. MODULE PACKAGING (All logic packed into one file)
 -- =====================================================================
 
--- 📦 MODULE: Config/ConfigManager
+-- ╔══════════════════════════════════════════════════════════════════╗
+-- ║  📦 MODULE: Config/ConfigManager  (GET BETTER OUT · Zili Hub)   ║
+-- ║  Self-describing: auto-discovers all Value/Toggle keys from      ║
+-- ║  TogglesData — no manual VALUE_KEYS list needed ever again.      ║
+-- ╚══════════════════════════════════════════════════════════════════╝
 __modules["Config/ConfigManager"] = function()
     local ConfigManager = {}
-    local HttpService  = game:GetService("HttpService")
-    local TweenService = game:GetService("TweenService")
-    local ConfigFolder = "Zili_Hub"
+    local HttpService   = game:GetService("HttpService")
+    local TweenService  = game:GetService("TweenService")
+    local ConfigFolder  = "Zili_Hub"
 
     if isfolder and not isfolder(ConfigFolder) then makefolder(ConfigFolder) end
 
-    -- =====================================================================
-    -- Keys có .Value cần lưu (dropdown / textbox)
-    -- =====================================================================
-    local VALUE_KEYS = {
-        -- Fishing page
-        "Config_SelectBait",
-        "Config_SellFish",
-        "Config_BuyItems",
-        "Config_CraftBait",
-        "Config_FruitRarity",
-        "Config_FruitSelect",
-        "Config_Webhook",
-        -- Lobby page
-        "Config_TargetRace",
-        "Config_SelectedHub",
-        "Config_SelectedSea",
-        "Config_PSCode",
-    }
+    -- ══════════════════════════════════════════════════════════════════
+    -- CONSTANTS  (must match MainHub palette exactly)
+    -- ══════════════════════════════════════════════════════════════════
+    local BG5   = Color3.fromRGB(8,   9,  20)
+    local GOLDD = Color3.fromRGB(50,  37,  12)
+    local GOLD  = Color3.fromRGB(201, 148, 58)
+    local GOLD2 = Color3.fromRGB(240, 190, 104)
+    local GOLD3 = Color3.fromRGB(122,  90,  30)
+    local GREEN = Color3.fromRGB(56,  190, 110)
+    local TEXT3 = Color3.fromRGB(80,   75, 100)
 
+    -- ══════════════════════════════════════════════════════════════════
+    -- NOTIFICATION
+    -- ══════════════════════════════════════════════════════════════════
+    local function ShowNotify(titleText, contentText)
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "ZiliConfigNotify"
+        sg.ResetOnSpawn = false
+        sg.Parent = gethui and gethui() or game:GetService("CoreGui")
+
+        local notif = Instance.new("Frame", sg)
+        notif.Size         = UDim2.new(0, 270, 0, 68)
+        notif.Position     = UDim2.new(1, 290, 1, -88)
+        notif.AnchorPoint  = Vector2.new(1, 1)
+        notif.BackgroundColor3 = Color3.fromRGB(10, 11, 24)
+        notif.BorderSizePixel  = 0
+        Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 9)
+
+        local accent = Instance.new("Frame", notif)
+        accent.Size             = UDim2.new(0, 3, 0.7, 0)
+        accent.Position         = UDim2.new(0, 0, 0.15, 0)
+        accent.BackgroundColor3 = GOLD
+        accent.BorderSizePixel  = 0
+        Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 2)
+
+        local stroke = Instance.new("UIStroke", notif)
+        stroke.Color       = GOLD
+        stroke.Thickness   = 1.5
+        stroke.Transparency = 0.2
+
+        local topBar = Instance.new("Frame", notif)
+        topBar.Size             = UDim2.new(1, 0, 0, 26)
+        topBar.BackgroundColor3 = Color3.fromRGB(14, 15, 32)
+        topBar.BorderSizePixel  = 0
+        Instance.new("UICorner", topBar).CornerRadius = UDim.new(0, 9)
+        local topBarExt = Instance.new("Frame", topBar)
+        topBarExt.Size             = UDim2.new(1, 0, 0, 9)
+        topBarExt.Position         = UDim2.new(0, 0, 1, -9)
+        topBarExt.BackgroundColor3 = Color3.fromRGB(14, 15, 32)
+        topBarExt.BorderSizePixel  = 0
+
+        local title = Instance.new("TextLabel", notif)
+        title.Size                = UDim2.new(1, -22, 0, 22)
+        title.Position            = UDim2.new(0, 14, 0, 3)
+        title.BackgroundTransparency = 1
+        title.Text                = titleText
+        title.TextColor3          = GOLD2
+        title.Font                = Enum.Font.GothamBold
+        title.TextSize            = 13
+        title.TextXAlignment      = Enum.TextXAlignment.Left
+
+        local content = Instance.new("TextLabel", notif)
+        content.Size              = UDim2.new(1, -22, 0, 36)
+        content.Position          = UDim2.new(0, 14, 0, 28)
+        content.BackgroundTransparency = 1
+        content.Text              = contentText
+        content.TextColor3        = Color3.fromRGB(237, 232, 218)
+        content.Font              = Enum.Font.GothamSemibold
+        content.TextSize          = 12
+        content.TextXAlignment    = Enum.TextXAlignment.Left
+        content.TextWrapped       = true
+
+        TweenService:Create(notif, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+            {Position = UDim2.new(1, -14, 1, -88)}):Play()
+
+        task.delay(3, function()
+            local fade = TweenService:Create(notif,
+                TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                {Position = UDim2.new(1, 290, 1, -88), BackgroundTransparency = 1})
+            fade:Play()
+            fade.Completed:Connect(function() sg:Destroy() end)
+        end)
+    end
+
+    -- ══════════════════════════════════════════════════════════════════
+    -- HELPERS
+    -- ══════════════════════════════════════════════════════════════════
+    local function DeepCopy(v)
+        if type(v) == "table" then
+            local t = {}
+            for k, val in pairs(v) do t[k] = DeepCopy(val) end
+            return t
+        end
+        return v
+    end
+
+    local function Tween(obj, t, props)
+        TweenService:Create(obj, TweenInfo.new(t, Enum.EasingStyle.Quad), props):Play()
+    end
+
+    -- Apply toggle visual (Btn, Strk, Thumb) and optional MasterBar
+    local function ApplyToggleVisual(data, on)
+        if data.Btn  then Tween(data.Btn,  0.2, {BackgroundColor3 = on and GOLDD or BG5}) end
+        if data.Strk then Tween(data.Strk, 0.2, {Color            = on and GOLD2 or GOLD3}) end
+        if data.Thumb then
+            Tween(data.Thumb, 0.2, {
+                BackgroundColor3 = on and GOLD2 or TEXT3,
+                Position         = on and UDim2.new(1,-20,0.5,-8) or UDim2.new(0,4,0.5,-8),
+            })
+        end
+        if data.MasterBar then
+            Tween(data.MasterBar, 0.35, {BackgroundColor3 = on and GREEN or GOLD})
+        end
+        -- Stats-style Auto Add button
+        if data.Btn and data.Btn:IsA("TextButton") and data.Btn.Text ~= "" then
+            -- This is a stat add button, not a pill toggle
+            if on then
+                data.Btn.BackgroundColor3 = Color3.fromRGB(120, 90, 0)
+                data.Btn.TextColor3       = Color3.fromRGB(10, 8, 2)
+                data.Btn.Text             = "● Adding..."
+            else
+                Tween(data.Btn, 0.2, {BackgroundColor3 = Color3.fromRGB(8, 9, 20)})
+                data.Btn.TextColor3 = GOLD2
+                data.Btn.Text       = "Auto Add"
+            end
+            if data.Strk then Tween(data.Strk, 0.2, {Color = on and GOLD2 or GOLD3}) end
+        end
+    end
+
+    -- ══════════════════════════════════════════════════════════════════
+    -- GET CURRENT SETTINGS  (self-describing: scans TogglesData)
+    -- ══════════════════════════════════════════════════════════════════
+    local function GetCurrentSettings(AutoStatsData, TogglesData)
+        local settings = { Stats = {}, Toggles = {}, Values = {} }
+
+        -- Stats
+        if AutoStatsData then
+            for stat, data in pairs(AutoStatsData) do
+                local cap = data.Cap or 0
+                if data.Box and data.Box.Text ~= "" then
+                    cap = tonumber(data.Box.Text) or cap
+                end
+                settings.Stats[stat] = { Active = data.Active or false, Cap = cap }
+            end
+        end
+
+        -- Scan ALL keys in TogglesData
+        if TogglesData then
+            for key, data in pairs(TogglesData) do
+                -- Values: anything that has a .Value field
+                if data.Value ~= nil then
+                    local v = DeepCopy(data.Value)
+                    -- Sanitise multi-select tables: keep only true entries
+                    if type(v) == "table" then
+                        local clean = {}
+                        for k, val in pairs(v) do if val == true then clean[k] = true end end
+                        v = clean
+                    end
+                    settings.Values[key] = v
+                end
+                -- Toggles: anything that has .Active (and is not purely a value entry)
+                if data.Active ~= nil then
+                    settings.Toggles[key] = data.Active == true
+                end
+            end
+        end
+
+        return settings
+    end
+
+    -- ══════════════════════════════════════════════════════════════════
+    -- APPLY SETTINGS  (restore from file)
+    -- ══════════════════════════════════════════════════════════════════
+    local function ApplySettings(settings, AutoStatsData, TogglesData)
+
+        -- ── 1. Stats ─────────────────────────────────────────────────
+        if settings.Stats and AutoStatsData then
+            for statName, saved in pairs(settings.Stats) do
+                local data = AutoStatsData[statName]
+                if not data then continue end
+                data.Active = saved.Active or false
+                data.Cap    = saved.Cap    or 0
+                if data.Box then
+                    data.Box.Text = data.Cap > 0 and tostring(data.Cap) or ""
+                end
+                ApplyToggleVisual(data, data.Active)
+                if data.Callback then
+                    pcall(function() data.Callback(data.Active) end)
+                end
+            end
+        end
+
+        -- ── 2. Values FIRST (so callbacks can read correct Value) ────
+        if settings.Values and TogglesData then
+            for key, saved in pairs(settings.Values) do
+                local data = TogglesData[key]
+                if not data then continue end
+
+                data.Value = DeepCopy(saved)
+
+                -- Update HeadBtn text
+                if data.HeadBtn then
+                    if type(saved) == "table" then
+                        local ct = 0
+                        for _, v in pairs(saved) do if v then ct = ct + 1 end end
+                        pcall(function()
+                            data.HeadBtn.Text = ct > 0 and (ct .. " Selected") or "Select..."
+                        end)
+                    else
+                        pcall(function()
+                            data.HeadBtn.Text = (saved ~= nil and tostring(saved) ~= "")
+                                and tostring(saved) or "Select..."
+                        end)
+                    end
+                end
+
+                -- Fire callback so downstream modules update
+                if data.Callback then
+                    pcall(function() data.Callback(data.Value) end)
+                end
+            end
+        end
+
+        -- ── 3. Toggles LAST (modules may depend on Values) ───────────
+        if settings.Toggles and TogglesData then
+            for toggleKey, savedState in pairs(settings.Toggles) do
+                local data = TogglesData[toggleKey]
+                if not data then continue end
+
+                data.Active = savedState == true
+                ApplyToggleVisual(data, data.Active)
+
+                if data.Callback then
+                    pcall(function() data.Callback(data.Active) end)
+                end
+            end
+        end
+    end
+
+    -- ══════════════════════════════════════════════════════════════════
+    -- SYNC DROPDOWN / SPECIAL UI  (after load)
+    -- ══════════════════════════════════════════════════════════════════
+    local function SyncSpecialUI(TogglesData)
+        if not TogglesData then return end
+        -- Any entry with UpdateFn (race buttons, hub buttons, etc.)
+        for _, data in pairs(TogglesData) do
+            if data.UpdateFn then
+                pcall(function() data.UpdateFn() end)
+            end
+        end
+    end
+
+    -- ══════════════════════════════════════════════════════════════════
+    -- FILE LIST  (refresh config list in UI)
+    -- ══════════════════════════════════════════════════════════════════
+    local function Refresh(UI)
+        if not UI.ConfigList then return end
+        for _, child in ipairs(UI.ConfigList:GetChildren()) do
+            if child:IsA("TextButton") then child:Destroy() end
+        end
+
+        local filterText = (UI.SearchBox and UI.SearchBox.Text:lower()) or ""
+        local files = {}
+        pcall(function() files = listfiles(ConfigFolder) end)
+
+        for _, filePath in ipairs(files) do
+            pcall(function()
+                local fileName = filePath:match("([^/\\]+)%.json$")
+                if not fileName then return end
+                if filterText ~= "" and not fileName:lower():find(filterText, 1, true) then return end
+
+                local btn = Instance.new("TextButton", UI.ConfigList)
+                btn.Size             = UDim2.new(1, -10, 0, 35)
+                btn.BackgroundColor3 = Color3.fromRGB(30, 28, 52)
+                btn.Text             = "  📄  " .. fileName
+                btn.TextColor3       = Color3.fromRGB(210, 200, 180)
+                btn.Font             = Enum.Font.GothamSemibold
+                btn.TextSize         = 13
+                btn.ZIndex           = 15
+                btn.TextXAlignment   = Enum.TextXAlignment.Left
+                Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+                Instance.new("UIStroke", btn).Color        = Color3.fromRGB(50, 40, 15)
+                Instance.new("UIStroke", btn).Thickness    = 1
+
+                btn.MouseEnter:Connect(function()
+                    TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3=Color3.fromRGB(45,42,70)}):Play()
+                end)
+                btn.MouseLeave:Connect(function()
+                    if UI.ConfigNameBox and UI.ConfigNameBox.Text ~= fileName then
+                        TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundColor3=Color3.fromRGB(30,28,52)}):Play()
+                    end
+                end)
+
+                btn.MouseButton1Click:Connect(function()
+                    if UI.ConfigNameBox then UI.ConfigNameBox.Text = fileName end
+                    -- highlight selected
+                    for _, c in ipairs(UI.ConfigList:GetChildren()) do
+                        if c:IsA("TextButton") then
+                            c.BackgroundColor3 = Color3.fromRGB(30, 28, 52)
+                        end
+                    end
+                    btn.BackgroundColor3 = Color3.fromRGB(55, 42, 12)
+                end)
+            end)
+        end
+    end
+
+    -- ══════════════════════════════════════════════════════════════════
+    -- INIT  (called from MainHub after all UI is built)
+    -- ══════════════════════════════════════════════════════════════════
     function ConfigManager.Init(UI, AutoStatsData, TogglesData)
 
-        -- ── Notification ──────────────────────────────────────────────
-        local function ShowNotify(titleText, contentText)
-            local sg = Instance.new("ScreenGui")
-            sg.Name = "ZiliConfigNotify"
-            if gethui then sg.Parent = gethui() else sg.Parent = game:GetService("CoreGui") end
-
-            local notif = Instance.new("Frame", sg)
-            notif.Size         = UDim2.new(0, 270, 0, 68)
-            notif.Position     = UDim2.new(1, 290, 1, -88)
-            notif.AnchorPoint  = Vector2.new(1, 1)
-            notif.BackgroundColor3 = Color3.fromRGB(10, 11, 24)   -- BG1
-            notif.BorderSizePixel  = 0
-            Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 9)
-
-            -- Gold left accent bar
-            local accent = Instance.new("Frame", notif)
-            accent.Size              = UDim2.new(0, 3, 0.7, 0)
-            accent.Position          = UDim2.new(0, 0, 0.15, 0)
-            accent.BackgroundColor3  = Color3.fromRGB(201, 148, 58)  -- GOLD
-            accent.BorderSizePixel   = 0
-            Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 2)
-
-            -- Outer border stroke
-            local stroke = Instance.new("UIStroke", notif)
-            stroke.Color       = Color3.fromRGB(201, 148, 58)  -- GOLD
-            stroke.Thickness   = 1.5
-            stroke.Transparency = 0.2
-
-            -- Top-left subtle glow bg strip
-            local topBar = Instance.new("Frame", notif)
-            topBar.Size              = UDim2.new(1, 0, 0, 26)
-            topBar.BackgroundColor3  = Color3.fromRGB(14, 15, 32)  -- BG2
-            topBar.BorderSizePixel   = 0
-            Instance.new("UICorner", topBar).CornerRadius = UDim.new(0, 9)
-            -- extend bottom corners of topBar
-            local topBarExt = Instance.new("Frame", topBar)
-            topBarExt.Size             = UDim2.new(1, 0, 0, 9)
-            topBarExt.Position         = UDim2.new(0, 0, 1, -9)
-            topBarExt.BackgroundColor3 = Color3.fromRGB(14, 15, 32)
-            topBarExt.BorderSizePixel  = 0
-
-            local title = Instance.new("TextLabel", notif)
-            title.Size                = UDim2.new(1, -22, 0, 22)
-            title.Position            = UDim2.new(0, 14, 0, 3)
-            title.BackgroundTransparency = 1
-            title.Text                = titleText
-            title.TextColor3          = Color3.fromRGB(240, 190, 104)  -- GOLD2
-            title.Font                = Enum.Font.GothamBold
-            title.TextSize            = 13
-            title.TextXAlignment      = Enum.TextXAlignment.Left
-
-            local content = Instance.new("TextLabel", notif)
-            content.Size              = UDim2.new(1, -22, 0, 36)
-            content.Position          = UDim2.new(0, 14, 0, 28)
-            content.BackgroundTransparency = 1
-            content.Text              = contentText
-            content.TextColor3        = Color3.fromRGB(237, 232, 218)  -- TEXT1
-            content.Font              = Enum.Font.GothamSemibold
-            content.TextSize          = 12
-            content.TextXAlignment    = Enum.TextXAlignment.Left
-            content.TextWrapped       = true
-
-            -- Slide in from right
-            TweenService:Create(notif, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-                {Position = UDim2.new(1, -14, 1, -88)}):Play()
-
-            task.delay(3, function()
-                local fade = TweenService:Create(notif,
-                    TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                    {Position = UDim2.new(1, 290, 1, -88), BackgroundTransparency = 1})
-                fade:Play()
-                fade.Completed:Connect(function() sg:Destroy() end)
+        -- Search box filter
+        if UI.SearchBox then
+            UI.SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+                Refresh(UI)
             end)
         end
 
-        -- ── Deep-copy helper ──────────────────────────────────────────
-        local function DeepCopy(v)
-            if type(v) == "table" then
-                local t = {}
-                for k, val in pairs(v) do t[k] = DeepCopy(val) end
-                return t
-            end
-            return v
-        end
-
-        -- ── Save ──────────────────────────────────────────────────────
-        local function GetCurrentSettings()
-            local settings = { Stats = {}, Toggles = {}, Values = {} }
-
-            -- Stats (AutoStatsData)
-            if AutoStatsData then
-                for stat, data in pairs(AutoStatsData) do
-                    local currentCap = data.Cap
-                    if data.Box and data.Box.Text ~= "" then
-                        currentCap = tonumber(data.Box.Text) or currentCap
-                    end
-                    settings.Stats[stat] = { Active = data.Active, Cap = currentCap }
-                end
-            end
-
-            -- Toggles  Active state
-            if TogglesData then
-                for key, data in pairs(TogglesData) do
-                    settings.Toggles[key] = data.Active or false
-                end
-            end
-
-            -- Values (dropdown / textbox) – lưu riêng để dễ restore
-            if TogglesData then
-                for _, key in ipairs(VALUE_KEYS) do
-                    local data = TogglesData[key]
-                    if data and data.Value ~= nil then
-                        local v = DeepCopy(data.Value)
-                        -- sanitise multi-select: bỏ các key false/nil, chỉ giữ true
-                        if type(v) == "table" then
-                            local clean = {}
-                            for k, val in pairs(v) do if val == true then clean[k] = true end end
-                            v = clean
-                        end
-                        settings.Values[key] = v
-                    end
-                end
-            end
-
-            return settings
-        end
-
-        -- ── Restore ───────────────────────────────────────────────────
-        -- Pill toggle exact colors (must match MainHub constants)
-        local BG5   = Color3.fromRGB(8, 9, 20)
-        local GOLDD = Color3.fromRGB(50, 37, 12)
-        local GOLD2 = Color3.fromRGB(240, 190, 104)
-        local GOLD3 = Color3.fromRGB(122, 90, 30)
-        local TEXT3 = Color3.fromRGB(80, 75, 100)
-        local GREEN = Color3.fromRGB(56, 190, 110)
-        local GOLD  = Color3.fromRGB(201, 148, 58)
-
-        local function ApplySettings(settings)
-
-            -- ── Stats ─────────────────────────────────────────────────
-            if settings.Stats and AutoStatsData then
-                for statName, savedData in pairs(settings.Stats) do
-                    local data = AutoStatsData[statName]
-                    if data then
-                        data.Active = savedData.Active or false
-                        data.Cap    = savedData.Cap    or 0
-                        if data.Box then
-                            data.Box.Text = data.Cap > 0 and tostring(data.Cap) or ""
-                        end
-                        -- Colors matched exactly to addStats.lua logic
-                        local tColor   = data.Active and Color3.fromRGB(120,90,0)   or BG5
-                        local sColor   = data.Active and GOLD2                       or GOLD3
-                        local txtColor = data.Active and Color3.fromRGB(10,8,2)     or GOLD2
-                        if data.Btn then
-                            TweenService:Create(data.Btn, TweenInfo.new(0.2), {BackgroundColor3=tColor}):Play()
-                            data.Btn.TextColor3 = txtColor
-                            data.Btn.Text = data.Active and "● Adding..." or "Auto Add"
-                        end
-                        if data.Strk then
-                            TweenService:Create(data.Strk, TweenInfo.new(0.2), {Color=sColor}):Play()
-                        end
-                    end
-                end
-            end
-
-            -- ── Values: restore TRƯỚC Toggles ────────────────────────
-            if settings.Values and TogglesData then
-                for _, key in ipairs(VALUE_KEYS) do
-                    local saved = settings.Values[key]
-                    local data  = TogglesData[key]
-                    if saved ~= nil and data then
-                        data.Value = DeepCopy(saved)
-                        -- Callback cập nhật UI (dropdown badge, buy items checkmarks, etc.)
-                        if data.Callback then
-                            pcall(function() data.Callback(data.Value) end)
-                        end
-                    end
-                end
-            end
-
-            -- ── Toggles: restore Active + visual + callback ───────────
-            if settings.Toggles and TogglesData then
-                for toggleName, savedState in pairs(settings.Toggles) do
-                    local data = TogglesData[toggleName]
-                    if not data then continue end
-
-                    -- Always apply (không skip khi giá trị giống nhau vì UI chưa đúng)
-                    data.Active = savedState == true
-
-                    local on = data.Active
-
-                    -- Pill toggle: Btn, Strk, Thumb
-                    if data.Btn then
-                        TweenService:Create(data.Btn, TweenInfo.new(0.2),
-                            {BackgroundColor3 = on and GOLDD or BG5}):Play()
-                    end
-                    if data.Strk then
-                        TweenService:Create(data.Strk, TweenInfo.new(0.2),
-                            {Color = on and GOLD2 or GOLD3}):Play()
-                    end
-                    if data.Thumb then
-                        TweenService:Create(data.Thumb, TweenInfo.new(0.2), {
-                            BackgroundColor3 = on and GOLD2 or TEXT3,
-                            Position         = on and UDim2.new(1,-20,0.5,-8) or UDim2.new(0,4,0.5,-8),
-                        }):Play()
-                    end
-
-                    -- Special: AutoFishMerchant có MasterBar riêng
-                    if data.MasterBar then
-                        TweenService:Create(data.MasterBar, TweenInfo.new(0.35),
-                            {BackgroundColor3 = on and GREEN or GOLD}):Play()
-                    end
-
-                    -- Callback (start/stop module, etc.) — chỉ gọi nếu cần
-                    if data.Callback then
-                        pcall(function() data.Callback(on) end)
-                    end
-                end
-            end
-            -- ── Lobby Values: restore race, hub, sea, PS code ────────────
-            if settings.Values and TogglesData then
-                -- TargetRace
-                local raceVal = settings.Values["Config_TargetRace"]
-                if type(raceVal) == "string" and raceVal ~= "" then
-                    getgenv().TargetRace = raceVal
-                    -- visual update handled by caller (SyncDropdownUI)
-                end
-                -- SelectedHub
-                local hubVal = settings.Values["Config_SelectedHub"]
-                if type(hubVal) == "string" and hubVal ~= "" then
-                    getgenv().SelectedHub = hubVal
-                end
-                -- SelectedSea
-                local seaVal = settings.Values["Config_SelectedSea"]
-                if type(seaVal) == "string" and seaVal ~= "" then
-                    getgenv().SelectedSea = seaVal
-                end
-                -- PSCode
-                local psVal = settings.Values["Config_PSCode"]
-                if type(psVal) == "string" then
-                    getgenv().PSCode = psVal
-                    -- sync textbox if present via TogglesData ref
-                    local psData = TogglesData["Config_PSCode"]
-                    if psData and psData.HeadBtn then
-                        psData.HeadBtn.Text = psVal
-                    end
-                end
-            end
-        end
-        local function SyncDropdownUI()
-            if not TogglesData then return end
-            for _, key in ipairs(VALUE_KEYS) do
-                local data = TogglesData[key]
-                if not data or data.Value == nil then continue end
-                if type(data.Value) == "table" then
-                    if data.Callback then
-                        pcall(function() data.Callback(data.Value) end)
-                    elseif data.HeadBtn then
-                        local ct = 0
-                        for _, v in pairs(data.Value) do if v then ct = ct + 1 end end
-                        data.HeadBtn.Text = ct > 0 and (ct .. " Selected") or "Select..."
-                    end
-                else
-                    if data.HeadBtn then
-                        data.HeadBtn.Text = tostring(data.Value ~= "" and data.Value or "Select...")
-                    end
-                end
-            end
-
-            -- ── Lobby: Race buttons ────────────────────────────────────
-            pcall(function()
-                local rData = TogglesData["Config_TargetRace"]
-                if rData and rData.UpdateFn then rData.UpdateFn() end
-            end)
-            -- ── Lobby: Hub buttons ─────────────────────────────────────
-            pcall(function()
-                local hData = TogglesData["Config_SelectedHub"]
-                if hData and hData.UpdateFn then hData.UpdateFn() end
-            end)
-            -- ── Lobby: Sea toggles ─────────────────────────────────────
-            pcall(function()
-                local sea = getgenv().SelectedSea or "Sea 1"
-                for _, kv in ipairs({{"Sea1Toggle", sea=="Sea 1"}, {"Sea2Toggle", sea=="Sea 2"}}) do
-                    local key, on = kv[1], kv[2]
-                    local d = TogglesData[key]
-                    if not d then continue end
-                    d.Active = on
-                    if d.Btn  then TweenService:Create(d.Btn,  TweenInfo.new(0.2), {BackgroundColor3=on and GOLDD or BG5}):Play() end
-                    if d.Strk then TweenService:Create(d.Strk, TweenInfo.new(0.2), {Color=on and GOLD2 or GOLD3}):Play() end
-                    if d.Thumb then TweenService:Create(d.Thumb, TweenInfo.new(0.2), {
-                        BackgroundColor3=on and GOLD2 or TEXT3,
-                        Position=on and UDim2.new(1,-20,0.5,-8) or UDim2.new(0,4,0.5,-8),
-                    }):Play() end
-                end
-            end)
-        end
-
-        -- ── Refresh config list ───────────────────────────────────────
-        local function Refresh()
-            if not UI.ConfigList then return end
-            for _, child in ipairs(UI.ConfigList:GetChildren()) do
-                if child:IsA("TextButton") then child:Destroy() end
-            end
-            local files = {}
-            pcall(function() files = listfiles(ConfigFolder) end)
-            for _, filePath in ipairs(files) do
-                pcall(function()
-                    local fileName = filePath:match("([^/\\]+)%.json$")
-                    if not fileName then return end
-                    local btn = Instance.new("TextButton", UI.ConfigList)
-                    btn.Size = UDim2.new(1, -10, 0, 35)
-                    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-                    btn.Text = " 📄 " .. fileName .. ".json"
-                    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-                    btn.Font = Enum.Font.GothamSemibold; btn.TextSize = 14; btn.ZIndex = 15
-                    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-                    btn.MouseButton1Click:Connect(function()
-                        if UI.ConfigNameBox then UI.ConfigNameBox.Text = fileName end
-                        for _, c in ipairs(UI.ConfigList:GetChildren()) do
-                            if c:IsA("TextButton") then c.BackgroundColor3 = Color3.fromRGB(45, 45, 45) end
-                        end
-                        btn.BackgroundColor3 = Color3.fromRGB(100, 160, 225)
-                    end)
-                end)
-            end
-        end
-
-        -- ── Buttons ───────────────────────────────────────────────────
+        -- ── CREATE ───────────────────────────────────────────────────
         UI.CreateBtn.MouseButton1Click:Connect(function()
             if not UI.ConfigNameBox or UI.ConfigNameBox.Text == "" then return end
             local name = UI.ConfigNameBox.Text
-            writefile(ConfigFolder.."/"..name..".json", HttpService:JSONEncode(GetCurrentSettings()))
-            Refresh()
-            ShowNotify("✅ Create Config", "Created: " .. name)
+            local data = GetCurrentSettings(AutoStatsData, TogglesData)
+            local ok, err = pcall(function()
+                writefile(ConfigFolder .. "/" .. name .. ".json", HttpService:JSONEncode(data))
+            end)
+            if ok then
+                Refresh(UI)
+                ShowNotify("✅ Config Created", "Saved as: " .. name)
+            else
+                ShowNotify("❌ Create Failed", tostring(err))
+            end
         end)
 
+        -- ── SAVE ─────────────────────────────────────────────────────
         UI.SaveBtn.MouseButton1Click:Connect(function()
             if not UI.ConfigNameBox or UI.ConfigNameBox.Text == "" then return end
             local name = UI.ConfigNameBox.Text
-            writefile(ConfigFolder.."/"..name..".json", HttpService:JSONEncode(GetCurrentSettings()))
-            ShowNotify("💾 Save Config", "Saved: " .. name)
+            local path = ConfigFolder .. "/" .. name .. ".json"
+            if not isfile(path) then
+                ShowNotify("⚠ Not Found", "Config not found. Use Create first.")
+                return
+            end
+            local data = GetCurrentSettings(AutoStatsData, TogglesData)
+            local ok, err = pcall(function()
+                writefile(path, HttpService:JSONEncode(data))
+            end)
+            if ok then
+                ShowNotify("💾 Config Saved", "Updated: " .. name)
+            else
+                ShowNotify("❌ Save Failed", tostring(err))
+            end
         end)
 
+        -- ── LOAD ─────────────────────────────────────────────────────
         UI.LoadBtn.MouseButton1Click:Connect(function()
             if not UI.ConfigNameBox or UI.ConfigNameBox.Text == "" then return end
-            local path = ConfigFolder.."/"..UI.ConfigNameBox.Text..".json"
-            if isfile(path) then
-                local ok, decoded = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
-                if ok then
-                    ApplySettings(decoded)
-                    SyncDropdownUI()
-                    ShowNotify("📂 Load Config", "Loaded: " .. UI.ConfigNameBox.Text)
-                end
+            local path = ConfigFolder .. "/" .. UI.ConfigNameBox.Text .. ".json"
+            if not isfile(path) then
+                ShowNotify("⚠ File Not Found", UI.ConfigNameBox.Text .. ".json not found.")
+                return
             end
+            local ok, decoded = pcall(function()
+                return HttpService:JSONDecode(readfile(path))
+            end)
+            if not ok or type(decoded) ~= "table" then
+                ShowNotify("❌ Load Failed", "Could not parse config file.")
+                return
+            end
+            ApplySettings(decoded, AutoStatsData, TogglesData)
+            SyncSpecialUI(TogglesData)
+            ShowNotify("📂 Config Loaded", "Loaded: " .. UI.ConfigNameBox.Text)
         end)
 
+        -- ── DELETE ───────────────────────────────────────────────────
         UI.DeleteBtn.MouseButton1Click:Connect(function()
             if not UI.ConfigNameBox or UI.ConfigNameBox.Text == "" then return end
-            local path = ConfigFolder.."/"..UI.ConfigNameBox.Text..".json"
+            local path = ConfigFolder .. "/" .. UI.ConfigNameBox.Text .. ".json"
             if isfile(path) then
-                delfile(path); Refresh()
-                ShowNotify("🗑 Delete Config", "Deleted: " .. UI.ConfigNameBox.Text)
+                pcall(function() delfile(path) end)
+                Refresh(UI)
+                ShowNotify("🗑 Config Deleted", "Removed: " .. UI.ConfigNameBox.Text)
                 UI.ConfigNameBox.Text = ""
+            else
+                ShowNotify("⚠ Not Found", "Nothing to delete.")
             end
         end)
 
-        UI.RefreshBtn.MouseButton1Click:Connect(Refresh)
+        -- ── REFRESH ──────────────────────────────────────────────────
+        UI.RefreshBtn.MouseButton1Click:Connect(function()
+            Refresh(UI)
+            ShowNotify("🔄 Refreshed", "Config list updated.")
+        end)
 
+        -- ── SET AUTO LOAD ─────────────────────────────────────────────
         if UI.SetAutoLoadBtn then
             UI.SetAutoLoadBtn.MouseButton1Click:Connect(function()
                 if not UI.ConfigNameBox or UI.ConfigNameBox.Text == "" then return end
                 local name = UI.ConfigNameBox.Text
-                writefile(ConfigFolder.."/autoload.txt", name)
-                ShowNotify("⭐ Auto Load Set", "Will auto load: " .. name)
+                if not isfile(ConfigFolder .. "/" .. name .. ".json") then
+                    ShowNotify("⚠ Not Found", "Save config first before setting auto load.")
+                    return
+                end
+                pcall(function() writefile(ConfigFolder .. "/autoload.txt", name) end)
+                ShowNotify("⭐ Auto Load Set", "Will auto-load: " .. name)
             end)
         end
 
-        -- ── Auto load on start ────────────────────────────────────────
-        local autoLoadPath = ConfigFolder.."/autoload.txt"
+        -- ── AUTO LOAD ON START ────────────────────────────────────────
+        local autoLoadPath = ConfigFolder .. "/autoload.txt"
         if isfile(autoLoadPath) then
-            local ok, autoLoadName = pcall(function() return readfile(autoLoadPath) end)
-            if ok and autoLoadName and autoLoadName ~= "" then
-                local path = ConfigFolder.."/"..autoLoadName..".json"
+            local ok, autoName = pcall(function() return readfile(autoLoadPath) end)
+            if ok and autoName and autoName ~= "" then
+                -- strip any trailing newline/whitespace
+                autoName = autoName:match("^%s*(.-)%s*$")
+                local path = ConfigFolder .. "/" .. autoName .. ".json"
                 if isfile(path) then
-                    local ok2, decoded = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
-                    if ok2 then
-                        ApplySettings(decoded)
-                        SyncDropdownUI()
-                        if UI.ConfigNameBox then UI.ConfigNameBox.Text = autoLoadName end
-                        ShowNotify("⚡ Auto Loaded", "Config: " .. autoLoadName)
+                    local ok2, decoded = pcall(function()
+                        return HttpService:JSONDecode(readfile(path))
+                    end)
+                    if ok2 and type(decoded) == "table" then
+                        -- Slight delay so all UI is fully built before restoring
+                        task.delay(0.5, function()
+                            ApplySettings(decoded, AutoStatsData, TogglesData)
+                            SyncSpecialUI(TogglesData)
+                            if UI.ConfigNameBox then UI.ConfigNameBox.Text = autoName end
+                            ShowNotify("⚡ Auto Loaded", "Config: " .. autoName)
+                        end)
                     end
                 end
             end
         end
 
-        Refresh()
+        Refresh(UI)
     end
 
     return ConfigManager
 end
-
 
 -- 📦 MODULE: IslandData.lua
 __modules["Island/IslandData"] = function()
@@ -504,204 +525,189 @@ __modules["Island/IslandData"] = function()
     return IslandData
 end
 
--- 📦 MODULE: BypassAnticheat.lua (ULTIMATE EDITION + EXECUTOR TRACKER)
+-- 📦 MODULE: GhostApexBypass.lua (GHOST TIER + STRICT EXECUTOR GUARD)
 __modules["BYPASS ANTICHEAT"] = function()
     local Bypass = {}
-    local cloneref = cloneref or function(obj) return obj end
 
-    local Players = cloneref(game:GetService("Players"))
-    local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
-    local VirtualUser = cloneref(game:GetService("VirtualUser"))
+    -- Ultra-fast local references (Zero Global Environment Footprint)
+    local hookmetamethod = hookmetamethod
+    local getnamecallmethod = getnamecallmethod
+    local newcclosure = newcclosure
+    local type, typeof = type, typeof
+    local math_random = math.random
+    local tick, os_clock = tick, os.clock
+    local pcall = pcall
+    local table_insert = table.insert
+    local table_concat = table.concat
+
+    local game = game
+    local RunService = game:GetService("RunService")
+    local Players = game:GetService("Players")
     local LocalPlayer = Players.LocalPlayer
 
     -- ==========================================
-    -- 0. EXECUTOR TRACKER & CAPABILITY SCANNER
+    -- 0. EXECUTOR INTEGRITY CHECK (THE GATEKEEPER)
     -- ==========================================
-    local function VerifyExecutorCapabilities()
-        -- Track the executor's name
+    local function VerifyExecutor()
+        -- Nhận diện tên Executor hiện tại
         local executorName = "Unknown Executor"
         if type(identifyexecutor) == "function" then
             local success, name = pcall(identifyexecutor)
-            if success and name then
-                executorName = name
+            if success and name then executorName = name end
+        end
+
+        -- Danh sách các hàm tàng hình bắt buộc phải có để chạy Ghost Tier
+        local requiredFunctions = {
+            {name = "hookmetamethod", func = hookmetamethod},
+            {name = "getnamecallmethod", func = getnamecallmethod},
+            {name = "newcclosure", func = newcclosure}
+        }
+        
+        local missing = {}
+        for _, item in ipairs(requiredFunctions) do
+            if type(item.func) ~= "function" then
+                table_insert(missing, item.name)
             end
         end
 
-        -- Scan for required high-tier bypassing functions
-        local missingFunctions = {}
-        if type(hookmetamethod) ~= "function" then table.insert(missingFunctions, "hookmetamethod") end
-        if type(hookfunction) ~= "function" then table.insert(missingFunctions, "hookfunction") end
-        if type(getrawmetatable) ~= "function" then table.insert(missingFunctions, "getrawmetatable") end
-        if type(setreadonly) ~= "function" then table.insert(missingFunctions, "setreadonly") end
-        if type(getnamecallmethod) ~= "function" then table.insert(missingFunctions, "getnamecallmethod") end
-        if type(newcclosure) ~= "function" then table.insert(missingFunctions, "newcclosure") end
-
-        -- If the executor lacks power, kick the player immediately
-        if #missingFunctions > 0 then
-            local missingList = table.concat(missingFunctions, "\n- ")
-            local kickMessage = string.format(
-                "\n[ZILI SECURITY: FATAL ERROR]\n\nYour executor [%s] is absolutely terrible and incapable of running this script!\n\nIt failed the Anti-Cheat Bypass capability check because it is missing the following critical functions:\n- %s\n\nPlease get a real executor to prevent your account from being banned.",
-                executorName,
-                missingList
+        -- Nếu thiếu hàm -> Chặn đứng quá trình inject và Kick ngay lập tức
+        if #missing > 0 then
+            local kickMsg = string.format(
+                "\n[ZILI SECURITY] - BYPASS FAILED!\n\n" ..
+                "Executor: %s\n" ..
+                "Status: INCOMPATIBLE / UNSAFE\n" ..
+                executorName
             )
             
-            warn("[ZILI SECURITY] Kicked player due to garbage executor: " .. executorName)
-            LocalPlayer:Kick(kickMessage)
+            warn("[ZILI SECURITY] Bypass failed. Unsupported executor: " .. executorName)
+            LocalPlayer:Kick(kickMsg)
             
-            -- Yield the script forever to prevent any further execution
+            -- Đóng băng luồng (Thread) vĩnh viễn, không cho bất kỳ code nào bên dưới chạy
             task.wait(9e9) 
+            return false
         end
-        
-        print(string.format("[ZILI SECURITY] Executor Verified: [%s]. All bypass functions are supported!", executorName))
+
+        return true
     end
 
     -- ==========================================
-    -- DEEP SCAN HELPER FUNCTION
+    -- 1. BEHAVIORAL DRIFT (Session-Based State Machine)
     -- ==========================================
-    -- Recursive Deep Scan: Detects malicious keywords in tables without causing Stack Overflows
-    local function isSuspiciousData(data, visited)
-        visited = visited or {}
+    local SessionStart = os_clock()
+    
+    local function GetSessionDrift(baseValue)
+        local sessionTime = os_clock() - SessionStart
+        local driftFactor = 0
+
+        if sessionTime < 300 then
+            driftFactor = math_random(-50, 0) / 100 
+        elseif sessionTime < 1200 then
+            driftFactor = math_random(-120, -40) / 100
+        else
+            driftFactor = math_random(-250, -80) / 100
+        end
+
+        return baseValue + driftFactor
+    end
+
+    -- ==========================================
+    -- 2. MULTI-BASELINE MODEL & TRUST-WEIGHTING (Anti-Poisoning)
+    -- ==========================================
+    local RemoteProfiles = {}
+
+    local function AllocateBaseline(args)
+        if typeof(args[1]) ~= "table" then return nil end
+        local baseline = {}
+        if args[1].WalkSpeed then baseline.WalkSpeed = args[1].WalkSpeed end
+        if args[1].JumpPower then baseline.JumpPower = args[1].JumpPower end
+        return baseline
+    end
+
+    local function EvaluateTrust(profile, currentTime, args)
+        local dt = currentTime - profile.lastCall
+        if dt < 0.05 then return false end 
         
-        if type(data) == "table" then
-            if visited[data] then return false end
-            visited[data] = true
-            
-            for key, value in pairs(data) do
-                if isSuspiciousData(key, visited) or isSuspiciousData(value, visited) then
-                    return true
-                end
-            end
-        elseif type(data) == "string" then
-            local lowerStr = string.lower(data)
-            local blacklist = {
-                "hack", "exploit", "banned", "illegal", 
-                "shadowbanned", "cheat", "injector"
-            }
-            
-            for _, word in ipairs(blacklist) do
-                if string.find(lowerStr, word) then
-                    return true
-                end
-            end
+        local newBaseline = AllocateBaseline(args)
+        if newBaseline then
+            profile.baselines[profile.baselineIndex] = newBaseline
+            profile.baselineIndex = (profile.baselineIndex % 5) + 1
+            profile.trustWeight = math.min(profile.trustWeight + 1, 100)
+            return true
         end
         return false
     end
 
-    function Bypass.Init()
-        -- Step 0: Check if the executor is trash before doing anything else
-        VerifyExecutorCapabilities()
+    -- ==========================================
+    -- 3. ASYNC QUEUE SYSTEM (Zero-Yield Routing)
+    -- ==========================================
+    local AsyncQueue = {}
 
-        -- ==========================================
-        -- 1. ENHANCED ANTI-AFK & STAMINA SPOOFER
-        -- ==========================================
-        
-        -- Priority 1: Disable Idled connection if supported by executor
-        pcall(function()
-            for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
-                conn:Disable()
+    RunService.Heartbeat:Connect(function(deltaTime)
+        for i = #AsyncQueue, 1, -1 do
+            local taskObj = AsyncQueue[i]
+            taskObj.timer = taskObj.timer - deltaTime
+            
+            if taskObj.timer <= 0 then
+                taskObj.remote:FireServer(unpack(taskObj.args))
+                table.remove(AsyncQueue, i)
             end
-        end)
-        
-        -- Priority 2: VirtualUser fallback
-        LocalPlayer.Idled:Connect(function()
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new())
-        end)
-
-        local function PreventSitting(character)
-        local humanoid = character:WaitForChild("Humanoid", 5)
-        if humanoid then
-            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-            if humanoid.Sit then humanoid.Sit = false; humanoid.Jump = true end
         end
-    end
-    if LocalPlayer.Character then PreventSitting(LocalPlayer.Character) end
-    LocalPlayer.CharacterAdded:Connect(PreventSitting)
+    end)
 
-        -- ==========================================
-        -- 2. DIRECT FUNCTION HOOKS (KICK/BAN)
-        -- ==========================================
-        
-        local oldKick
-        oldKick = hookfunction(LocalPlayer.Kick, newcclosure(function(self, ...)
-            warn("[ZILI SECURITY] Blocked direct Kick() attempt from the client!")
-            return nil
-        end))
+    -- ==========================================
+    -- 4. THE ZERO-YIELD HOOK
+    -- ==========================================
+    function Bypass.Init()
+        -- 🔒 LỚP BẢO VỆ VÒNG NGOÀI (Check Executor)
+        if not VerifyExecutor() then return end
 
-        -- ==========================================
-        -- 3. METAMETHOD HOOKS (__namecall)
-        -- ==========================================
-        local gm = getrawmetatable(game)
-        setreadonly(gm, false)
-        
         local oldNamecall
         oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
             local method = getnamecallmethod()
-            if not self then return oldNamecall(self, ...) end
+            if method ~= "FireServer" then return oldNamecall(self, ...) end
 
-            -- 🛑 A. Prevent Namecall Kicks
-            if self == LocalPlayer and (method == "Kick" or method == "kick") then
-                warn("[ZILI SECURITY] Blocked Namecall Kick() attempt!")
-                return nil 
+            local args = {...}
+            local currentTime = os_clock()
+
+            if not RemoteProfiles[self] then
+                RemoteProfiles[self] = {
+                    baselines = {},
+                    baselineIndex = 1,
+                    lastCall = 0,
+                    trustWeight = 0,
+                    isTargeted = false
+                }
             end
 
-            -- 🛑 B. Block game from tagging the player as Banned/Flagged
-            if self == LocalPlayer and method == "SetAttribute" then
-                local args = {...}
-                if type(args[1]) == "string" then
-                    local attr = string.lower(args[1])
-                    if attr == "banned" or attr == "kick" or attr == "flagged" or string.find(attr, "shadowbanned") then
-                        warn("[ZILI SECURITY] Blocked SetAttribute ban tag!")
-                        return nil 
-                    end
-                end
-            end
+            local profile = RemoteProfiles[self]
+            EvaluateTrust(profile, currentTime, args)
+            profile.lastCall = currentTime
 
-            -- 🕵️ C. Intercept Remote Invocations (Deep Scan payload)
-            if method == "FireServer" or method == "InvokeServer" then
-                local name = tostring(self.Name)
-
-                -- Allow ping requests to bypass server heartbeat checks
-                if name == "pingClient" then
-                    return oldNamecall(self, ...)
-                end
-
-                -- Deep scan arguments for malicious AntiCheat logs
-                local args = {...}
-                if isSuspiciousData(args) then
-                    warn("[ZILI SECURITY] Intercepted and blocked malicious Remote payload via Namecall: " .. name)
+            -- Phân tích Payload bất thường
+            if profile.trustWeight > 10 and typeof(args[1]) == "table" and args[1].WalkSpeed then
+                profile.isTargeted = true
+                
+                if args[1].WalkSpeed > 20 then
+                    local sample = profile.baselines[math_random(1, #profile.baselines)] or {WalkSpeed = 16}
+                    local driftedSpeed = GetSessionDrift(sample.WalkSpeed or 16)
+                    
+                    args[1].WalkSpeed = driftedSpeed
+                    
+                    local dynamicJitter = (math_random(20, 80) / 1000) 
+                    table_insert(AsyncQueue, {
+                        remote = self,
+                        args = args,
+                        timer = dynamicJitter
+                    })
+                    
                     return nil
                 end
             end
 
             return oldNamecall(self, ...)
         end))
-        setreadonly(gm, true)
 
-        -- ==========================================
-        -- 4. LOW-LEVEL FIRESERVER HOOK (OPTIMIZED)
-        -- ==========================================
-        local RemoteEvent = Instance.new("RemoteEvent")
-        local oldFireServer
-        
-        oldFireServer = hookfunction(RemoteEvent.FireServer, newcclosure(function(self, ...)
-            if not self then return oldFireServer(self, ...) end
-            
-            local name = tostring(self.Name)
-            if name == "pingClient" then
-                return oldFireServer(self, ...)
-            end
-
-            -- Final check layer using Deep Scan
-            local args = {...}
-            if isSuspiciousData(args) then
-                warn("[ZILI SECURITY] Intercepted malicious FireServer call: " .. name)
-                return nil
-            end
-
-            return oldFireServer(self, ...)
-        end))
-
+        -- Đã đổi dòng thông báo theo đúng yêu cầu của bác
         print("[ZILI SECURITY] Anti-Cheat Bypass Initialized Successfully !!!")
     end
 
@@ -714,6 +720,8 @@ __modules["Island/TWEEN TO ISLAND"] = function()
     local Players = game:GetService("Players")
     local RunService = game:GetService("RunService")
     local Workspace = game:GetService("Workspace")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local VirtualUser = game:GetService("VirtualUser")
 
     local LocalPlayer = Players.LocalPlayer
     local MAX_SPEED = 90
@@ -727,6 +735,52 @@ __modules["Island/TWEEN TO ISLAND"] = function()
     local VEC_ZERO = Vector3.new(0, 0, 0)
     local OFFSET_FAKEFLOOR = CFrame.new(0, -3.05, 0)
 
+    -- =====================================================================
+    -- STAMINA SPOOF (chỉ chạy khi đang tween)
+    -- =====================================================================
+    local Events   = ReplicatedStorage:WaitForChild("Events", 5)
+    local TakeStam = Events and Events:WaitForChild("takestam", 5)
+
+    local isSpoofingStamina = false
+    local function StartStaminaSpoof()
+        if isSpoofingStamina then return end
+        isSpoofingStamina = true
+        task.spawn(function()
+            while isSpoofingStamina and task.wait(0.05) do
+                if TakeStam and TakeStam.Parent then
+                    pcall(function() TakeStam:FireServer(0.545, "dash") end)
+                else break end
+            end
+        end)
+    end
+    local function StopStaminaSpoof()
+        isSpoofingStamina = false
+    end
+
+    -- =====================================================================
+    -- ANTI-AFK & ANTI-SIT
+    -- =====================================================================
+    pcall(function()
+        for _, conn in pairs(getconnections(LocalPlayer.Idled)) do conn:Disable() end
+    end)
+    if _G.AntiAfkConnection then _G.AntiAfkConnection:Disconnect() end
+    _G.AntiAfkConnection = LocalPlayer.Idled:Connect(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+
+    local function PreventSitting(character)
+        local humanoid = character:WaitForChild("Humanoid", 5)
+        if humanoid then
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+            if humanoid.Sit then humanoid.Sit = false; humanoid.Jump = true end
+        end
+    end
+    if LocalPlayer.Character then PreventSitting(LocalPlayer.Character) end
+    LocalPlayer.CharacterAdded:Connect(PreventSitting)
+
+    -- =====================================================================
+
     local function getRoot()
         local char = LocalPlayer.Character
         if char and char:FindFirstChild("HumanoidRootPart") then
@@ -737,6 +791,7 @@ __modules["Island/TWEEN TO ISLAND"] = function()
 
     function Tween.Stop()
         Tween.IsTeleporting = false
+        StopStaminaSpoof() -- 🛑 Dừng spoof khi stop tween
         if Tween.MoveConn then Tween.MoveConn:Disconnect(); Tween.MoveConn = nil end
         if Tween.NoclipConn then Tween.NoclipConn:Disconnect(); Tween.NoclipConn = nil end
 
@@ -753,6 +808,7 @@ __modules["Island/TWEEN TO ISLAND"] = function()
     function Tween.Start(targetData)
         Tween.Stop()
         Tween.IsTeleporting = true
+        StartStaminaSpoof() -- ▶️ Bắt đầu spoof khi start tween
         
         Tween.NoclipConn = RunService.Stepped:Connect(function()
             if Tween.IsTeleporting and LocalPlayer.Character then
@@ -868,9 +924,6 @@ __modules["Island/TWEEN TO ISLAND"] = function()
                     task.spawn(function()
                         local waited = 0
                         
-                        -- ==========================================================
-                        -- LOGIC 1: CỔNG RA ĐẢO NGƯỜI CÁ (Xoay mặt -> Đi tới lọt qua cổng)
-                        -- ==========================================================
                         if stepData.isFishmanExit then
                             root.CFrame = CFrame.lookAt(root.Position, targetPos)
                             task.wait(0.1)
@@ -886,9 +939,6 @@ __modules["Island/TWEEN TO ISLAND"] = function()
                                 waited = waited + 0.15
                             end
 
-                        -- ==========================================================
-                        -- LOGIC 2: CỔNG VÀO HOẶC PORTAL (Nhích qua lại 1 stud để lấy va chạm)
-                        -- ==========================================================
                         elseif stepData.isPortal or stepData.isFishmanIn then
                             local toggle = 1 
                             while waited < 20 do
@@ -905,9 +955,6 @@ __modules["Island/TWEEN TO ISLAND"] = function()
                             end
                             task.wait(1.5)
 
-                        -- ==========================================================
-                        -- LOGIC 3: ĐIỂM ĐẾN BÌNH THƯỜNG (Đứng im tại tâm)
-                        -- ==========================================================
                         else
                             root.CFrame = CFrame.new(targetPos.X, targetPos.Y, targetPos.Z)
                             if Tween.FakeFloor then Tween.FakeFloor.CFrame = root.CFrame * OFFSET_FAKEFLOOR end
@@ -1640,13 +1687,14 @@ __modules["Farm/AutoFarmLevel"] = function()
     return isLvlFarmOn
 end
 
--- 📦 MODULE: AutoGetBuso.lua (NHẢY THẲNG TỚI QUEST - GIỮ NGUYÊN HOÀN TOÀN LOGIC CỦA FEN)
+-- 📦 MODULE: AutoGetBuso.lua
 __modules["Farm/AutoGetBuso"] = function()
     local isBusoFarmOn = {}
     local Players = game:GetService("Players")
     local RunService = game:GetService("RunService")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local VirtualInputManager = game:GetService("VirtualInputManager") 
+    local VirtualUser = game:GetService("VirtualUser")
     local Workspace = game:GetService("Workspace")
     local Player = Players.LocalPlayer
 
@@ -1654,23 +1702,22 @@ __modules["Farm/AutoGetBuso"] = function()
     local AttackHandler = nil
 
     local QuestFunc = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("NPCInteractions"):WaitForChild("QuestFunctions"))
-    -- Đã vứt TweenToIsland để không bị dính cái lỗi cắm đầu xuống biển Y=7.33 nữa
 
     _G.BusoFarm = false
 
     -- ================= CÀI ĐẶT TỌA ĐỘ VÀ THÔNG SỐ =================
     local Zou_Spawn_Pos = Vector3.new(-3121.05, 11.73, -5256.59) 
-
     local Kori_Center = Vector3.new(-4441.97, 56.48, -2949.36)
     local ShellTown_Center = Vector3.new(-1337.18, 4.12, -5025.98)
-    
+    local Fishman_Portal = Vector3.new(8585.12, -2138.84, -17087.38) -- Cổng thoát đảo Người Cá
+
     local SearchRadius = 350 
     local HoverHeight = 10.2 
     local MoveSpeed = 90    
     local GatherWaitTime = 1.5 
 
     local TargetMobName = "Yeti" 
-    local QuestNPC_Pos =  Vector3.new(-4245.19, 169.48, -2990.06)
+    local QuestNPC_Pos = Vector3.new(-4245.19, 169.48, -2990.06)
     local QuestName = "Ray" 
 
     -- ================= BIẾN TRẠNG THÁI =================
@@ -1685,10 +1732,55 @@ __modules["Farm/AutoGetBuso"] = function()
     local HasTakenQuest = false
     local HasSetZouSpawn = false
     local QuestFinished = false
+    local IsExitingFishman = false -- Đang wiggle cổng thoát
 
     local CurrentTargetMob = nil 
     local WaitUntil = 0 
     local LastHoverPos = nil
+
+    -- =====================================================================
+    -- STAMINA SPOOF
+    -- =====================================================================
+    local Events   = ReplicatedStorage:WaitForChild("Events", 5)
+    local TakeStam = Events and Events:WaitForChild("takestam", 5)
+
+    local isSpoofingStamina = false
+    local function StartStaminaSpoof()
+        if isSpoofingStamina then return end
+        isSpoofingStamina = true
+        task.spawn(function()
+            while isSpoofingStamina and task.wait(0.05) do
+                if TakeStam and TakeStam.Parent then
+                    pcall(function() TakeStam:FireServer(0.545, "dash") end)
+                else break end
+            end
+        end)
+    end
+    local function StopStaminaSpoof() isSpoofingStamina = false end
+
+    -- =====================================================================
+    -- ANTI-AFK & ANTI-SIT
+    -- =====================================================================
+    pcall(function()
+        for _, conn in pairs(getconnections(Player.Idled)) do conn:Disable() end
+    end)
+    if _G.AntiAfkConnection then _G.AntiAfkConnection:Disconnect() end
+    _G.AntiAfkConnection = Player.Idled:Connect(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+
+    local function PreventSitting(character)
+        local humanoid = character:WaitForChild("Humanoid", 5)
+        if humanoid then
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+            if humanoid.Sit then humanoid.Sit = false; humanoid.Jump = true end
+        end
+    end
+    if Player.Character then PreventSitting(Player.Character) end
+    Player.CharacterAdded:Connect(PreventSitting)
+
+    -- =====================================================================
 
     local function UnequipWeapons()
         pcall(function()
@@ -1885,6 +1977,40 @@ __modules["Farm/AutoGetBuso"] = function()
                     LastQuestCheck = tick(); CurrentlyHasQuest = CheckQuestStatus()
                 end
 
+                -- ================= [PHASE 0]: THOÁT ĐẢO NGƯỜI CÁ =================
+                if root.Position.Y < -1000 then
+                    StopAttacking(); UnequipWeapons()
+                    local distToPortal = (root.Position - Fishman_Portal).Magnitude
+
+                    if distToPortal > 20 then
+                        -- Còn xa cổng, bay thẳng tới
+                        IsExitingFishman = false
+                        TargetCFrame = CFrame.new(Fishman_Portal)
+                    elseif not IsExitingFishman then
+                        -- Đã đến gần cổng, wiggle để kích hoạt teleport
+                        IsExitingFishman = true
+                        TargetCFrame = nil
+
+                        task.spawn(function()
+                            local toggle = 1
+                            local waited = 0
+                            while waited < 10 and _G.BusoFarm and root and root.Parent and root.Position.Y < -1000 do
+                                root.CFrame = CFrame.new(
+                                    Fishman_Portal.X + toggle,
+                                    Fishman_Portal.Y,
+                                    Fishman_Portal.Z + toggle
+                                )
+                                root.Velocity = Vector3.new(0, 0, 0)
+                                toggle = toggle * -1
+                                task.wait(0.3)
+                                waited = waited + 0.3
+                            end
+                            IsExitingFishman = false
+                        end)
+                    end
+                    return -- Chờ qua cổng mới xử lý tiếp
+                end
+
                 -- ================= [PHASE POST-QUEST]: VỀ SHELL TOWN =================
                 if QuestFinished then
                     local SetSpawnCoords = ShellTown_Center
@@ -1906,7 +2032,7 @@ __modules["Farm/AutoGetBuso"] = function()
                     
                     if distToShellTown > 100 then
                         StopAttacking(); UnequipWeapons()
-                        TargetCFrame = CFrame.new(SetSpawnCoords) -- BAY THẲNG
+                        TargetCFrame = CFrame.new(SetSpawnCoords)
                         return
                     else
                         StopAttacking(); UnequipWeapons()
@@ -2011,7 +2137,7 @@ __modules["Farm/AutoGetBuso"] = function()
                     
                     if distToZou > 100 then
                         StopAttacking(); UnequipWeapons()
-                        TargetCFrame = CFrame.new(SetSpawnCoords) -- BAY THẲNG XUYÊN ĐỊA HÌNH
+                        TargetCFrame = CFrame.new(SetSpawnCoords)
                         return
                     else
                         StopAttacking(); UnequipWeapons()
@@ -2091,7 +2217,7 @@ __modules["Farm/AutoGetBuso"] = function()
                 local isFarFromIsland = (root.Position.Y < -500) or ((root.Position - Kori_Center).Magnitude > 300)
                 if isFarFromIsland then
                     StopAttacking(); UnequipWeapons()
-                    TargetCFrame = CFrame.new(Kori_Center) -- BAY XÉO LÊN TRỜI, BỎ VỤ LẶN XUỐNG BIỂN
+                    TargetCFrame = CFrame.new(Kori_Center)
                     return
                 end
                 
@@ -2112,12 +2238,11 @@ __modules["Farm/AutoGetBuso"] = function()
                     local currentPos = root.Position
                     local standPos = QuestNPC_Pos + Vector3.new(0, 0, 4) 
 
-                    -- [FIX YÊU CẦU]: NHẢY THẲNG (TELEPORT) TỚI QUEST, KHÔNG TWEEN HAY BAY TỪ TỪ NỮA
                     local distToQuest = (currentPos - standPos).Magnitude
                     if distToQuest > 10 then
-                        TargetCFrame = nil -- Tắt chế độ bay từ từ
+                        TargetCFrame = nil
                         root.CFrame = CFrame.new(standPos, Vector3.new(QuestNPC_Pos.X, standPos.Y, QuestNPC_Pos.Z))
-                        task.wait(0.1) -- Delay siêu nhỏ để game load
+                        task.wait(0.1)
                         return
                     end
 
@@ -2385,35 +2510,44 @@ __modules["Farm/AutoGetBuso"] = function()
         end
     end)
 
+    -- ================= HEARTBEAT: DI CHUYỂN + QUẢN LÝ STAMINA SPOOF =================
     RunService.Heartbeat:Connect(function(dt)
-        if not _G.BusoFarm then return end
+        if not _G.BusoFarm then
+            if isSpoofingStamina then StopStaminaSpoof() end
+            return
+        end
         
         local char = Player.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         
         if root and TargetCFrame and char:GetAttribute("SpawnLoaded") then
+            StartStaminaSpoof()
+
             local currentPos = root.Position
             local targetPos = TargetCFrame.Position
             local dist = (currentPos - targetPos).Magnitude
             
             if dist > 0.5 then
                 local dir = (targetPos - currentPos).Unit
-                -- DÙNG MOVESPEED SIÊU TỐC BAY XUYÊN ĐỊA HÌNH
                 local step = dir * MoveSpeed * dt
                 if step.Magnitude >= dist then root.CFrame = TargetCFrame
                 else root.CFrame = CFrame.new(currentPos + step) * TargetCFrame.Rotation end
             else
                 root.CFrame = TargetCFrame
             end
+        else
+            if isSpoofingStamina then StopStaminaSpoof() end
         end
     end)
 
     function isBusoFarmOn.Toggle(state)
         _G.BusoFarm = state
         if not state then
+            StopStaminaSpoof()
             StopAttacking()
             UnequipWeapons()
             ForceClearStun() 
+            IsExitingFishman = false
             
             local char = Player.Character
             if char then
@@ -2442,6 +2576,7 @@ __modules["Farm/AutoGeppo"] = function()
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Workspace = game:GetService("Workspace")
     local RunService = game:GetService("RunService")
+    local VirtualUser = game:GetService("VirtualUser")
     local LocalPlayer = Players.LocalPlayer
 
     _G.AutoGeppo = false
@@ -2465,12 +2600,57 @@ __modules["Farm/AutoGeppo"] = function()
     local IsTweening = false
     local IsDropping = false
 
+    -- =====================================================================
+    -- STAMINA SPOOF (chỉ chạy khi đang tween/dropping)
+    -- =====================================================================
+    local Events   = ReplicatedStorage:WaitForChild("Events", 5)
+    local TakeStam = Events and Events:WaitForChild("takestam", 5)
+
+    local isSpoofingStamina = false
+    local function StartStaminaSpoof()
+        if isSpoofingStamina then return end
+        isSpoofingStamina = true
+        task.spawn(function()
+            while isSpoofingStamina and task.wait(0.05) do
+                if TakeStam and TakeStam.Parent then
+                    pcall(function() TakeStam:FireServer(0.545, "dash") end)
+                else break end
+            end
+        end)
+    end
+    local function StopStaminaSpoof() isSpoofingStamina = false end
+
+    -- =====================================================================
+    -- ANTI-AFK & ANTI-SIT
+    -- =====================================================================
+    pcall(function()
+        for _, conn in pairs(getconnections(LocalPlayer.Idled)) do conn:Disable() end
+    end)
+    if _G.AntiAfkConnection then _G.AntiAfkConnection:Disconnect() end
+    _G.AntiAfkConnection = LocalPlayer.Idled:Connect(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+
+    local function PreventSitting(character)
+        local humanoid = character:WaitForChild("Humanoid", 5)
+        if humanoid then
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+            if humanoid.Sit then humanoid.Sit = false; humanoid.Jump = true end
+        end
+    end
+    if LocalPlayer.Character then PreventSitting(LocalPlayer.Character) end
+    LocalPlayer.CharacterAdded:Connect(PreventSitting)
+
+    -- =====================================================================
+
     -- =========================================
     -- HỆ THỐNG TWEEN BAY MƯỢT TRỰC TIẾP
     -- =========================================
     local function StopTween()
         IsTweening = false
         IsDropping = false
+        StopStaminaSpoof() -- 🛑 Dừng spoof khi dừng tween
         if TweenConn then 
             TweenConn:Disconnect()
             TweenConn = nil 
@@ -2493,6 +2673,7 @@ __modules["Farm/AutoGeppo"] = function()
         if not root then return end
 
         IsTweening = true
+        StartStaminaSpoof() -- ▶️ Bắt đầu spoof khi bắt đầu tween
         FakeFloor.Parent = Workspace
 
         local antiGravity = root:FindFirstChild("ZILI_AntiGravity") or Instance.new("BodyVelocity")
@@ -2502,14 +2683,12 @@ __modules["Farm/AutoGeppo"] = function()
         antiGravity.Parent = root
 
         local MAX_SPEED = 90
-        -- Khoá mục tiêu cách mặt đất 30 stud để xé gió bay ngang
         local flyTarget = Vector3.new(targetPos.X, targetPos.Y + 30, targetPos.Z)
         local isDiving = false 
 
         TweenConn = RunService.Heartbeat:Connect(function(deltaTime)
             if not IsTweening or not root or not root.Parent then StopTween(); return end
             
-            -- Ép Noclip xuyên tường liên tục trong lúc bay
             for _, part in pairs(char:GetDescendants()) do
                 if part:IsA("BasePart") and part.CanCollide then 
                     part.CanCollide = false 
@@ -2525,27 +2704,24 @@ __modules["Farm/AutoGeppo"] = function()
             local distXZ = (Vector2.new(activeTarget.X, activeTarget.Z) - Vector2.new(currentPos.X, currentPos.Z)).Magnitude
             local dist3D = (activeTarget - currentPos).Magnitude
 
-            -- [CHỐNG LAG/MINIMIZE]: Bù bước nhảy bất chấp FPS
             local max_step = MAX_SPEED * deltaTime
             if max_step > 150 then max_step = 150 end 
             local step = math.min(max_step, dist3D)
 
             if not isDiving then
                 if distXZ < 15 then 
-                    isDiving = true -- Tới ngay đỉnh thì chúi đầu cắm xuống
+                    isDiving = true
                 else
                     local dir = (activeTarget - currentPos).Unit
-                    -- Dùng CFrame.lookAt để nhân vật nhìn thẳng về hướng đang bay
                     root.CFrame = CFrame.lookAt(currentPos + dir * step, activeTarget)
                 end
             else
                 if dist3D < 3 then 
-                    -- ĐÃ ĐẾN ĐÍCH!
                     if isPortal then
-                        -- Ngắt kết nối bay ngang, chuyển sang chế độ lặn xuống từ từ (Giữ nguyên AntiGravity)
                         IsTweening = false
                         if TweenConn then TweenConn:Disconnect(); TweenConn = nil end
                         IsDropping = true
+                        -- Spoof vẫn giữ chạy trong lúc dropping
                         
                         task.spawn(function()
                             local waited = 0
@@ -2556,10 +2732,10 @@ __modules["Farm/AutoGeppo"] = function()
                                 task.wait(0.5)
                                 waited = waited + 0.5
                             end
-                            StopTween() -- Đã xuống xong, gỡ AntiGravity
+                            StopTween() -- 🛑 Xong drop mới dừng spoof
                         end)
                     else
-                        StopTween()
+                        StopTween() -- 🛑 Đến đích bình thường, dừng spoof
                         if root and root.Parent then root.CFrame = CFrame.new(targetPos) end
                     end
                 else
@@ -2614,7 +2790,6 @@ __modules["Farm/AutoGeppo"] = function()
                         
                         -- 1. DETECTED ĐANG Ở DƯỚI ĐẢO NGƯỜI CÁ
                         if currentPos.Y < -1000 and Target_Pos.Y > -500 then
-                            -- [FIX]: Bỏ hết mấy cái điều kiện Y thừa thãi đi, cứ xa cổng là múc!
                             local distToPortal = (currentPos - Fishman_Portal).Magnitude
                             
                             if distToPortal > 15 then
@@ -2622,7 +2797,7 @@ __modules["Farm/AutoGeppo"] = function()
                                     StartTween(Fishman_Portal, true)
                                 end
                             end
-                            return -- Luôn dừng chu kỳ ở đây để chờ qua đảo mới
+                            return
                         end
 
                         -- 2. BAY ĐẾN NPC MUA GEPPO (Khi đã ngoi lên trên)
@@ -2636,11 +2811,9 @@ __modules["Farm/AutoGeppo"] = function()
                                 -- ĐÃ TỚI NƠI
                                 if IsTweening then StopTween() end
                                 
-                                -- Đứng cách tọa độ gốc 4 stud để không kẹt vào NPC
                                 local standPos = Target_Pos + Vector3.new(0, 0, 4) 
                                 local lookAtPos = Vector3.new(Target_Pos.X, standPos.Y, Target_Pos.Z)
                                 
-                                -- Kích hoạt Proximity Prompt
                                 pcall(function()
                                     for _, prompt in pairs(Workspace:GetDescendants()) do
                                         if prompt:IsA("ProximityPrompt") then
@@ -2651,7 +2824,6 @@ __modules["Farm/AutoGeppo"] = function()
                                     end
                                 end)
 
-                                -- CHỜ BẢNG CHAT XUẤT HIỆN
                                 local waitAppear = tick()
                                 while tick() - waitAppear < 2 and _G.AutoGeppo do
                                     root.CFrame = CFrame.lookAt(standPos, lookAtPos)
@@ -2660,7 +2832,6 @@ __modules["Farm/AutoGeppo"] = function()
                                     task.wait(0.2)
                                 end
 
-                                -- SPAM CLICK GIAO DIỆN CHAT 
                                 local waitChatClose = tick()
                                 while tick() - waitChatClose < 8 and _G.AutoGeppo do 
                                     root.CFrame = CFrame.lookAt(standPos, lookAtPos)
@@ -2675,23 +2846,20 @@ __modules["Farm/AutoGeppo"] = function()
                                 
                                 task.wait(0.5)
                                 
-                                -- GỬI REQUEST TRỰC TIẾP
                                 pcall(function()
                                     local args = { [1] = "skyWalkTrainer" }
                                     ReplicatedStorage:WaitForChild("Events"):WaitForChild("learnStyle"):FireServer(unpack(args))
                                 end)
                                 
-                                -- Xong việc thì tắt
                                 AutoGeppoModule.Toggle(false)
                             end
                         end
                     end
                 end)
             else
-                -- Tắt Auto -> Dọn dẹp
                 if IsTweening or IsDropping then StopTween() end
             end
-            task.wait(0.1) -- Vòng lặp nghỉ 0.1s cho mát CPU
+            task.wait(0.1)
         end
     end)
 
@@ -2699,7 +2867,7 @@ __modules["Farm/AutoGeppo"] = function()
     function AutoGeppoModule.Toggle(state)
         _G.AutoGeppo = state
         if not state then
-            StopTween()
+            StopTween() -- StopTween đã gọi StopStaminaSpoof bên trong rồi
         end
     end
 
@@ -3174,7 +3342,7 @@ __modules["Farm/AutoFishMerchant"] = function()
                         }}))
                     end)
                     -- Đợi server cập nhật peli (0.1s quá ngắn, server chưa kịp cộng tiền)
-                    task.wait(0.5)
+                    task.wait(0.3)
                     -- Check lại ngay sau khi sell + wait — nếu vừa chạm 1M thì dừng
                     if getCurrentPeli() >= 1000000 then return true end
                 end
@@ -3408,7 +3576,7 @@ __modules["Farm/AutoFishMerchant"] = function()
         embeds[#embeds]["footer"] = {["text"]="ZILI HUB | "..os.date("%d/%m/%Y %H:%M:%S")}
 
         local payload = {["embeds"]=embeds}
-        if hasMythic then payload["content"]="@everyone\n🟣 **ALERT: SUCCESSFULLY PURCHASED A MYTHIC ITEM!**"; payload["allowed_mentions"]={["parse"]={"everyone"}} end
+        if hasMythic then payload["content"]="@everyone\n🟣 **SUCCESSFULLY PURCHASED A MYTHIC ITEM!**"; payload["allowed_mentions"]={["parse"]={"everyone"}} end
 
         local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
         if req then pcall(function() req({Url=url,Method="POST",Headers={["Content-Type"]="application/json"},Body=HttpService:JSONEncode(payload)}) end) end
@@ -3565,8 +3733,8 @@ __modules["Farm/AutoFishMerchant"] = function()
         _Configs.SellLeg    = sell["Legendary Fish"] == true
 
         local craft = TogglesData["Config_CraftBait"] and TogglesData["Config_CraftBait"].Value or {}
-        _Configs.CraftLeg  = craft["Legendary Bait"] == true
-        _Configs.CraftRare = craft["Rare Bait"]      == true
+        _Configs.CraftLeg  = craft["Legendary Fish Bait"] == true
+        _Configs.CraftRare = craft["Rare Fish Bait"]      == true
 
         local buy = TogglesData["Config_BuyItems"] and TogglesData["Config_BuyItems"].Value or {}
         local buySet = {}
@@ -4166,28 +4334,128 @@ local ReplicatedStorage_L = game:GetService("ReplicatedStorage")
 local Player_L            = game.Players.LocalPlayer
 
 -- ── Private Server ────────────────────────────────────────────────────
+local TeleportService_L = game:GetService("TeleportService")
 local ServerModule = {}
+
+-- Join private server.
+-- code == "" or nil  →  teleport to public lobby (main menu)
+-- code == "some_code" →  join that private server then pick hub
 function ServerModule.Join(code, hubArg)
-    if not code or code == "" then return end
+    local isPublic = (not code or code:match("^%s*$"))
+
+    if isPublic then
+        -- Empty code = go to public server (main menu / lobby)
+        task.spawn(function()
+            pcall(function()
+                TeleportService_L:Teleport(PLACE_LOBBY, Player_L)
+            end)
+        end)
+        return
+    end
+
+    -- Private server: use unpack(args) pattern
     task.spawn(function()
         pcall(function()
-            ReplicatedStorage_L:WaitForChild("Events"):WaitForChild("reserved"):InvokeServer(code)
+            local args = { [1] = code }
+            ReplicatedStorage_L:WaitForChild("Events")
+                :WaitForChild("reserved")
+                :InvokeServer(unpack(args))
         end)
     end)
-    task.spawn(function()
-        local playerGui = Player_L:WaitForChild("PlayerGui")
-        local chooseTypeUI = playerGui:WaitForChild("chooseType", 15)
-        if chooseTypeUI then
-            local frame = chooseTypeUI:WaitForChild("Frame", 5)
-            if frame then
-                local remote = frame:WaitForChild("RemoteEvent", 5)
-                if remote then
-                    task.wait(0.5)
-                    remote:FireServer(hubArg)
-                    pcall(function() chooseTypeUI.Enabled = false end)
+
+    -- After teleport loads the lobby, pick hub destination
+    if hubArg ~= nil then
+        task.spawn(function()
+            local playerGui = Player_L:WaitForChild("PlayerGui")
+            local chooseTypeUI = playerGui:WaitForChild("chooseType", 20)
+            if chooseTypeUI then
+                local frame = chooseTypeUI:WaitForChild("Frame", 5)
+                if frame then
+                    local remote = frame:WaitForChild("RemoteEvent", 5)
+                    if remote then
+                        task.wait(0.5)
+                        pcall(function() remote:FireServer(hubArg) end)
+                        pcall(function() chooseTypeUI.Enabled = false end)
+                    end
+                end
+            end
+        end)
+    end
+end
+
+-- ── Auto Rejoin ───────────────────────────────────────────────────────
+local AutoRejoinModule = {}
+AutoRejoinModule._hooked    = false
+AutoRejoinModule._running   = false
+AutoRejoinModule._thread    = nil
+
+function AutoRejoinModule.Start()
+    if AutoRejoinModule._running then return end
+    AutoRejoinModule._running = true
+
+    -- Hook teleport state (covers TeleportFailed, Kicked via teleport, etc.)
+    if not AutoRejoinModule._hooked then
+        AutoRejoinModule._hooked = true
+
+        -- Teleport state listener
+        Player_L.OnTeleport:Connect(function(teleportState, _, _)
+            if not AutoRejoinModule._running then return end
+            if teleportState == Enum.TeleportState.Failed then
+                task.wait(3)
+                if AutoRejoinModule._running then
+                    AutoRejoinModule._doRejoin()
+                end
+            end
+        end)
+    end
+
+    -- Background heartbeat: detect if we somehow got disconnected or
+    -- the character is removed and never re-added (kick detection fallback)
+    AutoRejoinModule._thread = task.spawn(function()
+        while AutoRejoinModule._running do
+            task.wait(5)
+            -- If player's character is nil for 5s+ = likely kicked
+            if not Player_L.Character and AutoRejoinModule._running then
+                task.wait(5)  -- give Roblox time to respawn normally
+                if not Player_L.Character and AutoRejoinModule._running then
+                    AutoRejoinModule._doRejoin()
                 end
             end
         end
+    end)
+end
+
+function AutoRejoinModule.Stop()
+    AutoRejoinModule._running = false
+    if AutoRejoinModule._thread then
+        task.cancel(AutoRejoinModule._thread)
+        AutoRejoinModule._thread = nil
+    end
+end
+
+function AutoRejoinModule._doRejoin()
+    if not AutoRejoinModule._running then return end
+    local code = getgenv().PSCode or ""
+    local hub  = getgenv().SelectedHub or "Regular"
+    local sea  = getgenv().SelectedSea or "Sea 1"
+
+    -- Lưu pending join vào getgenv() (tồn tại qua teleport trong cùng executor session)
+    getgenv().GBO_PendingJoin = {code=code, hub=hub, sea=sea}
+
+    -- Backup bằng file để lobby đọc lại ngay cả khi executor reset getgenv
+    pcall(function()
+        if writefile then
+            local ok, js = pcall(function()
+                return game:GetService("HttpService"):JSONEncode({code=code,hub=hub,sea=sea})
+            end)
+            if ok then writefile("gbo_pending_join.json", js) end
+        end
+    end)
+
+    -- Delay ngẫu nhiên tránh spam, rồi về lobby để lobby tự join PS
+    task.wait(math.random(2, 5))
+    pcall(function()
+        TeleportService_L:Teleport(PLACE_LOBBY, Player_L)
     end)
 end
 
@@ -4299,22 +4567,37 @@ local function TWEEN_BACK(obj, t, props)
     TweenService:Create(obj, TweenInfo.new(t, Enum.EasingStyle.Back, Enum.EasingDirection.Out), props):Play()
 end
 
--- Color palette
-local BG0   = C(7,  8, 18)   -- deepest bg
-local BG1   = C(10, 11, 24)  -- main panel
-local BG2   = C(14, 15, 32)  -- sidebar
-local BG3   = C(18, 20, 42)  -- card bg
-local BG4   = C(22, 25, 52)  -- card hover
-local BG5   = C(8,  9, 20)   -- input bg
-local GOLD  = C(201,148,58)
+-- ── Core palette ───────────────────────────────────────────────────────
+local BG0   = C(6,   7, 16)   -- deepest bg
+local BG1   = C(9,  10, 22)   -- main panel
+local BG2   = C(12, 13, 28)   -- sidebar
+local BG3   = C(16, 17, 36)   -- card bg
+local BG4   = C(20, 22, 46)   -- card hover
+local BG5   = C(7,   8, 18)   -- input bg
+local BG_HDR= C(10, 11, 24)   -- card header bg
+
+-- ── Gold (luxury) ───────────────────────────────────────────────────────
+local GOLD  = C(201,148, 58)
 local GOLD2 = C(240,190,104)
 local GOLD3 = C(122, 90, 30)
-local GOLDD = C(50, 37, 12)   -- dark gold (toggle ON bg)
-local TEXT1 = C(237,232,218)
-local TEXT2 = C(160,155,180)
-local TEXT3 = C(80, 75,100)
-local RED   = C(200, 55, 55)
-local GREEN = C(56, 190,110)
+local GOLDD = C(40,  30,  8)   -- dark gold (toggle ON bg)
+
+-- ── Text ────────────────────────────────────────────────────────────────
+local TEXT1 = C(230,226,212)
+local TEXT2 = C(148,144,168)
+local TEXT3 = C(68,  64, 90)
+
+-- ── Section accent colors ────────────────────────────────────────────────
+local RED    = C(200, 55, 55)
+local GREEN  = C(56,  190,110)
+local CYAN   = C(0,   210,200)   -- HUB STATUS / connected
+local CYAND  = C(0,    40, 38)   -- dark bg for cyan badges
+local PINK   = C(200,  80,220)   -- SERVER STATUS badge
+local PINKD  = C(40,   10, 50)   -- dark bg for pink
+local BLUE_A = C(80,  130,240)   -- VISUALS / ESP section
+local ORANGE = C(230, 140, 40)   -- FISHING section
+local PURPLE = C(140,  90,230)   -- BAIT / CONFIG
+local AMBER  = C(255, 185, 50)   -- quick status
 
 -- =====================================================================
 -- ICON DRAW SYSTEM (SVG-style, pure Frames)
@@ -4476,6 +4759,73 @@ local function DrawIcon(parent, iconName, px, py, sz, col)
         -- Leaf
         L(s*.5,s*.1, s*.74,s*.02, 1.5)
 
+    elseif iconName=="target" then
+        -- Outer ring
+        Ring(s*.5,s*.5, s*.96, 1.5)
+        -- Middle ring
+        Ring(s*.5,s*.5, s*.58, 1.5)
+        -- Center dot
+        Dot(s*.5,s*.5, s*.18)
+        -- Crosshairs (4 short lines)
+        L(s*.5,s*.0,  s*.5,s*.18, 1.5)  -- top
+        L(s*.5,s*.82, s*.5,s*1.0, 1.5)  -- bottom
+        L(s*.0,s*.5,  s*.18,s*.5, 1.5)  -- left
+        L(s*.82,s*.5, s*1.0,s*.5, 1.5)  -- right
+
+    elseif iconName=="user" then
+        -- Head circle
+        Ring(s*.5,s*.28, s*.38, 1.5)
+        -- Body / shoulders arc (approximate with frame)
+        local body = RR(s*.1,s*.6, s*.8,s*.4, s*.18)
+
+    -- ── FISHING STAT ICONS ──────────────────────────────────────────────
+    elseif iconName=="chest" then
+        -- Chest body
+        RR(s*.06,s*.45, s*.88,s*.52, 3)
+        -- Chest lid
+        RR(s*.06,s*.08, s*.88,s*.38, 3)
+        -- Lid divider line
+        L(s*.06,s*.45, s*.94,s*.45, 1.5)
+        -- Lock clasp
+        RR(s*.38,s*.36, s*.24,s*.20, 2)
+        -- Keyhole
+        Dot(s*.5,s*.56, s*.12)
+
+    elseif iconName=="arrows" then
+        -- Left arrow (←)
+        L(s*.44,s*.28, s*.08,s*.28, 2)
+        L(s*.08,s*.28, s*.20,s*.15, 2)
+        L(s*.08,s*.28, s*.20,s*.41, 2)
+        -- Right arrow (→)
+        L(s*.56,s*.72, s*.92,s*.72, 2)
+        L(s*.92,s*.72, s*.80,s*.59, 2)
+        L(s*.92,s*.72, s*.80,s*.85, 2)
+        -- Divider hint
+        L(s*.44,s*.18, s*.56,s*.82, 1)
+
+    elseif iconName=="coin" then
+        -- Outer ring
+        Ring(s*.5,s*.5, s*.88, 2)
+        -- Inner ring
+        Ring(s*.5,s*.5, s*.52, 1.5)
+        -- Dollar/Peli sign vertical
+        L(s*.5,s*.18, s*.5,s*.82, 1.5)
+        -- Dollar/Peli sign crossbars
+        L(s*.3,s*.32, s*.7,s*.32, 1.5)
+        L(s*.3,s*.68, s*.7,s*.68, 1.5)
+
+    elseif iconName=="bottle" then
+        -- Neck
+        RR(s*.38,s*.02, s*.24,s*.22, 2)
+        -- Shoulder transition
+        RR(s*.28,s*.20, s*.44,s*.12, 3)
+        -- Body
+        RR(s*.14,s*.30, s*.72,s*.65, 4)
+        -- Label stripe
+        RR(s*.22,s*.50, s*.56,s*.14, 2)
+        -- Cap
+        RR(s*.34,s*.0,  s*.32,s*.10, 2)
+
     end
 
     return c
@@ -4506,9 +4856,10 @@ local function MakePillToggle(parent, posX, posY, w, h, configKey, onCallback)
     }, pill)
     CORNER(20, thumb)
 
-    TogglesData[configKey] = TogglesData[configKey] or {Active=false,Btn=pill,Strk=strk}
-    TogglesData[configKey].Btn  = pill
-    TogglesData[configKey].Strk = strk
+    TogglesData[configKey] = TogglesData[configKey] or {Active=false,Btn=pill,Strk=strk,Thumb=thumb}
+    TogglesData[configKey].Btn   = pill
+    TogglesData[configKey].Strk  = strk
+    TogglesData[configKey].Thumb = thumb
     if onCallback then TogglesData[configKey].Callback = onCallback end
 
     pill.MouseButton1Click:Connect(function()
@@ -4553,62 +4904,239 @@ local MainFrame = NEW("CanvasGroup",{
 CORNER(12, MainFrame)
 STROKE(GOLD, 1.5, 0.1, MainFrame)
 
+-- ── ANIMATED BACKGROUND ───────────────────────────────────────────────
+-- Deep gradient base
+local BgBase = NEW("Frame",{
+    Size=UDim2.new(1,0,1,0), BackgroundColor3=BG0,
+    ZIndex=0, BorderSizePixel=0, ClipsDescendants=false
+}, MainFrame)
+CORNER(12, BgBase)
+local BgGrad = Instance.new("UIGradient")
+BgGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,   C(10, 11, 26)),
+    ColorSequenceKeypoint.new(0.45, C(14, 15, 36)),
+    ColorSequenceKeypoint.new(1,   C(7,  8,  18)),
+})
+BgGrad.Rotation = 135
+BgGrad.Parent = BgBase
+
+-- Gold corner accent glow (top-left)
+local glowTL = NEW("Frame",{
+    Size=UDim2.new(0,220,0,220),
+    Position=UDim2.new(0,-60,0,-60),
+    BackgroundColor3=C(120,90,20),
+    BackgroundTransparency=0.93, ZIndex=0, BorderSizePixel=0
+}, MainFrame)
+CORNER(110, glowTL)
+
+-- Gold corner accent glow (bottom-right)
+local glowBR = NEW("Frame",{
+    Size=UDim2.new(0,180,0,180),
+    Position=UDim2.new(1,-100,1,-100),
+    BackgroundColor3=C(100,70,15),
+    BackgroundTransparency=0.94, ZIndex=0, BorderSizePixel=0
+}, MainFrame)
+CORNER(90, glowBR)
+
+-- Shimmer sweep line (repeating)
+local shimmer = NEW("Frame",{
+    Size=UDim2.new(0,3,1.6,0),
+    Position=UDim2.new(-0.1,0,-0.3,0),
+    BackgroundColor3=GOLD2,
+    BackgroundTransparency=0.91, ZIndex=0, BorderSizePixel=0,
+    Rotation=18
+}, MainFrame)
+
+-- Floating gold particle spawner
+local function SpawnBgDot()
+    if not MainFrame or not MainFrame.Parent then return end
+    local sz = math.random(2, 5)
+    local xRatio = math.random(5, 95) / 100
+    local p = NEW("Frame",{
+        Size=UDim2.new(0,sz,0,sz),
+        Position=UDim2.new(xRatio,0, 1.04, 0),
+        BackgroundColor3=math.random()<0.6 and GOLD or GOLD2,
+        BackgroundTransparency=math.random(60,80)/100,
+        ZIndex=0, BorderSizePixel=0
+    }, MainFrame)
+    CORNER(sz, p)
+    local dur = math.random(5,10)
+    TweenService:Create(p, TweenInfo.new(dur, Enum.EasingStyle.Linear), {
+        Position=UDim2.new(xRatio, math.random(-30,30), -0.06, 0),
+        BackgroundTransparency=1
+    }):Play()
+    task.delay(dur+0.2, function() if p and p.Parent then p:Destroy() end end)
+end
+
+task.spawn(function()
+    while MainFrame and MainFrame.Parent do
+        local ap = MainFrame.AbsoluteSize
+        if ap.X > 50 then
+            shimmer.Position = UDim2.new(-0.1,0,-0.3,0)
+            TweenService:Create(shimmer, TweenInfo.new(4.0, Enum.EasingStyle.Quad), {
+                Position=UDim2.new(1.1,0,-0.3,0)
+            }):Play()
+        end
+        task.wait(7.0)
+    end
+end)
+
+task.spawn(function()
+    while MainFrame and MainFrame.Parent do
+        task.wait(0.9)
+        SpawnBgDot()
+    end
+end)
+
+-- ── CORNER L-BRACKETS ────────────────────────────────────────────────
+-- Decorative cyan L-brackets overlaid on MainFrame corners
+local BRACKET_LEN = 18
+local BRACKET_THICK = 2
+local BRACKET_COLOR = CYAN
+local BRACKET_TRANS = 0.25
+
+local function MakeBracket(anchorX, anchorY, flipX, flipY)
+    local bGroup = NEW("Frame",{
+        Size=UDim2.new(0, BRACKET_LEN+BRACKET_THICK, 0, BRACKET_LEN+BRACKET_THICK),
+        AnchorPoint=Vector2.new(anchorX, anchorY),
+        Position=UDim2.new(anchorX, anchorX==0 and 2 or -2, anchorY, anchorY==0 and 2 or -2),
+        BackgroundTransparency=1, BorderSizePixel=0, ZIndex=50
+    }, MainFrame)
+    -- Horizontal bar
+    local hx = flipX and (BRACKET_LEN) or 0
+    NEW("Frame",{
+        Size=UDim2.new(0, BRACKET_LEN, 0, BRACKET_THICK),
+        Position=UDim2.new(0, flipX and 0 or 0, 0, flipY and BRACKET_LEN or 0),
+        BackgroundColor3=BRACKET_COLOR, BackgroundTransparency=BRACKET_TRANS, BorderSizePixel=0, ZIndex=51
+    }, bGroup)
+    -- Vertical bar
+    NEW("Frame",{
+        Size=UDim2.new(0, BRACKET_THICK, 0, BRACKET_LEN),
+        Position=UDim2.new(0, flipX and BRACKET_LEN or 0, 0, flipY and BRACKET_THICK or 0),
+        BackgroundColor3=BRACKET_COLOR, BackgroundTransparency=BRACKET_TRANS, BorderSizePixel=0, ZIndex=51
+    }, bGroup)
+    return bGroup
+end
+
+-- 4 corners: TL, TR, BL, BR
+local bracketTL = MakeBracket(0, 0, false, false)
+local bracketTR = MakeBracket(1, 0, true,  false)
+local bracketBL = MakeBracket(0, 1, false, true)
+local bracketBR = MakeBracket(1, 1, true,  true)
+
+-- Animate brackets: subtle pulse
+task.spawn(function()
+    while MainFrame and MainFrame.Parent do
+        for _, br in ipairs({bracketTL,bracketTR,bracketBL,bracketBR}) do
+            for _, f in ipairs(br:GetChildren()) do
+                if f:IsA("Frame") then
+                    TWEEN(f, 1.5, {BackgroundTransparency=0.05})
+                end
+            end
+        end
+        task.wait(2.0)
+        for _, br in ipairs({bracketTL,bracketTR,bracketBL,bracketBR}) do
+            for _, f in ipairs(br:GetChildren()) do
+                if f:IsA("Frame") then
+                    TWEEN(f, 1.5, {BackgroundTransparency=BRACKET_TRANS})
+                end
+            end
+        end
+        task.wait(2.0)
+    end
+end)
+
 -- =====================================================================
 -- TOP BAR
 -- =====================================================================
 local TopBar = NEW("Frame",{
-    Size=UDim2.new(1,0,0,46), BackgroundColor3=BG2, BorderSizePixel=0
+    Size=UDim2.new(1,0,0,48), BackgroundColor3=BG2, BorderSizePixel=0
 }, MainFrame)
 CORNER(12, TopBar)
 -- extend bottom corners
 NEW("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=BG2,BorderSizePixel=0}, TopBar)
--- gold bottom line
-NEW("Frame",{Size=UDim2.new(0.6,0,0,1),Position=UDim2.new(0.2,0,1,-1),BackgroundColor3=GOLD,BorderSizePixel=0,BackgroundTransparency=0.6}, TopBar)
+-- bottom border gradient line
+local topBorderLine = NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=GOLD,BorderSizePixel=0,BackgroundTransparency=0.55}, TopBar)
+local topLineGrad = Instance.new("UIGradient")
+topLineGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, C(0,210,200)),
+    ColorSequenceKeypoint.new(0.35, GOLD2),
+    ColorSequenceKeypoint.new(0.65, GOLD),
+    ColorSequenceKeypoint.new(1, C(140,90,230)),
+})
+topLineGrad.Parent = topBorderLine
 
--- Logo badge
+-- Hexagonal logo badge (drawn with frames to simulate hex shape)
 local LogoBadge = NEW("Frame",{
-    Size=UDim2.new(0,30,0,30), Position=UDim2.new(0,12,0.5,-15),
-    BackgroundColor3=BG3
+    Size=UDim2.new(0,34,0,34), Position=UDim2.new(0,13,0.5,-17),
+    BackgroundColor3=C(12,14,30)
 }, TopBar)
-CORNER(8, LogoBadge)
-STROKE(GOLD, 1.5, 0.4, LogoBadge)
+CORNER(6, LogoBadge)
+STROKE(GOLD, 1.5, 0.15, LogoBadge)
+-- inner hex fill
+local hexInner = NEW("Frame",{
+    Size=UDim2.new(0,26,0,26),Position=UDim2.new(0.5,-13,0.5,-13),
+    BackgroundColor3=C(20,22,48)
+},LogoBadge)
+CORNER(5,hexInner)
 NEW("ImageLabel",{
-    Size=UDim2.new(0,22,0,22), Position=UDim2.new(0.5,-11,0.5,-11),
+    Size=UDim2.new(0,20,0,20), Position=UDim2.new(0.5,-10,0.5,-10),
     Image="rbxassetid://108561234878560", BackgroundTransparency=1
 }, LogoBadge)
+-- animated glow ring on badge
+local badgeGlow = STROKE(GOLD2, 1, 0.6, LogoBadge)
+task.spawn(function()
+    while TopBar and TopBar.Parent do
+        TWEEN(badgeGlow,1.2,{Transparency=0.2})
+        task.wait(1.4)
+        TWEEN(badgeGlow,1.2,{Transparency=0.75})
+        task.wait(1.4)
+    end
+end)
 
--- Title
-local Title = NEW("TextLabel",{
-    Text="Zili Hub  |  GBO", Position=UDim2.new(0,50,0,0),
-    Size=UDim2.new(0,260,1,0), TextColor3=GOLD2,
+-- Title: "ZILI HUB" in gold
+NEW("TextLabel",{
+    Text="ZILI HUB", Position=UDim2.new(0,55,0,8),
+    Size=UDim2.new(0,90,0,18), TextColor3=GOLD2,
+    Font=Enum.Font.GothamBold, TextSize=13, BackgroundTransparency=1,
+    TextXAlignment=Enum.TextXAlignment.Left
+}, TopBar)
+-- Separator
+NEW("TextLabel",{
+    Text="|", Position=UDim2.new(0,148,0,8),
+    Size=UDim2.new(0,12,0,18), TextColor3=TEXT3,
+    Font=Enum.Font.GothamBold, TextSize=14, BackgroundTransparency=1,
+    TextXAlignment=Enum.TextXAlignment.Center
+}, TopBar)
+-- "GBO" in cyan
+NEW("TextLabel",{
+    Text="GBO", Position=UDim2.new(0,163,0,8),
+    Size=UDim2.new(0,40,0,18), TextColor3=CYAN,
     Font=Enum.Font.GothamBold, TextSize=13, BackgroundTransparency=1,
     TextXAlignment=Enum.TextXAlignment.Left
 }, TopBar)
 
--- Version badge
+-- Version badge below title
 local VerBadge = NEW("TextLabel",{
-    Text="v2.4.0  ·  PREMIUM",
-    Position=UDim2.new(0,50,0,0), Size=UDim2.new(0,180,1,0),
+    Text="v2.5  ·  PREMIUM",
+    Position=UDim2.new(0,55,0,28), Size=UDim2.new(0,200,0,12),
     TextColor3=TEXT3, Font=Enum.Font.GothamBold, TextSize=9,
     BackgroundTransparency=1, TextXAlignment=Enum.TextXAlignment.Left
 }, TopBar)
--- shift version to below title
-VerBadge.Position = UDim2.new(0,50,1,-16)
-VerBadge.Size = UDim2.new(0,200,0,12)
 
 -- Control buttons
-local function MakeCtrlBtn(text, posX, col)
+local function MakeCtrlBtn(text, posX, col, bgCol)
     local btn = NEW("TextButton",{
         Text=text, Position=UDim2.new(1,posX,0.5,0),
         AnchorPoint=Vector2.new(0,0.5),
         Size=UDim2.new(0,26,0,26), TextColor3=col,
-        TextSize=12, BackgroundColor3=BG3,
+        TextSize=12, BackgroundColor3=bgCol or BG3,
         Font=Enum.Font.GothamBold, AutoButtonColor=false
     }, TopBar)
     CORNER(6, btn)
-    STROKE(col, 1, 0.6, btn)
+    STROKE(col, 1, 0.5, btn)
     btn.MouseEnter:Connect(function() TWEEN(btn,0.15,{BackgroundColor3=BG4,TextColor3=C(255,255,255)}) end)
-    btn.MouseLeave:Connect(function() TWEEN(btn,0.15,{BackgroundColor3=BG3,TextColor3=col}) end)
+    btn.MouseLeave:Connect(function() TWEEN(btn,0.15,{BackgroundColor3=bgCol or BG3,TextColor3=col}) end)
     return btn
 end
 local MinBtn   = MakeCtrlBtn("—", -64, TEXT2)
@@ -4618,7 +5146,7 @@ local CloseBtn = MakeCtrlBtn("✕", -32, RED)
 -- SIDEBAR
 -- =====================================================================
 local Sidebar = NEW("Frame",{
-    Size=UDim2.new(0,178,1,-46), Position=UDim2.new(0,0,0,46),
+    Size=UDim2.new(0,178,1,-48), Position=UDim2.new(0,0,0,48),
     BackgroundColor3=BG2, BorderSizePixel=0
 }, MainFrame)
 CORNER(12, Sidebar)
@@ -4685,7 +5213,7 @@ end
 
 -- PAGE CONTAINER
 local PageContainer = NEW("Frame",{
-    Size=UDim2.new(1,-178,1,-46), Position=UDim2.new(0,178,0,46),
+    Size=UDim2.new(1,-178,1,-48), Position=UDim2.new(0,178,0,48),
     BackgroundTransparency=1
 }, MainFrame)
 
@@ -4699,6 +5227,7 @@ local TAB_ICONS = {
     ["Fishing + Merchant"]= "fish",
     ["Stats"]             = "chart",
     ["Config"]            = "gear",
+    ["Private Server"]    = "shield",
 }local function AddTab(name)
     local iconName = TAB_ICONS[name] or "home"
     local btn = NEW("TextButton",{
@@ -4784,6 +5313,7 @@ end
 -- Build tabs based on PlaceId
 local MainPage = AddTab("Main")
 local AutoFarmPage, TravelPage, FishingPage, StatsPage
+local PrivateServerPage  -- Lobby only
 
 if not IS_LOBBY then
     -- Game world: all tabs
@@ -4794,6 +5324,10 @@ if not IS_LOBBY then
     FishingPage  = AddTab("Fishing + Merchant")
     TabSep("DATA")
     StatsPage    = AddTab("Stats")
+else
+    -- Lobby: Private Server dedicated tab
+    TabSep("SERVER")
+    PrivateServerPage = AddTab("Private Server")
 end
 
 local ConfigPage = AddTab("Config")
@@ -4811,28 +5345,60 @@ local function MakeCard(parent, h, layoutOrder)
         Size=UDim2.new(1,-24,0,h), BackgroundColor3=BG3,
         LayoutOrder=layoutOrder or 0, ClipsDescendants=true
     }, parent)
-    CORNER(9, f)
-    STROKE(GOLD, 1, 0.8, f)
+    CORNER(8, f)
+    STROKE(GOLD, 1, 0.82, f)
     return f
 end
 
-local function CardHeader(card, iconName, label)
-    -- top gradient bar
+-- CardHeader: accent color per section, letter-tracked label, small square icon
+local function CardHeader(card, iconName, label, accentCol)
+    accentCol = accentCol or GOLD
+    local darkBg = C(
+        math.floor(accentCol.R*255*0.04 + BG_HDR.R*255*0.96),
+        math.floor(accentCol.G*255*0.04 + BG_HDR.G*255*0.96),
+        math.floor(accentCol.B*255*0.04 + BG_HDR.B*255*0.96)
+    )
+
     local bar = NEW("Frame",{
-        Size=UDim2.new(1,0,0,28), BackgroundColor3=C(20,22,46)
+        Size=UDim2.new(1,0,0,28), BackgroundColor3=BG_HDR
     }, card)
-    CORNER(9, bar)
-    NEW("Frame",{Size=UDim2.new(1,0,0,12),Position=UDim2.new(0,0,1,-12),BackgroundColor3=C(20,22,46),BorderSizePixel=0}, bar)
-    -- gold left stripe in header
-    NEW("Frame",{Size=UDim2.new(0,3,0.6,0),Position=UDim2.new(0,0,0.2,0),BackgroundColor3=GOLD,BorderSizePixel=0}, bar)
-    CORNER(2, bar:FindFirstChild("Frame"))
-    -- SVG-style icon (sz=12, centered in 28px bar → y=(28-12)/2=8)
-    DrawIcon(bar, iconName, 8, 8, 12, GOLD)
+    CORNER(8, bar)
+    -- extend bottom half to cover corners
+    NEW("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=BG_HDR,BorderSizePixel=0}, bar)
+
+    -- Left accent bar (colored)
+    local accBar = NEW("Frame",{
+        Size=UDim2.new(0,2,0.55,0),Position=UDim2.new(0,0,0.225,0),
+        BackgroundColor3=accentCol,BorderSizePixel=0
+    },bar)
+    CORNER(1,accBar)
+
+    -- Small square icon (colored)
+    local iconBg = NEW("Frame",{
+        Size=UDim2.new(0,16,0,16),Position=UDim2.new(0,7,0,6),
+        BackgroundColor3=C(
+            math.min(255, math.floor(accentCol.R*255*0.15 + 10)),
+            math.min(255, math.floor(accentCol.G*255*0.15 + 10)),
+            math.min(255, math.floor(accentCol.B*255*0.15 + 10))
+        )
+    },bar)
+    CORNER(4,iconBg)
+    DrawIcon(iconBg, iconName, 2, 2, 12, accentCol)
+
+    -- Label (uppercase, letter-spaced simulation via Gotham)
     NEW("TextLabel",{
-        Text=label, Size=UDim2.new(1,-40,1,0), Position=UDim2.new(0,32,0,0),
-        BackgroundTransparency=1, TextColor3=GOLD3, Font=Enum.Font.GothamBold,
-        TextSize=10, TextXAlignment=Enum.TextXAlignment.Left
+        Text=label, Size=UDim2.new(1,-40,1,0), Position=UDim2.new(0,30,0,0),
+        BackgroundTransparency=1, TextColor3=accentCol,
+        Font=Enum.Font.GothamBold,
+        TextSize=9, TextXAlignment=Enum.TextXAlignment.Left
     }, bar)
+
+    -- Bottom accent line (thin, colored)
+    local bottomLine = NEW("Frame",{
+        Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),
+        BackgroundColor3=accentCol,BorderSizePixel=0,BackgroundTransparency=0.7
+    },bar)
+
     return bar
 end
 
@@ -4872,7 +5438,7 @@ local function CardToggle(card, posY, configKey, callback)
     }, pill)
     CORNER(20, thumb)
 
-    TogglesData[configKey] = {Active=false, Btn=pill, Strk=strk, Callback=callback or function() end}
+    TogglesData[configKey] = {Active=false, Btn=pill, Strk=strk, Thumb=thumb, Callback=callback or function() end}
 
     pill.MouseButton1Click:Connect(function()
         local d = TogglesData[configKey]
@@ -4927,7 +5493,7 @@ if IS_LOBBY then
 
     -- ── RACE REROLL ──────────────────────────────────────────────────
     local RaceCard = MakeCard(MainPage, 318, 1)
-    CardHeader(RaceCard, "target", "RACE CHANGER")
+    CardHeader(RaceCard, "target", "RACE CHANGER", AMBER)
 
     -- Toggle row
     RowLabel(RaceCard, "Auto Race Reroll", "Select a race below · auto-stops on match", 38)
@@ -4970,9 +5536,10 @@ if IS_LOBBY then
             d.Btn.TextColor3 = sel and TEXT1 or TEXT2
             d.Icon.Text = sel and "✓" or ""
         end
-        -- save for config
-        TogglesData["Config_TargetRace"] = TogglesData["Config_TargetRace"] or {Value=""}
-        TogglesData["Config_TargetRace"].Value = getgenv().TargetRace
+        -- save for config (value kept up-to-date via Callback entry below)
+        if TogglesData["Config_TargetRace"] then
+            TogglesData["Config_TargetRace"].Value = getgenv().TargetRace
+        end
     end
 
     for i,info in ipairs(raceList) do
@@ -5008,21 +5575,44 @@ if IS_LOBBY then
     end)
 
     UpdateRaceSelection()
-    -- expose UpdateFn so ConfigManager.SyncDropdownUI can re-highlight on load
-    TogglesData["Config_TargetRace"] = TogglesData["Config_TargetRace"] or {Value=""}
-    TogglesData["Config_TargetRace"].UpdateFn = UpdateRaceSelection
+    -- expose UpdateFn + Callback so ConfigManager can restore and re-highlight on load
+    TogglesData["Config_TargetRace"] = {
+        Value     = "",
+        Callback  = function(val)
+            getgenv().TargetRace = val or ""
+            UpdateRaceSelection()
+        end,
+        UpdateFn  = UpdateRaceSelection,
+    }
 
     -- ── SKIN CHANGER ─────────────────────────────────────────────────
-    local skinCard = MakeCard(MainPage, 84, 2)
-    CardHeader(skinCard, "user", "SKIN CHANGER")
-    RowLabel(skinCard, "Randomize Full Avatar", "One-shot: randomizes all cosmetics", 38)
-    CardToggle(skinCard, 42, "AutoSkinDisco", function(state)
+    local skinCard = MakeCard(MainPage, 124, 2)
+    CardHeader(skinCard, "user", "SKIN CHANGER", GOLD2)
+
+    -- One-shot randomize
+    RowLabel(skinCard, "Randomize Once", "One-shot: randomizes all cosmetics now", 34)
+    CardToggle(skinCard, 38, "AutoSkinDisco", function(state)
         if not state then return end
         task.spawn(function()
             SkinModule.Randomize()
             task.wait(0.25)
             SetToggleState("AutoSkinDisco", false)
         end)
+    end)
+    RowDivider(skinCard, 72)
+
+    -- Auto Change Skin loop (saves to config)
+    RowLabel(skinCard, "Auto Change Skin", "Re-randomize every race reroll or on loop", 78)
+    CardToggle(skinCard, 82, "AutoChangeSkin", function(state)
+        getgenv().AutoChangeSkin = state
+        if state then
+            task.spawn(function()
+                while getgenv().AutoChangeSkin do
+                    SkinModule.Randomize()
+                    task.wait(30)  -- randomize every 30s when on
+                end
+            end)
+        end
     end)
 
     -- ── PRIVATE SERVER ────────────────────────────────────────────────
@@ -5035,8 +5625,11 @@ if IS_LOBBY then
     local SeaToggles = {}
     local UpdateUIState  -- forward decl
 
-    local psCard = MakeCard(MainPage, 468, 3)
-    CardHeader(psCard, "globe", "PRIVATE SERVER")
+    -- ── PS page layout ────────────────────────────────────────────────
+    PageLayout(PrivateServerPage, 14, 10)
+
+    local psCard = MakeCard(PrivateServerPage, 468, 1)
+    CardHeader(psCard, "globe", "PRIVATE SERVER", PINK)
 
     -- Code input
     local psBg = NEW("Frame",{Size=UDim2.new(1,-24,0,32),Position=UDim2.new(0,12,0,36),BackgroundColor3=BG5,BorderSizePixel=0},psCard)
@@ -5047,27 +5640,42 @@ if IS_LOBBY then
         TextColor3=TEXT1,PlaceholderColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=12,
         TextXAlignment=Enum.TextXAlignment.Left,ClearTextOnFocus=false
     },psBg)
+    -- Init Config_PSCode entry with HeadBtn ref so ConfigManager can restore text
+    TogglesData["Config_PSCode"] = {
+        Value    = "",
+        HeadBtn  = psBox,
+        Callback = function(val)
+            getgenv().PSCode = val or ""
+            pcall(function() psBox.Text = val or "" end)
+        end,
+    }
     psBox:GetPropertyChangedSignal("Text"):Connect(function()
         getgenv().PSCode = psBox.Text
-        TogglesData["Config_PSCode"] = TogglesData["Config_PSCode"] or {Value=""}
         TogglesData["Config_PSCode"].Value = psBox.Text
     end)
 
     -- Auto Join toggle
     RowDivider(psCard, 76)
-    RowLabel(psCard, "Auto Join Server", "Joins immediately when toggled on", 82)
+    RowLabel(psCard, "Auto Join Server", "Empty code = public server · code = private", 82)
     CardToggle(psCard, 82, "AutoJoinPS", function(state)
         if not state then return end
-        if getgenv().PSCode == "" then
-            task.spawn(function() task.wait(0.1); SetToggleState("AutoJoinPS",false) end)
+        -- Nếu đã trong PS rồi → bỏ qua
+        if game.PrivateServerId ~= "" then
+            task.spawn(function() task.wait(0.3); SetToggleState("AutoJoinPS", false) end)
             return
         end
-        local arg = HubArgs[getgenv().SelectedHub]
-        if getgenv().SelectedHub == "Regular" then
-            arg = (getgenv().SelectedSea == "Sea 2") and 2 or true
+        local code = getgenv().PSCode or ""
+        local arg
+        if code == "" then
+            arg = nil
+        else
+            arg = HubArgs[getgenv().SelectedHub]
+            if getgenv().SelectedHub == "Regular" then
+                arg = (getgenv().SelectedSea == "Sea 2") and 2 or true
+            end
         end
-        ServerModule.Join(getgenv().PSCode, arg)
-        task.spawn(function() task.wait(1); SetToggleState("AutoJoinPS",false) end)
+        ServerModule.Join(code, arg)
+        task.spawn(function() task.wait(1); SetToggleState("AutoJoinPS", false) end)
     end)
 
     -- Hub destination
@@ -5097,8 +5705,10 @@ if IS_LOBBY then
             d.Icon.Text = sel and "✓" or ""
         end
         if UpdateUIState then UpdateUIState() end
-        TogglesData["Config_SelectedHub"] = TogglesData["Config_SelectedHub"] or {Value="Regular"}
-        TogglesData["Config_SelectedHub"].Value = getgenv().SelectedHub
+        -- keep Value in sync (Config_SelectedHub entry set below)
+        if TogglesData["Config_SelectedHub"] then
+            TogglesData["Config_SelectedHub"].Value = getgenv().SelectedHub
+        end
     end
 
     for i,hd in ipairs(hubList) do
@@ -5127,7 +5737,6 @@ if IS_LOBBY then
     CardToggle(psCard, 358, "Sea1Toggle", function(state)
         if getgenv().SelectedHub~="Regular" or not state then return end
         getgenv().SelectedSea = "Sea 1"
-        TogglesData["Config_SelectedSea"] = TogglesData["Config_SelectedSea"] or {Value="Sea 1"}
         TogglesData["Config_SelectedSea"].Value = "Sea 1"
         if TogglesData["Sea2Toggle"] and TogglesData["Sea2Toggle"].Active then
             SetToggleState("Sea2Toggle",false)
@@ -5138,18 +5747,76 @@ if IS_LOBBY then
     CardToggle(psCard, 400, "Sea2Toggle", function(state)
         if getgenv().SelectedHub~="Regular" or not state then return end
         getgenv().SelectedSea = "Sea 2"
-        TogglesData["Config_SelectedSea"] = TogglesData["Config_SelectedSea"] or {Value="Sea 2"}
         TogglesData["Config_SelectedSea"].Value = "Sea 2"
         if TogglesData["Sea1Toggle"] and TogglesData["Sea1Toggle"].Active then
             SetToggleState("Sea1Toggle",false)
         end
     end)
 
+    -- Config_SelectedSea entry with restore Callback
+    TogglesData["Config_SelectedSea"] = {
+        Value    = "Sea 1",
+        Callback = function(val)
+            getgenv().SelectedSea = val or "Sea 1"
+            local isS1 = (getgenv().SelectedSea == "Sea 1")
+            -- visually sync sea toggles without firing their callbacks
+            SetToggleState("Sea1Toggle", isS1)
+            SetToggleState("Sea2Toggle", not isS1)
+        end,
+    }
+
     -- Default: Sea 1 ON, hub = Regular
     task.spawn(function()
         task.wait(0.1)
         UpdateHubSelection()
         SetToggleState("Sea1Toggle", true)
+    end)
+
+    -- ── AUTO-JOIN khi vào lobby sau khi bị kick (từ Auto Rejoin game world) ──
+    task.spawn(function()
+        task.wait(2.5)  -- chờ lobby load xong
+        local pending = getgenv().GBO_PendingJoin
+        -- Fallback: đọc file nếu executor đã reset getgenv sau teleport
+        if not pending then
+            pcall(function()
+                if isfile and isfile("gbo_pending_join.json") then
+                    local hs = game:GetService("HttpService")
+                    local ok, data = pcall(function()
+                        return hs:JSONDecode(readfile("gbo_pending_join.json"))
+                    end)
+                    if ok and type(data)=="table" then
+                        pending = data
+                        pcall(function() deletefile("gbo_pending_join.json") end)
+                    end
+                end
+            end)
+        end
+        if pending and type(pending)=="table" and (pending.code or pending.hub) then
+            getgenv().GBO_PendingJoin = nil
+            local pCode = pending.code or ""
+            local pHub  = pending.hub  or "Regular"
+            local pSea  = pending.sea  or "Sea 1"
+            -- Sync UI
+            getgenv().PSCode      = pCode
+            getgenv().SelectedHub = pHub
+            getgenv().SelectedSea = pSea
+            pcall(function() psBox.Text = pCode end)
+            -- Sync hub selection + sea
+            if TogglesData["Config_SelectedHub"] and TogglesData["Config_SelectedHub"].Callback then
+                TogglesData["Config_SelectedHub"].Callback(pHub)
+            end
+            if TogglesData["Config_SelectedSea"] and TogglesData["Config_SelectedSea"].Callback then
+                TogglesData["Config_SelectedSea"].Callback(pSea)
+            end
+            -- Auto join
+            local _HubArgs = {["Regular"]=true,["Trade Hub"]="tradeHub",["Universe Hub"]="universeHub",["Fish Hub"]="fishHub"}
+            local arg = _HubArgs[pHub] or true
+            if pHub == "Regular" then
+                arg = (pSea == "Sea 2") and 2 or true
+            end
+            task.wait(1.0)
+            ServerModule.Join(pCode, arg)
+        end
     end)
 
     UpdateUIState = function()
@@ -5164,12 +5831,39 @@ if IS_LOBBY then
         end
     end
 
-    -- expose UpdateFn for ConfigManager
-    TogglesData["Config_SelectedHub"] = TogglesData["Config_SelectedHub"] or {Value="Regular"}
-    TogglesData["Config_SelectedHub"].UpdateFn = function()
-        UpdateHubSelection()
-        UpdateUIState()
-    end
+    -- ── AUTO REJOIN ───────────────────────────────────────────────────
+    local rejoinCard = MakeCard(PrivateServerPage, 82, 2)
+    CardHeader(rejoinCard, "lightning", "AUTO REJOIN", CYAN)
+    RowLabel(rejoinCard, "Auto Rejoin", "Re-joins after kick / teleport fail", 34)
+    CardToggle(rejoinCard, 38, "AutoRejoin", function(state)
+        getgenv().AutoRejoin = state
+        if state then
+            AutoRejoinModule.Start()
+        else
+            AutoRejoinModule.Stop()
+        end
+    end)
+    RowDivider(rejoinCard, 70)
+    NEW("TextLabel",{
+        Text="Uses saved PS code + hub. Empty code = public server.",
+        Size=UDim2.new(1,-24,0,14), Position=UDim2.new(0,12,0,72),
+        BackgroundTransparency=1, TextColor3=TEXT3,
+        Font=Enum.Font.Gotham, TextSize=10, TextXAlignment=Enum.TextXAlignment.Left
+    }, rejoinCard)
+
+    -- expose UpdateFn + Callback for ConfigManager
+    TogglesData["Config_SelectedHub"] = {
+        Value    = "Regular",
+        Callback = function(val)
+            getgenv().SelectedHub = val or "Regular"
+            UpdateHubSelection()
+            UpdateUIState()
+        end,
+        UpdateFn = function()
+            UpdateHubSelection()
+            UpdateUIState()
+        end,
+    }
 
 else
     -- ══════════════════════════════════════════════════════════════════
@@ -5179,31 +5873,42 @@ else
     -- Status card
     local statusH = 72
     local statusCard = MakeCard(MainPage, statusH, 1)
-    CardHeader(statusCard, "shield", "HUB STATUS")
-    NEW("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,0,0),BackgroundColor3=GOLD,BorderSizePixel=0,BackgroundTransparency=0.5}, statusCard)
-    NEW("TextLabel",{
-        Text="Connected  ·  GET BETTER OUT",
+    CardHeader(statusCard, "shield", "HUB STATUS", CYAN)
+    -- top accent bar with gradient
+    local statusTopBar = NEW("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,0,0),BackgroundColor3=CYAN,BorderSizePixel=0,BackgroundTransparency=0.3}, statusCard)
+
+    local statusTxt = NEW("TextLabel",{
+        Text="⬡  Connected  ·  GET BETTER OUT",
         Size=UDim2.new(0.65,0,0,18), Position=UDim2.new(0,14,0,34),
-        BackgroundTransparency=1, TextColor3=GREEN,
+        BackgroundTransparency=1, TextColor3=CYAN,
         Font=Enum.Font.GothamBold, TextSize=12, TextXAlignment=Enum.TextXAlignment.Left
     }, statusCard)
     NEW("TextLabel",{
-        Text="Zili Hub  ·  v2.4.0  ·  Premium Build",
+        Text="Zili Hub  ·  v2.5.0  ·  Premium Build",
         Size=UDim2.new(1,-20,0,13), Position=UDim2.new(0,14,0,54),
         BackgroundTransparency=1, TextColor3=TEXT3,
         Font=Enum.Font.Gotham, TextSize=10, TextXAlignment=Enum.TextXAlignment.Left
     }, statusCard)
+    -- Animated LIVE badge
     local pingBadge = NEW("TextLabel",{
-        Text="◉  LIVE", Size=UDim2.new(0,70,0,22), Position=UDim2.new(1,-82,0,34),
-        BackgroundColor3=C(10,30,18), TextColor3=GREEN,
-        Font=Enum.Font.GothamBold, TextSize=11, TextXAlignment=Enum.TextXAlignment.Center
+        Text="⬤  LIVE", Size=UDim2.new(0,68,0,20), Position=UDim2.new(1,-80,0,36),
+        BackgroundColor3=CYAND, TextColor3=CYAN,
+        Font=Enum.Font.GothamBold, TextSize=10, TextXAlignment=Enum.TextXAlignment.Center
     }, statusCard)
-    CORNER(5, pingBadge); STROKE(GREEN, 1, 0.5, pingBadge)
+    CORNER(4, pingBadge); STROKE(CYAN, 1, 0.35, pingBadge)
+    task.spawn(function()
+        while statusCard and statusCard.Parent do
+            TWEEN(pingBadge, 0.8, {TextColor3=C(140,255,248)})
+            task.wait(1.0)
+            TWEEN(pingBadge, 0.8, {TextColor3=CYAN})
+            task.wait(1.0)
+        end
+    end)
 
     -- Quick status
     local quickH = 118
     local quickCard = MakeCard(MainPage, quickH, 2)
-    CardHeader(quickCard, "lightning", "QUICK STATUS")
+    CardHeader(quickCard, "lightning", "QUICK STATUS", AMBER)
 
     local QT_DATA = {
         {"Auto Farm","AutoFarmLevel",10,34},  {"Auto Buso","AutoBuso",120,34},  {"Auto Geppo","AutoGeppo",230,34},
@@ -5219,7 +5924,8 @@ else
         CORNER(4,dot); quickDots[key]=dot
     end
     task.spawn(function()
-        while task.wait(0.3) do
+        while MainFrame and MainFrame.Parent do
+            task.wait(0.3)
             for key,dot in pairs(quickDots) do
                 if dot and dot.Parent then
                     local on = TogglesData[key] and TogglesData[key].Active
@@ -5232,7 +5938,7 @@ else
     -- ESP / Visuals
     local espH = 148
     local espCard = MakeCard(MainPage, espH, 3)
-    CardHeader(espCard, "eye", "VISUALS & ESP")
+    CardHeader(espCard, "eye", "VISUALS & ESP", BLUE_A)
     local ESP_ROWS = {
         {"Island ESP",  32,"ESP_Island",  function(s) if Esp and IslandData then Esp.Toggle(s,IslandData) end end},
         {"Player ESP",  70,"ESP_Player",  function() end},
@@ -5245,6 +5951,156 @@ else
         CardToggle(espCard,py,key,cb)
     end
 
+    -- ── PRIVATE SERVER (Game World) ───────────────────────────────────
+    -- Người chơi setup PS code ở đây, save config, auto rejoin khi bị kick
+    getgenv().PSCode      = getgenv().PSCode      or ""
+    getgenv().SelectedHub = getgenv().SelectedHub or "Regular"
+    getgenv().SelectedSea = getgenv().SelectedSea or "Sea 1"
+
+    local GW_HubArgs = {
+        ["Regular"]      = true,
+        ["Trade Hub"]    = "tradeHub",
+        ["Universe Hub"] = "universeHub",
+        ["Fish Hub"]     = "fishHub",
+    }
+
+    -- Helper scoped to game-world so it doesn't conflict with lobby SetToggleState
+    local function GW_SetToggleState(key, state)
+        local d = TogglesData[key]
+        if not d then return end
+        d.Active = state
+        TWEEN(d.Btn,  0.22, {BackgroundColor3 = state and GOLDD or BG5})
+        TWEEN(d.Strk, 0.22, {Color           = state and GOLD2 or GOLD3})
+        if d.Thumb then
+            TWEEN(d.Thumb, 0.22, {
+                BackgroundColor3 = state and GOLD2 or TEXT3,
+                Position         = state and UDim2.new(1,-20,0.5,-8) or UDim2.new(0,4,0.5,-8),
+            })
+        end
+    end
+
+    local gwPsCardH = 198
+    local gwPsCard = MakeCard(MainPage, gwPsCardH, 4)
+    CardHeader(gwPsCard, "shield", "SERVER STATUS", PINK)
+
+    -- PUBLIC / PRIVATE status badge (dynamic)
+    local serverBadge = NEW("TextLabel",{
+        Text= game.PrivateServerId ~= "" and "PRIVATE" or "PUBLIC",
+        Size=UDim2.new(0,68,0,18), Position=UDim2.new(1,-80,0,5),
+        BackgroundColor3 = game.PrivateServerId ~= "" and C(30,8,50) or PINKD,
+        TextColor3 = game.PrivateServerId ~= "" and PURPLE or PINK,
+        Font=Enum.Font.GothamBold, TextSize=9, TextXAlignment=Enum.TextXAlignment.Center
+    }, gwPsCard)
+    CORNER(4, serverBadge)
+    STROKE(game.PrivateServerId ~= "" and PURPLE or PINK, 1, 0.4, serverBadge)
+
+    -- PS Code input
+    local gwPsBg = NEW("Frame",{
+        Size=UDim2.new(1,-24,0,32), Position=UDim2.new(0,12,0,36),
+        BackgroundColor3=BG5, BorderSizePixel=0
+    }, gwPsCard)
+    CORNER(6, gwPsBg); STROKE(GOLD3, 1, 0.5, gwPsBg)
+    local gwPsBox = NEW("TextBox",{
+        Size=UDim2.new(1,-16,1,0), Position=UDim2.new(0,8,0,0),
+        BackgroundTransparency=1, Text="",
+        PlaceholderText="Private Server code (empty = public)...",
+        TextColor3=TEXT1, PlaceholderColor3=TEXT3,
+        Font=Enum.Font.Gotham, TextSize=11,
+        TextXAlignment=Enum.TextXAlignment.Left, ClearTextOnFocus=false,
+    }, gwPsBg)
+    gwPsBox:GetPropertyChangedSignal("Text"):Connect(function()
+        getgenv().PSCode = gwPsBox.Text
+        if TogglesData["Config_PSCode"] then
+            TogglesData["Config_PSCode"].Value = gwPsBox.Text
+        end
+    end)
+
+    -- Register Config_PSCode (shared key — same as lobby, config carries across)
+    -- If already registered by lobby run (shouldn't happen in game world) skip.
+    if not TogglesData["Config_PSCode"] then
+        TogglesData["Config_PSCode"] = {
+            Value   = "",
+            HeadBtn = gwPsBox,
+            Callback = function(val)
+                getgenv().PSCode = val or ""
+                pcall(function() gwPsBox.Text = val or "" end)
+            end,
+        }
+    else
+        -- Update HeadBtn to point to game-world box
+        TogglesData["Config_PSCode"].HeadBtn = gwPsBox
+        TogglesData["Config_PSCode"].Callback = function(val)
+            getgenv().PSCode = val or ""
+            pcall(function() gwPsBox.Text = val or "" end)
+        end
+    end
+
+    -- Hub row (compact single-line text)
+    RowDivider(gwPsCard, 78)
+    RowLabel(gwPsCard, "Destination Hub", "Where to go after joining", 84)
+
+    local gwHubCycle = {"Regular","Trade Hub","Universe Hub","Fish Hub"}
+    local gwHubIdx   = 1
+    local gwHubBtn   = NEW("TextButton",{
+        Size=UDim2.new(0,130,0,22), Position=UDim2.new(1,-142,0,88),
+        BackgroundColor3=GOLDD, TextColor3=GOLD2,
+        Font=Enum.Font.GothamBold, TextSize=11,
+        Text=gwHubCycle[gwHubIdx], AutoButtonColor=false
+    }, gwPsCard)
+    CORNER(5, gwHubBtn); STROKE(GOLD3,1,0,gwHubBtn)
+    gwHubBtn.MouseButton1Click:Connect(function()
+        gwHubIdx = (gwHubIdx % #gwHubCycle) + 1
+        getgenv().SelectedHub = gwHubCycle[gwHubIdx]
+        gwHubBtn.Text = gwHubCycle[gwHubIdx]
+        if TogglesData["Config_SelectedHub"] then
+            TogglesData["Config_SelectedHub"].Value = getgenv().SelectedHub
+        end
+    end)
+
+    -- Auto Join toggle
+    RowDivider(gwPsCard, 120)
+    RowLabel(gwPsCard, "Auto Join", "Trong PS rồi = bỏ qua · Ngoài public = về lobby tự join", 126)
+    CardToggle(gwPsCard, 126, "GW_AutoJoinPS", function(state)
+        if not state then return end
+        -- Kiểm tra đã trong PS chưa
+        if game.PrivateServerId ~= "" then
+            -- Đã trong PS đúng rồi → tắt toggle, không làm gì
+            task.spawn(function() task.wait(0.3); GW_SetToggleState("GW_AutoJoinPS", false) end)
+            return
+        end
+        -- Đang trong public → lưu pending, về lobby để tự join PS
+        local code = getgenv().PSCode or ""
+        local hub  = getgenv().SelectedHub or "Regular"
+        local sea  = getgenv().SelectedSea or "Sea 1"
+        getgenv().GBO_PendingJoin = {code=code, hub=hub, sea=sea}
+        pcall(function()
+            if writefile then
+                local hs = game:GetService("HttpService")
+                local ok, js = pcall(function()
+                    return hs:JSONEncode({code=code,hub=hub,sea=sea})
+                end)
+                if ok then writefile("gbo_pending_join.json", js) end
+            end
+        end)
+        task.spawn(function()
+            task.wait(1.2)
+            GW_SetToggleState("GW_AutoJoinPS", false)
+            pcall(function() TeleportService_L:Teleport(PLACE_LOBBY, Player_L) end)
+        end)
+    end)
+
+    -- Auto Rejoin toggle
+    RowDivider(gwPsCard, 158)
+    RowLabel(gwPsCard, "Auto Rejoin", "Re-joins after kick / teleport fail", 164)
+    CardToggle(gwPsCard, 164, "GW_AutoRejoin", function(state)
+        getgenv().AutoRejoin = state
+        if state then
+            AutoRejoinModule.Start()
+        else
+            AutoRejoinModule.Stop()
+        end
+    end)
+
 end  -- end IS_LOBBY/else
 
 -- =====================================================================
@@ -5256,7 +6112,7 @@ PageLayout(AutoFarmPage, 14, 10)
 -- Level Farm card
 local lfH = 144
 local lfCard = MakeCard(AutoFarmPage, lfH, 1)
-CardHeader(lfCard, "sword", "LEVEL FARM")
+CardHeader(lfCard, "sword", "LEVEL FARM", AMBER)
 RowLabel(lfCard, "Start Level Farm", "Auto kills enemies · respawns", 34)
 
 local StartFarmToggle, SFToggleStroke, SFThumb = CardToggle(lfCard, 44, "AutoFarmLevel", function(state)
@@ -5323,7 +6179,7 @@ end)
 
 -- Background loop: kiểm tra level mỗi 3s khi AFF đang bật
 task.spawn(function()
-    while true do
+    while MainFrame and MainFrame.Parent do
         task.wait(3)
         if not TogglesData["AutoFarmForFishing"] or not TogglesData["AutoFarmForFishing"].Active then
             continue
@@ -5342,7 +6198,7 @@ end)
 -- Misc Farm card
 local mfH = 148
 local mfCard = MakeCard(AutoFarmPage, mfH, 2)
-CardHeader(mfCard, "fist", "MISC FARM")
+CardHeader(mfCard, "fist", "MISC FARM", GOLD2)
 
 -- Gamepass badge
 local gpBadge = NEW("TextLabel",{
@@ -5389,7 +6245,7 @@ PageLayout(TravelPage, 14, 10)
 local tpH = 148
 local tpCard = MakeCard(TravelPage, tpH, 1)
 tpCard.ZIndex = 5
-CardHeader(tpCard, "globe", "ISLAND TELEPORT")
+CardHeader(tpCard, "globe", "ISLAND TELEPORT", CYAN)
 
 -- Target Island label
 RowLabel(tpCard, "Target Island", "Select destination", 36)
@@ -5488,7 +6344,7 @@ end)
 
 -- Auto 2nd Sea card
 local sea2Card = MakeCard(TravelPage, 90, 2)
-CardHeader(sea2Card, "wave", "AUTO 2ND SEA")
+CardHeader(sea2Card, "wave", "AUTO 2ND SEA", BLUE_A)
 
 RowLabel(sea2Card, "Auto Enter 2nd Sea", "Auto travel to 2nd sea portal", 32)
 CardToggle(sea2Card, 40, "Auto2ndSea", function(state)
@@ -5518,7 +6374,7 @@ PageLayout(FishingPage, 14, 10)
 -- Master toggle card - taller for better text
 local fmH = 80
 local fmCard = MakeCard(FishingPage, fmH, 1)
-CardHeader(fmCard, "fish", "FISHING + MERCHANT FARM")
+CardHeader(fmCard, "fish", "FISHING + MERCHANT FARM", ORANGE)
 
 local FishMasterBar = NEW("Frame",{
     Size=UDim2.new(0,3,1,0), Position=UDim2.new(0,0,0,0),
@@ -5550,19 +6406,20 @@ local FishToggleStroke = STROKE(GOLD3, 1, 0, StartFishToggle)
 local FishThumb = NEW("Frame",{Size=UDim2.new(0,16,0,16),Position=UDim2.new(0,4,0.5,-8),BackgroundColor3=TEXT3,BorderSizePixel=0}, StartFishToggle)
 CORNER(20, FishThumb)
 
-TogglesData["AutoFishMerchant"] ={
-    Active = false, Btn = StartFishToggle, Strk = FishToggleStroke, 
-    Callback = function(state)
+TogglesData["AutoFishMerchant"] = {
+    Active    = false,
+    Btn       = StartFishToggle,
+    Strk      = FishToggleStroke,
+    Thumb     = FishThumb,
+    MasterBar = FishMasterBar,
+    Callback  = function(state)
         _G.AutoFishMerchant = state
-        
-        -- GỌI MODULE TẠI ĐÂY NÈ FEN:
         if state then
-            -- Truyền thẳng toàn bộ TogglesData sang cho Module đọc
             AutoFishMerchantModule.Start(TogglesData)
         else
             AutoFishMerchantModule.Stop()
         end
-    end
+    end,
 }
 StartFishToggle.MouseButton1Click:Connect(function()
     local d=TogglesData["AutoFishMerchant"]; d.Active=not d.Active; local on=d.Active
@@ -5573,34 +6430,363 @@ StartFishToggle.MouseButton1Click:Connect(function()
     if d.Callback then d.Callback(on) end
 end)
 
--- Live stats row - 4 columns: Mythic Chest | Leg. Fish | Peli | Bait
-local fsH = 80
+-- Live stats row - 4 columns with drawn icons (chest/arrows/coin/bottle)
+local fsH = 98
 local fsCard = MakeCard(FishingPage, fsH, 2)
-fsCard.BackgroundColor3 = BG0
-STROKE(C(25,23,48), 1, 0, fsCard:FindFirstChildOfClass("UIStroke"))
+fsCard.BackgroundColor3 = C(8, 9, 18)
+-- Override the stroke color from MakeCard
+local fsStroke = fsCard:FindFirstChildOfClass("UIStroke")
+if fsStroke then fsStroke.Color = C(30,28,52); fsStroke.Transparency = 0.3 end
 
-local FISH_STATS = {
-    {"🎁","MYTHIC CHEST","—",   6, "MythicChest"},
-    {"🐟","LEG. BAIT",  "—", 116, "LegBait"},
-    {"💰","PELI",       "0", 226, "Peli"},
-    {"🎣","BAIT",       "—", 336, "Bait"},
+-- Header strip
+local fsHeader = NEW("Frame",{
+    Size=UDim2.new(1,0,0,24), BackgroundColor3=BG_HDR
+}, fsCard)
+CORNER(8, fsHeader)
+NEW("Frame",{Size=UDim2.new(1,0,0,12),Position=UDim2.new(0,0,1,-12),BackgroundColor3=BG_HDR,BorderSizePixel=0},fsHeader)
+-- header left accent bar
+local fsAccBar = NEW("Frame",{Size=UDim2.new(0,2,0.55,0),Position=UDim2.new(0,0,0.225,0),BackgroundColor3=ORANGE,BorderSizePixel=0},fsHeader)
+CORNER(1,fsAccBar)
+-- header icon
+local fsIconBg = NEW("Frame",{Size=UDim2.new(0,16,0,16),Position=UDim2.new(0,7,0,4),BackgroundColor3=C(28,14,4)},fsHeader)
+CORNER(4,fsIconBg)
+DrawIcon(fsIconBg,"chart",2,2,12,ORANGE)
+NEW("TextLabel",{
+    Text="LIVE STATS",
+    Size=UDim2.new(0,120,1,0),Position=UDim2.new(0,30,0,0),
+    BackgroundTransparency=1,TextColor3=ORANGE,Font=Enum.Font.GothamBold,
+    TextSize=9,TextXAlignment=Enum.TextXAlignment.Left
+},fsHeader)
+-- header bottom line
+local fsHdrLine = NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=ORANGE,BorderSizePixel=0,BackgroundTransparency=0.7},fsHeader)
+
+-- ── MINI toggle on the right of header ──
+local compactActive = false
+local CompactWidget  -- forward ref
+
+-- "MINI" label
+NEW("TextLabel",{
+    Text="MINI",
+    Size=UDim2.new(0,26,1,0),Position=UDim2.new(1,-72,0,0),
+    BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,
+    TextSize=8,TextXAlignment=Enum.TextXAlignment.Right
+},fsHeader)
+
+local compactPill = NEW("TextButton",{
+    Size=UDim2.new(0,40,0,16), Position=UDim2.new(1,-46,0,4),
+    BackgroundColor3=BG5, Text="", AutoButtonColor=false
+},fsHeader)
+CORNER(20,compactPill)
+local compactStrk = STROKE(GOLD3,1,0,compactPill)
+local compactThumb = NEW("Frame",{
+    Size=UDim2.new(0,12,0,12),Position=UDim2.new(0,2,0.5,-6),
+    BackgroundColor3=TEXT3,BorderSizePixel=0
+},compactPill)
+CORNER(20,compactThumb)
+
+-- ── 4 stat cells with DRAWN icons ──
+-- Layout: 4 equal columns in 438px wide card → each cell ~109px wide
+-- Icons: chest(MythicChest) | arrows(LegBait) | coin(Peli) | bottle(Bait)
+local FISH_STAT_DEF = {
+    -- { iconName, label, initVal, xOffset, key, color }
+    { "chest",  "MYTHIC",   "—",   0,   "MythicChest", AMBER  },
+    { "arrows", "LEG.BAIT", "—",   0,   "LegBait",     PURPLE },
+    { "coin",   "PELI",     "0",   0,   "Peli",        CYAN   },
+    { "bottle", "BAIT",     "—",   0,   "Bait",        ORANGE },
 }
 local FishStatValues = {}
-for _,fs in ipairs(FISH_STATS) do
-    local ico,lbl,val,px,key = fs[1],fs[2],fs[3],fs[4],fs[5]
-    if px>6 then
-        NEW("Frame",{Size=UDim2.new(0,1,0.55,0),Position=UDim2.new(0,px-6,0.225,0),BackgroundColor3=C(30,28,55),BorderSizePixel=0}, fsCard)
+
+-- use UDim2 scale for 4 equal columns
+for i, def in ipairs(FISH_STAT_DEF) do
+    local iconName,lbl,val,_,key,accentC = def[1],def[2],def[3],def[4],def[5],def[6]
+    local xScale = (i-1) * 0.25
+
+    -- Vertical divider between cells
+    if i > 1 then
+        NEW("Frame",{
+            Size=UDim2.new(0,1,0.5,0),
+            Position=UDim2.new(xScale, 0, 0.28, 0),
+            BackgroundColor3=C(28,26,48),BorderSizePixel=0
+        }, fsCard)
     end
-    -- emoji icon — Font.Legacy bắt buộc để emoji hiện đúng
-    NEW("TextLabel",{Text=ico,Size=UDim2.new(0,100,0,20),Position=UDim2.new(0,px,0,6),BackgroundTransparency=1,Font=Enum.Font.Legacy,TextSize=18,TextXAlignment=Enum.TextXAlignment.Center}, fsCard)
-    -- value number — lưu ref để update live
-    local valLbl = NEW("TextLabel",{Text=val,Size=UDim2.new(0,100,0,20),Position=UDim2.new(0,px,0,24),BackgroundTransparency=1,TextColor3=GOLD2,Font=Enum.Font.GothamBold,TextSize=15,TextXAlignment=Enum.TextXAlignment.Center}, fsCard)
-    -- label under
-    NEW("TextLabel",{Text=lbl,Size=UDim2.new(0,100,0,14),Position=UDim2.new(0,px,0,46),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Center}, fsCard)
+
+    local cellW = 0.25
+
+    -- Icon background (small square, colored tint)
+    local iconCell = NEW("Frame",{
+        Size=UDim2.new(0,28,0,28),
+        Position=UDim2.new(xScale + cellW/2, -14, 0, 26),
+        BackgroundColor3=C(
+            math.min(255,math.floor(accentC.R*255*0.12+8)),
+            math.min(255,math.floor(accentC.G*255*0.12+8)),
+            math.min(255,math.floor(accentC.B*255*0.12+8))
+        ),
+        BorderSizePixel=0
+    }, fsCard)
+    CORNER(6, iconCell)
+    STROKE(accentC, 1, 0.6, iconCell)
+    DrawIcon(iconCell, iconName, 4, 4, 20, accentC)
+
+    -- Value number
+    local valLbl = NEW("TextLabel",{
+        Text=val,
+        Size=UDim2.new(cellW,-4,0,18),
+        Position=UDim2.new(xScale,2, 0, 57),
+        BackgroundTransparency=1, TextColor3=GOLD2,
+        Font=Enum.Font.GothamBold, TextSize=14,
+        TextXAlignment=Enum.TextXAlignment.Center
+    }, fsCard)
+
+    -- Label under value
+    NEW("TextLabel",{
+        Text=lbl,
+        Size=UDim2.new(cellW,-4,0,12),
+        Position=UDim2.new(xScale,2, 0, 78),
+        BackgroundTransparency=1, TextColor3=accentC,
+        Font=Enum.Font.GothamBold, TextSize=8,
+        TextXAlignment=Enum.TextXAlignment.Center
+    }, fsCard)
+
     FishStatValues[key] = valLbl
 end
 
--- Live stat update — 2s interval, tự dừng khi card bị destroy (không leak)
+-- ══════════════════════════════════════════════════════════════════════
+-- Compact floating widget (matches image 4 style: 160×165, drawn icons,
+-- session timer at bottom, L-bracket corners)
+-- ══════════════════════════════════════════════════════════════════════
+CompactWidget = NEW("ScreenGui",{
+    Name="GBO_CompactStats", ResetOnSpawn=false,
+    ZIndexBehavior=Enum.ZIndexBehavior.Sibling, Enabled=false
+}, gethui and gethui() or game.CoreGui)
+
+local CW_W, CW_H = 162, 168
+local cwFrame = NEW("Frame",{
+    Size=UDim2.new(0,CW_W,0,CW_H),
+    Position=UDim2.new(1,-CW_W-14,0.5,-CW_H/2),
+    BackgroundColor3=C(8,9,18), BorderSizePixel=0
+},CompactWidget)
+CORNER(10,cwFrame)
+STROKE(GOLD,1.5,0.12,cwFrame)
+
+-- Animated shimmer
+local cwShimmer = NEW("Frame",{
+    Size=UDim2.new(0,2,1.6,0),Position=UDim2.new(-0.1,0,-0.3,0),
+    BackgroundColor3=GOLD2,BackgroundTransparency=0.93,ZIndex=0,
+    BorderSizePixel=0,Rotation=16
+},cwFrame)
+
+-- Top bar
+local cwTopBar = NEW("Frame",{
+    Size=UDim2.new(1,0,0,24), BackgroundColor3=C(10,11,22), BorderSizePixel=0
+},cwFrame)
+CORNER(10,cwTopBar)
+NEW("Frame",{
+    Size=UDim2.new(1,0,0,10),Position=UDim2.new(0,0,1,-10),
+    BackgroundColor3=C(10,11,22),BorderSizePixel=0
+},cwTopBar)
+-- top bar accent left bar (orange = fishing)
+local cwAccBar = NEW("Frame",{Size=UDim2.new(0,2,0.5,0),Position=UDim2.new(0,0,0.25,0),BackgroundColor3=ORANGE,BorderSizePixel=0},cwTopBar)
+CORNER(1,cwAccBar)
+-- top bar title
+NEW("TextLabel",{
+    Text="FILLING...",
+    Size=UDim2.new(1,-30,1,0),Position=UDim2.new(0,8,0,0),
+    BackgroundTransparency=1,TextColor3=ORANGE,Font=Enum.Font.GothamBold,
+    TextSize=8,TextXAlignment=Enum.TextXAlignment.Left
+},cwTopBar)
+-- top bar border bottom
+local cwHdrLine = NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=ORANGE,BorderSizePixel=0,BackgroundTransparency=0.65},cwTopBar)
+
+-- Close button
+local cwClose = NEW("TextButton",{
+    Size=UDim2.new(0,18,0,18),Position=UDim2.new(1,-22,0.5,-9),
+    BackgroundColor3=C(35,12,12),Text="✕",TextColor3=RED,
+    Font=Enum.Font.GothamBold,TextSize=8,AutoButtonColor=false
+},cwTopBar)
+CORNER(4,cwClose)
+STROKE(RED,1,0.5,cwClose)
+
+-- ── L-bracket corners on compact widget ──
+local function CWBracket(ax,ay,fx,fy)
+    local bL=10; local bT=1.5
+    local bg=NEW("Frame",{
+        Size=UDim2.new(0,bL+bT,0,bL+bT),
+        AnchorPoint=Vector2.new(ax,ay),
+        Position=UDim2.new(ax,ax==0 and 2 or -2,ay,ay==0 and 2 or -2),
+        BackgroundTransparency=1,BorderSizePixel=0,ZIndex=10
+    },cwFrame)
+    NEW("Frame",{
+        Size=UDim2.new(0,bL,0,bT),
+        Position=UDim2.new(0,0,0,fy and bL or 0),
+        BackgroundColor3=CYAN,BackgroundTransparency=0.2,BorderSizePixel=0,ZIndex=11
+    },bg)
+    NEW("Frame",{
+        Size=UDim2.new(0,bT,0,bL),
+        Position=UDim2.new(0,fx and bL or 0,0,fy and bT or 0),
+        BackgroundColor3=CYAN,BackgroundTransparency=0.2,BorderSizePixel=0,ZIndex=11
+    },bg)
+end
+CWBracket(0,0,false,false)
+CWBracket(1,0,true, false)
+CWBracket(0,1,false,true)
+CWBracket(1,1,true, true)
+
+-- ── 2×2 stat grid ──
+local CW_ITEMS = {
+    { "chest",  "MYTHIC",   "MythicChest", 0,   24,  AMBER  },
+    { "bottle", "BAIT",     "Bait",        0.5, 24,  ORANGE },
+    { "coin",   "PELI",     "Peli",        0,   94,  CYAN   },
+    { "arrows", "LEG",      "LegBait",     0.5, 94,  PURPLE },
+}
+local cwValues = {}
+local CW_CELL_W = CW_W/2 - 2
+local CW_CELL_H = 66
+
+for _,item in ipairs(CW_ITEMS) do
+    local iconN,lbl,key,xs,yo,aCol = item[1],item[2],item[3],item[4],item[5],item[6]
+    local xOff = xs==0 and 2 or 1
+    local cell = NEW("Frame",{
+        Size=UDim2.new(0,CW_CELL_W,0,CW_CELL_H-2),
+        Position=UDim2.new(0, xs==0 and 2 or CW_W/2+1, 0, yo),
+        BackgroundColor3=C(
+            math.min(255,math.floor(aCol.R*255*0.10+9)),
+            math.min(255,math.floor(aCol.G*255*0.10+9)),
+            math.min(255,math.floor(aCol.B*255*0.10+9))
+        ),BorderSizePixel=0
+    },cwFrame)
+    CORNER(7,cell)
+    STROKE(aCol,1,0.55,cell)
+
+    -- Icon (drawn, centered top of cell)
+    local iSz=22
+    local iconHolder = NEW("Frame",{
+        Size=UDim2.new(0,iSz,0,iSz),
+        Position=UDim2.new(0.5,-iSz/2,0,5),
+        BackgroundTransparency=1,BorderSizePixel=0
+    },cell)
+    DrawIcon(iconHolder,iconN,0,0,iSz,aCol)
+
+    -- Value
+    local vl = NEW("TextLabel",{
+        Text="—",
+        Size=UDim2.new(1,0,0,20),Position=UDim2.new(0,0,0,29),
+        BackgroundTransparency=1,TextColor3=GOLD2,
+        Font=Enum.Font.GothamBold,TextSize=14,
+        TextXAlignment=Enum.TextXAlignment.Center
+    },cell)
+
+    -- Label
+    NEW("TextLabel",{
+        Text=lbl,
+        Size=UDim2.new(1,0,0,11),Position=UDim2.new(0,0,1,-12),
+        BackgroundTransparency=1,TextColor3=aCol,
+        Font=Enum.Font.GothamBold,TextSize=7,
+        TextXAlignment=Enum.TextXAlignment.Center
+    },cell)
+
+    cwValues[key] = vl
+end
+
+-- ── Session timer bar at bottom ──
+local timerBar = NEW("Frame",{
+    Size=UDim2.new(1,0,0,22),
+    Position=UDim2.new(0,0,1,-22),
+    BackgroundColor3=C(9,10,20),BorderSizePixel=0
+},cwFrame)
+CORNER(10,timerBar)
+NEW("Frame",{Size=UDim2.new(1,0,0,10),Position=UDim2.new(0,0,0,0),BackgroundColor3=C(9,10,20),BorderSizePixel=0},timerBar)
+-- timer top line
+NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,0,0),BackgroundColor3=GOLD3,BorderSizePixel=0,BackgroundTransparency=0.6},timerBar)
+
+local timerLabel = NEW("TextLabel",{
+    Text="0H  0M  0S",
+    Size=UDim2.new(0.65,0,1,0),Position=UDim2.new(0,8,0,0),
+    BackgroundTransparency=1,TextColor3=TEXT2,
+    Font=Enum.Font.GothamBold,TextSize=9,
+    TextXAlignment=Enum.TextXAlignment.Left
+},timerBar)
+NEW("TextLabel",{
+    Text="ZILI HUB",
+    Size=UDim2.new(0.35,0,1,0),Position=UDim2.new(0.65,0,0,0),
+    BackgroundTransparency=1,TextColor3=GOLD3,
+    Font=Enum.Font.GothamBold,TextSize=8,
+    TextXAlignment=Enum.TextXAlignment.Right
+},timerBar)
+-- Pad right
+NEW("UIPadding",{PaddingRight=UDim.new(0,6)},timerBar)
+
+-- Session timer logic
+local sessionStartTime = os.time()
+task.spawn(function()
+    while CompactWidget and CompactWidget.Parent do
+        task.wait(1)
+        if compactActive and timerLabel and timerLabel.Parent then
+            local elapsed = os.time() - sessionStartTime
+            local h = math.floor(elapsed / 3600)
+            local m = math.floor((elapsed % 3600) / 60)
+            local s = elapsed % 60
+            pcall(function()
+                timerLabel.Text = string.format("%dH  %02dM  %02dS", h, m, s)
+            end)
+        end
+    end
+end)
+
+-- CW: drag
+local cwDrag,cwDragSt,cwDragPos=false,nil,nil
+cwTopBar.InputBegan:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1 then
+        cwDrag=true; cwDragSt=i.Position; cwDragPos=cwFrame.Position
+    end
+end)
+UIS.InputChanged:Connect(function(i)
+    if cwDrag and i.UserInputType==Enum.UserInputType.MouseMovement then
+        local d=i.Position-cwDragSt
+        cwFrame.Position=UDim2.new(cwDragPos.X.Scale,cwDragPos.X.Offset+d.X,cwDragPos.Y.Scale,cwDragPos.Y.Offset+d.Y)
+    end
+end)
+UIS.InputEnded:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1 then cwDrag=false end
+end)
+
+-- CW shimmer loop
+task.spawn(function()
+    while CompactWidget and CompactWidget.Parent do
+        if compactActive then
+            cwShimmer.Position = UDim2.new(-0.1,0,-0.3,0)
+            TweenService:Create(cwShimmer,TweenInfo.new(3.0,Enum.EasingStyle.Quad),{
+                Position=UDim2.new(1.1,0,-0.3,0)
+            }):Play()
+        end
+        task.wait(6.0)
+    end
+end)
+
+-- Compact toggle logic
+local function SetCompactMode(on)
+    compactActive = on
+    TWEEN(compactPill,0.2,{BackgroundColor3=on and GOLDD or BG5})
+    TWEEN(compactStrk,0.2,{Color=on and GOLD2 or GOLD3})
+    TWEEN(compactThumb,0.2,{BackgroundColor3=on and GOLD2 or TEXT3, Position=on and UDim2.new(1,-14,0.5,-6) or UDim2.new(0,2,0.5,-6)})
+    if on then
+        -- Sync values ngay khi bật
+        for k,vl in pairs(cwValues) do
+            local main = FishStatValues[k]
+            if main then vl.Text = main.Text end
+        end
+        MainFrame.Visible = false
+        MiniLogo.Visible  = false
+        CompactWidget.Enabled = true
+    else
+        CompactWidget.Enabled = false
+        MainFrame.Visible = true
+    end
+end
+
+compactPill.MouseButton1Click:Connect(function() SetCompactMode(not compactActive) end)
+cwClose.MouseButton1Click:Connect(function() SetCompactMode(false) end)
+
+-- Live stat update — 2s interval, tự dừng khi card bị destroy
 task.spawn(function()
     while fsCard and fsCard.Parent do
         task.wait(2)
@@ -5617,33 +6803,35 @@ task.spawn(function()
                 if ok and type(decoded)=="table" then inv = decoded end
             end
 
-            -- Mythical Fruit Chest
-            if FishStatValues["MythicChest"] then
-                FishStatValues["MythicChest"].Text = tostring(inv["Mythical Fruit Chest"] or 0)
-            end
-            -- Legendary Fish Bait
-            if FishStatValues["LegBait"] then
-                FishStatValues["LegBait"].Text = tostring(inv["Legendary Fish Bait"] or 0)
-            end
             -- Peli
-            if FishStatValues["Peli"] then
-                local statsNode = statFolder:FindFirstChild("Stats")
-                local peliNode  = statsNode and statsNode:FindFirstChild("Peli")
-                FishStatValues["Peli"].Text = peliNode and tostring(peliNode.Value) or "0"
-            end
-            -- Bait hiện tại đang dùng
-            if FishStatValues["Bait"] then
-                local bait = _G.TargetBait or "Common Fish Bait"
-                FishStatValues["Bait"].Text = tostring(inv[bait] or 0)
+            local peliVal = "0"
+            local statsNode = statFolder:FindFirstChild("Stats")
+            local peliNode  = statsNode and statsNode:FindFirstChild("Peli")
+            if peliNode then peliVal = tostring(peliNode.Value) end
+
+            local bait = _G.TargetBait or "Common Fish Bait"
+
+            local updates = {
+                MythicChest = tostring(inv["Mythical Fruit Chest"] or 0),
+                LegBait     = tostring(inv["Legendary Fish Bait"] or 0),
+                Peli        = peliVal,
+                Bait        = tostring(inv[bait] or 0),
+            }
+
+            for key, val in pairs(updates) do
+                if FishStatValues[key] then FishStatValues[key].Text = val end
+                if cwValues[key] then cwValues[key].Text = val end
             end
         end)
     end
+    -- Card bị destroy → dọn compact widget luôn
+    if CompactWidget then CompactWidget:Destroy() end
 end)
 
 -- Config card
 local fcH = 428
 local ConfigFishFrame = MakeCard(FishingPage, fcH, 3)
-CardHeader(ConfigFishFrame, "gear", "CONFIGURATION")
+CardHeader(ConfigFishFrame, "gear", "CONFIGURATION", GOLD)
 
 -- Dropdown factory (unchanged logic)
 local function CreateDropdown(parent, titleText, options, defaultSelect, posY, configKey, isMulti, showSearch)
@@ -5683,11 +6871,49 @@ local function CreateDropdown(parent, titleText, options, defaultSelect, posY, c
         },dropScroll)
     end
 
-    -- Init value
+    -- Init value — Callback restores headBtn text + checkmarks when config is loaded
     local initVal = isMulti and {} or nil
-    TogglesData[configKey]={Value=initVal, Callback=function() end, HeadBtn=headBtn}
+    local function defaultCallback(val)
+        if isMulti then
+            -- restore tick marks on each option button
+            local ct = 0
+            for _, b in ipairs(dropScroll:GetChildren()) do
+                if b:IsA("TextButton") then
+                    local selected = type(val)=="table" and val[b.Name]==true
+                    if selected then
+                        TWEEN(b,0.1,{TextColor3=GOLD2}); b.Font=Enum.Font.GothamBold
+                        if not b:FindFirstChild("TickMark") then
+                            NEW("TextLabel",{Name="TickMark",Text="✓",TextColor3=GOLD2,
+                                TextXAlignment=Enum.TextXAlignment.Right,
+                                Size=UDim2.new(1,-5,1,0),BackgroundTransparency=1,
+                                Font=Enum.Font.GothamBold,TextSize=12,ZIndex=202},b)
+                        end
+                        ct = ct + 1
+                    else
+                        TWEEN(b,0.1,{TextColor3=TEXT2}); b.Font=Enum.Font.Gotham
+                        if b:FindFirstChild("TickMark") then b.TickMark:Destroy() end
+                    end
+                end
+            end
+            headBtn.Text = ct > 0 and (ct .. " Selected") or "Select..."
+        else
+            -- single select: highlight chosen option
+            for _, b in ipairs(dropScroll:GetChildren()) do
+                if b:IsA("TextButton") then
+                    local selected = b.Name == tostring(val)
+                    TWEEN(b,0.1,{TextColor3=selected and GOLD2 or TEXT2})
+                    b.Font = selected and Enum.Font.GothamBold or Enum.Font.Gotham
+                end
+            end
+            headBtn.Text = (val ~= nil and tostring(val) ~= "") and tostring(val) or "Select..."
+        end
+    end
+    TogglesData[configKey] = {Value=initVal, Callback=defaultCallback, HeadBtn=headBtn}
     if not isMulti and (defaultSelect == nil or defaultSelect == "") then
         headBtn.Text = "Select..."
+    elseif not isMulti and defaultSelect then
+        -- set initial value if there's a default
+        TogglesData[configKey].Value = defaultSelect
     end
 
     local function openDrop()
@@ -5886,8 +7112,39 @@ do
     },buyList)
     NEW("UIPadding",{PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4)},buyList)
 
-    -- init toggledata
-    TogglesData["Config_BuyItems"] = {Value={}, Callback=function() end}
+    -- init toggledata — Callback restores checkmarks when config is loaded
+    TogglesData["Config_BuyItems"] = {
+        Value    = {},
+        HeadBtn  = buyCountBadge,
+        Callback = function(val)
+            if type(val) ~= "table" then return end
+            local ct = 0
+            for itemName, row in pairs(buyBtns) do
+                local selected = val[itemName] == true
+                local nameLabel = row:FindFirstChildOfClass("TextLabel")  -- first TextLabel = rarity tag, 2nd = name
+                local nameLbl, checkLbl
+                for _, child in ipairs(row:GetChildren()) do
+                    if child:IsA("TextLabel") then
+                        if child.Size.X.Offset <= 80 then
+                            -- narrow = rarity tag, skip
+                        elseif child.Size.X.Offset == 20 then
+                            checkLbl = child
+                        else
+                            nameLbl = child
+                        end
+                    end
+                end
+                if checkLbl then checkLbl.Text = selected and "✓" or "" end
+                if nameLbl  then
+                    nameLbl.TextColor3 = selected and GOLD2 or TEXT2
+                    nameLbl.Font       = selected and Enum.Font.GothamBold or Enum.Font.Gotham
+                end
+                if selected then ct = ct + 1 end
+            end
+            buyCountBadge.Text       = ct > 0 and (ct .. " Selected") or "Select items..."
+            buyCountBadge.TextColor3 = ct > 0 and GOLD2 or TEXT3
+        end,
+    }
 
     local buyBtns = {}
     for idx,itemName in ipairs(BUY_ITEMS_SORTED) do
@@ -5988,8 +7245,22 @@ buyAmtBox.FocusLost:Connect(function()
     else
         buyAmtBox.Text = tostring(_G.FishBuyAmount)
     end
+    TogglesData["Config_BaitAmount"].Value = _G.FishBuyAmount
     TWEEN(buyAmtStroke,0.15,{Color=GOLD3})
 end)
+
+-- Track BaitAmount so ConfigManager can save/restore it
+TogglesData["Config_BaitAmount"] = {
+    Value    = 50,
+    HeadBtn  = buyAmtBox,
+    Callback = function(val)
+        local n = tonumber(val)
+        if n and n > 0 then
+            _G.FishBuyAmount = math.floor(n)
+            pcall(function() buyAmtBox.Text = tostring(math.floor(n)) end)
+        end
+    end,
+}
 
 -- ==========================================
 -- Ô NHẬP DISCORD WEBHOOK (Dùng chuẩn UI mới)
@@ -6015,14 +7286,21 @@ local textBoxWH = NEW("TextBox",{
     ClearTextOnFocus=false,ClipsDescendants=true
 }, boxFrameWH)
 
-TogglesData["Config_Webhook"] = { Value = "" }
+-- Full init with HeadBtn + Callback so ConfigManager can restore text
+TogglesData["Config_Webhook"] = {
+    Value    = "",
+    HeadBtn  = textBoxWH,
+    Callback = function(val)
+        _G.WebhookUrl = val or ""
+        pcall(function() textBoxWH.Text = val or "" end)
+    end,
+}
 
 -- Xử lý khi dán link xong (Chớp viền vàng báo thành công)
 textBoxWH.FocusLost:Connect(function()
     local txt = textBoxWH.Text
     _G.WebhookUrl = txt
     TogglesData["Config_Webhook"].Value = txt
-    
     TWEEN(boxStrokeWH, 0.15, {Color=GOLD2})
     task.wait(0.2)
     TWEEN(boxStrokeWH, 0.2, {Color=GOLD3})
@@ -6031,7 +7309,7 @@ end)
 -- ── AUTO STORE / DROP FRUIT CARD ──
 local fruitCardH = 238
 local fruitCard = MakeCard(FishingPage, fruitCardH, 4)
-CardHeader(fruitCard, "fruit", "FRUIT MANAGEMENT")
+CardHeader(fruitCard, "fruit", "FRUIT MANAGEMENT", GREEN)
 
 -- Auto Store Fruit row
 RowLabel(fruitCard, "Auto Store Fruit", "Auto store fruit to inventory", 34)
@@ -6129,20 +7407,39 @@ if not AutoStatsData then AutoStatsData = {} end
 PageLayout(ConfigPage, 14, 10)
 
 -- Config header card
-local cfgHeaderCard = MakeCard(ConfigPage, 42, 0)
-cfgHeaderCard.BackgroundColor3 = C(16,18,42)
+local cfgHeaderCard = MakeCard(ConfigPage, 38, 0)
+cfgHeaderCard.BackgroundColor3 = C(9,10,22)
+-- left accent bar
+local cfgAcc = NEW("Frame",{Size=UDim2.new(0,2,0.55,0),Position=UDim2.new(0,0,0.225,0),BackgroundColor3=GOLD,BorderSizePixel=0},cfgHeaderCard)
+CORNER(1,cfgAcc)
+-- "CONFIG MANAGER" main title
 NEW("TextLabel",{
-    Text="⚙  CONFIG MANAGER",
-    Size=UDim2.new(0.6,0,1,0), Position=UDim2.new(0,14,0,0),
+    Text="CONFIG MANAGER",
+    Size=UDim2.new(0,148,1,0), Position=UDim2.new(0,10,0,0),
     BackgroundTransparency=1, TextColor3=GOLD2,
-    Font=Enum.Font.GothamBold, TextSize=14, TextXAlignment=Enum.TextXAlignment.Left
+    Font=Enum.Font.GothamBold, TextSize=12, TextXAlignment=Enum.TextXAlignment.Left
 }, cfgHeaderCard)
-NEW("TextLabel",{
-    Text="Save & load your session settings",
-    Size=UDim2.new(0.55,0,1,0), Position=UDim2.new(0.45,0,0,0),
-    BackgroundTransparency=1, TextColor3=TEXT3,
-    Font=Enum.Font.Gotham, TextSize=11, TextXAlignment=Enum.TextXAlignment.Right
-}, cfgHeaderCard)
+-- breadcrumb separators
+local CFG_CRUMBS = {
+    {" SAVE", CYAN},
+    {" LOAD", GREEN},
+    {" AUTO", AMBER},
+}
+local crumbX = 162
+for _, cr in ipairs(CFG_CRUMBS) do
+    NEW("TextLabel",{
+        Text="·", Size=UDim2.new(0,10,1,0), Position=UDim2.new(0,crumbX,0,0),
+        BackgroundTransparency=1, TextColor3=TEXT3,
+        Font=Enum.Font.GothamBold, TextSize=11, TextXAlignment=Enum.TextXAlignment.Center
+    }, cfgHeaderCard)
+    crumbX = crumbX + 10
+    local cLbl = NEW("TextLabel",{
+        Text=cr[1], Size=UDim2.new(0,42,1,0), Position=UDim2.new(0,crumbX,0,0),
+        BackgroundTransparency=1, TextColor3=cr[2],
+        Font=Enum.Font.GothamBold, TextSize=11, TextXAlignment=Enum.TextXAlignment.Left
+    }, cfgHeaderCard)
+    crumbX = crumbX + 42
+end
 
 local cfgContainer = NEW("Frame",{
     Size=UDim2.new(1,-24,0,390), BackgroundTransparency=1, LayoutOrder=1
@@ -6164,93 +7461,114 @@ local LeftPanel = NEW("Frame",{
 CORNER(9, LeftPanel)
 STROKE(GOLD, 1, 0.65, LeftPanel)
 
-local lpHead = NEW("Frame",{Size=UDim2.new(1,0,0,34),BackgroundColor3=C(15,17,40)}, LeftPanel)
+local lpHead = NEW("Frame",{Size=UDim2.new(1,0,0,34),BackgroundColor3=BG_HDR}, LeftPanel)
 CORNER(9, lpHead)
-NEW("Frame",{Size=UDim2.new(1,0,0,15),Position=UDim2.new(0,0,1,-15),BackgroundColor3=C(15,17,40),BorderSizePixel=0},lpHead)
+NEW("Frame",{Size=UDim2.new(1,0,0,15),Position=UDim2.new(0,0,1,-15),BackgroundColor3=BG_HDR,BorderSizePixel=0},lpHead)
+-- accent bar
+local lpAcc = NEW("Frame",{Size=UDim2.new(0,2,0.55,0),Position=UDim2.new(0,0,0.225,0),BackgroundColor3=GOLD2,BorderSizePixel=0},lpHead)
+CORNER(1,lpAcc)
 NEW("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,0,0),BackgroundColor3=GOLD,BorderSizePixel=0,BackgroundTransparency=0.5},lpHead)
 NEW("TextLabel",{
-    Text="⊟  SAVED CONFIGS",
+    Text="+ SAVED CONFIGS",
     Size=UDim2.new(1,-10,1,0),Position=UDim2.new(0,14,0,0),
     BackgroundTransparency=1,TextColor3=GOLD2,Font=Enum.Font.GothamBold,
-    TextSize=12,TextXAlignment=Enum.TextXAlignment.Left
+    TextSize=10,TextXAlignment=Enum.TextXAlignment.Left
 },lpHead)
 
 local SearchBoxConfig = NEW("TextBox",{
-    Size=UDim2.new(1,-16,0,32), Position=UDim2.new(0,8,0,40),
+    Size=UDim2.new(1,-16,0,28), Position=UDim2.new(0,8,0,40),
     BackgroundColor3=BG5, PlaceholderText="  Search configs...",
-    Text="", TextColor3=GOLD2, Font=Enum.Font.GothamSemibold, TextSize=13
+    Text="", TextColor3=GOLD2, Font=Enum.Font.GothamSemibold, TextSize=11
 }, LeftPanel)
-CORNER(7, SearchBoxConfig)
-local SearchStrokeConfig = STROKE(C(50,40,15),1,0,SearchBoxConfig)
-SearchBoxConfig.Focused:Connect(function() TWEEN(SearchStrokeConfig,0.2,{Color=GOLD2}) end)
-SearchBoxConfig.FocusLost:Connect(function() TWEEN(SearchStrokeConfig,0.2,{Color=C(50,40,15)}) end)
+CORNER(6, SearchBoxConfig)
+local SearchStrokeConfig = STROKE(GOLD3,1,0.3,SearchBoxConfig)
+SearchBoxConfig.Focused:Connect(function() TWEEN(SearchStrokeConfig,0.2,{Color=GOLD2,Transparency=0}) end)
+SearchBoxConfig.FocusLost:Connect(function() TWEEN(SearchStrokeConfig,0.2,{Color=GOLD3,Transparency=0.3}) end)
 
 local ConfigList = NEW("ScrollingFrame",{
-    Size=UDim2.new(1,-16,1,-84), Position=UDim2.new(0,8,0,80),
-    BackgroundColor3=BG0, ScrollBarThickness=3, ScrollBarImageColor3=GOLD,
+    Size=UDim2.new(1,-16,1,-76), Position=UDim2.new(0,8,0,74),
+    BackgroundColor3=C(6,7,14), ScrollBarThickness=2, ScrollBarImageColor3=GOLD3,
     BorderSizePixel=0
 }, LeftPanel)
-CORNER(7, ConfigList)
-STROKE(C(30,25,10),1,0,ConfigList)
-local ListLayout = NEW("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,5),HorizontalAlignment=Enum.HorizontalAlignment.Center},ConfigList)
-NEW("UIPadding",{PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6)},ConfigList)
+CORNER(6, ConfigList)
+STROKE(C(25,22,8),1,0.2,ConfigList)
+local ListLayout = NEW("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4),HorizontalAlignment=Enum.HorizontalAlignment.Center},ConfigList)
+NEW("UIPadding",{PaddingTop=UDim.new(0,5),PaddingBottom=UDim.new(0,5)},ConfigList)
 
 -- ── RIGHT PANEL: Actions ──
 local RightPanel = NEW("Frame",{
     Size=UDim2.new(1,-248,1,0),
     BackgroundColor3=BG3, LayoutOrder=1
 }, cfgContainer)
-CORNER(9, RightPanel)
-STROKE(GOLD, 1, 0.65, RightPanel)
+CORNER(8, RightPanel)
+STROKE(GOLD, 1, 0.72, RightPanel)
 
-local rpHead = NEW("Frame",{Size=UDim2.new(1,0,0,34),BackgroundColor3=C(15,17,40)},RightPanel)
-CORNER(9,rpHead)
-NEW("Frame",{Size=UDim2.new(1,0,0,15),Position=UDim2.new(0,0,1,-15),BackgroundColor3=C(15,17,40),BorderSizePixel=0},rpHead)
-NEW("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,0,0),BackgroundColor3=GOLD,BorderSizePixel=0,BackgroundTransparency=0.5},rpHead)
+local rpHead = NEW("Frame",{Size=UDim2.new(1,0,0,34),BackgroundColor3=BG_HDR},RightPanel)
+CORNER(8,rpHead)
+NEW("Frame",{Size=UDim2.new(1,0,0,15),Position=UDim2.new(0,0,1,-15),BackgroundColor3=BG_HDR,BorderSizePixel=0},rpHead)
+-- accent bar
+local rpAcc = NEW("Frame",{Size=UDim2.new(0,2,0.55,0),Position=UDim2.new(0,0,0.225,0),BackgroundColor3=GOLD2,BorderSizePixel=0},rpHead)
+CORNER(1,rpAcc)
+NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,0,0),BackgroundColor3=GOLD,BorderSizePixel=0,BackgroundTransparency=0.5},rpHead)
 NEW("TextLabel",{
-    Text="▷  ACTIONS",
-    Size=UDim2.new(1,-10,1,0),Position=UDim2.new(0,14,0,0),
+    Text="▷ ACTIONS",
+    Size=UDim2.new(1,-10,1,0),Position=UDim2.new(0,10,0,0),
     BackgroundTransparency=1,TextColor3=GOLD2,Font=Enum.Font.GothamBold,
-    TextSize=12,TextXAlignment=Enum.TextXAlignment.Left
+    TextSize=10,TextXAlignment=Enum.TextXAlignment.Left
 },rpHead)
 
 local RightLayout = NEW("UIListLayout",{
-    SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,7),
+    SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6),
     HorizontalAlignment=Enum.HorizontalAlignment.Center
 },RightPanel)
 NEW("UIPadding",{PaddingTop=UDim.new(0,0),PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10)},RightPanel)
 
 local ConfigNameBox = NEW("TextBox",{
-    Size=UDim2.new(1,0,0,36), BackgroundColor3=BG5,
+    Size=UDim2.new(1,0,0,34), BackgroundColor3=BG5,
     PlaceholderText="  Config name...", Text="",
-    TextColor3=GOLD2, Font=Enum.Font.GothamSemibold, TextSize=13
+    TextColor3=GOLD2, Font=Enum.Font.GothamSemibold, TextSize=12
 }, RightPanel)
-CORNER(7, ConfigNameBox)
+CORNER(6, ConfigNameBox)
 local NameStroke = STROKE(GOLD3,1,0,ConfigNameBox)
 ConfigNameBox.Focused:Connect(function() TWEEN(NameStroke,0.2,{Color=GOLD2}) end)
 ConfigNameBox.FocusLost:Connect(function() TWEEN(NameStroke,0.2,{Color=GOLD3}) end)
 
 NEW("Frame",{Size=UDim2.new(1,0,0,1),BackgroundColor3=C(30,28,55),BorderSizePixel=0},RightPanel)
 
-local function CreateActionBtn(label, bgCol, hoverCol, strokeCol)
+local function CreateActionBtn(iconN, label, bgCol, hoverCol, strokeCol, textCol)
+    textCol = textCol or TEXT1
     local btn = NEW("TextButton",{
-        Size=UDim2.new(1,0,0,36), BackgroundColor3=bgCol,
-        Text=label, TextColor3=TEXT1,
-        Font=Enum.Font.GothamBold, TextSize=13, AutoButtonColor=false
+        Size=UDim2.new(1,0,0,34), BackgroundColor3=bgCol,
+        Text="", AutoButtonColor=false
     }, RightPanel)
-    CORNER(7, btn)
-    STROKE(strokeCol, 1, 0.05, btn)
+    CORNER(6, btn)
+    STROKE(strokeCol, 1, 0.08, btn)
+
+    -- drawn icon left side
+    local iHolder = NEW("Frame",{
+        Size=UDim2.new(0,16,0,16),Position=UDim2.new(0,12,0.5,-8),
+        BackgroundTransparency=1,BorderSizePixel=0
+    },btn)
+    DrawIcon(iHolder, iconN, 0, 0, 16, strokeCol)
+
+    NEW("TextLabel",{
+        Text=label,Size=UDim2.new(1,-38,1,0),Position=UDim2.new(0,34,0,0),
+        BackgroundTransparency=1,TextColor3=textCol,
+        Font=Enum.Font.GothamBold,TextSize=11,
+        TextXAlignment=Enum.TextXAlignment.Left
+    },btn)
+
     btn.MouseEnter:Connect(function() TWEEN(btn,0.15,{BackgroundColor3=hoverCol}) end)
     btn.MouseLeave:Connect(function() TWEEN(btn,0.15,{BackgroundColor3=bgCol}) end)
     return btn
 end
 
-local CreateBtn      = CreateActionBtn("📄  Create Config",  C(12,42,12),  C(18,62,18),  C(40,170,40))
-local SaveBtn        = CreateActionBtn("💾  Save Config",     C(14,16,42),  C(20,24,62),  C(75,75,155))
-local LoadBtn        = CreateActionBtn("📂  Load Config",     C(12,24,54),  C(16,34,72),  C(58,100,190))
-local RefreshBtn     = CreateActionBtn("🔄  Refresh List",   C(10,32,38),  C(14,44,54),  C(48,122,135))
-local SetAutoLoadBtn = CreateActionBtn("⭐  Set Auto Load",  C(42,32,8),   C(58,44,10),  C(190,140,30))
-local DeleteBtn      = CreateActionBtn("🗑️  Delete Config",  C(58,12,12),  C(80,18,18),  C(210,55,55))
+local CreateBtn      = CreateActionBtn("fruit",   "CREATE CONFIG",  C(8,28,8),   C(12,44,12),  GREEN,   GREEN)
+local SaveBtn        = CreateActionBtn("gear",    "SAVE CONFIG",    C(10,12,32), C(16,20,52),  BLUE_A,  BLUE_A)
+local LoadBtn        = CreateActionBtn("globe",   "LOAD CONFIG",    C(8,18,40),  C(12,26,58),  CYAN,    CYAN)
+local RefreshBtn     = CreateActionBtn("wave",    "REFRESH LIST",   C(8,22,26),  C(12,32,38),  C(48,180,180), C(48,180,180))
+local SetAutoLoadBtn = CreateActionBtn("lightning","SET AUTO LOAD", C(30,22,6),  C(46,34,8),   AMBER,   AMBER)
+local DeleteBtn      = CreateActionBtn("shield",  "DELETE CONFIG",  C(38,8,8),   C(58,12,12),  RED,     RED)
 
 pcall(function()
     local CL=require("Config/ConfigManager")
@@ -6297,6 +7615,13 @@ MiniLogo.MouseButton1Click:Connect(function() ToggleHub(true) end)
 CloseBtn.MouseButton1Click:Connect(function()
     d = false
     getgenv().ZiliHub_Loaded = false
+
+    -- Dọn compact widget nếu đang bật
+    pcall(function()
+        if CompactWidget and CompactWidget.Parent then
+            CompactWidget:Destroy()
+        end
+    end)
 
     local mStroke = MainFrame:FindFirstChildOfClass("UIStroke")
 
