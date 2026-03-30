@@ -4539,13 +4539,13 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 if gethui then
     ScreenGui.Parent = gethui()
-elseif type(syn) == "table" and syn.protect_gui then
-    syn.protect_gui(ScreenGui)
-    ScreenGui.Parent = CoreGui
+elseif syn and syn.protect_gui then
+    syn.protect_gui(ScreenGui); ScreenGui.Parent = CoreGui
 else
     ScreenGui.Parent = CoreGui:FindFirstChild("RobloxGui") or CoreGui
 end
--- Bỏ dòng 259 đi
+
+
 -- =====================================================================
 -- HELPERS
 -- =====================================================================
@@ -4953,42 +4953,6 @@ local function DrawIcon(parent, iconName, px, py, sz, col)
 
     return c
 end
-
-    -- filled rounded rect
-    local function RR(x,y,w,h,r,clr)
-        local f=NEW("Frame",{Size=UDim2.new(0,w,0,h),Position=UDim2.new(0,x,0,y),
-            BackgroundColor3=clr or col,BorderSizePixel=0},c)
-        CORNER(r,f); return f
-    end
-    -- line from (x1,y1) to (x2,y2), rotates around its own center
-    local function L(x1,y1,x2,y2,th,clr)
-        local dx=x2-x1; local dy=y2-y1
-        local len=math.sqrt(dx*dx+dy*dy)
-        if len<0.5 then return end
-        local ang=math.deg(math.atan2(dy,dx))
-        local f=NEW("Frame",{
-            Size=UDim2.new(0,len,0,th or 2),
-            Position=UDim2.new(0,(x1+x2)/2,0,(y1+y2)/2),
-            AnchorPoint=Vector2.new(0.5,0.5),
-            BackgroundColor3=clr or col,
-            BorderSizePixel=0, Rotation=ang
-        },c)
-        CORNER(1,f); return f
-    end
-    -- circle dot
-    local function Dot(cx,cy,d,clr)
-        return RR(cx-d/2,cy-d/2,d,d,d/2,clr)
-    end
-    -- circle ring (stroke only)
-    local function Ring(cx,cy,d,sw,clr)
-        local f=NEW("Frame",{
-            Size=UDim2.new(0,d,0,d),
-            Position=UDim2.new(0,cx-d/2,0,cy-d/2),
-            BackgroundTransparency=1,BorderSizePixel=0
-        },c)
-        CORNER(d/2,f); STROKE(clr or col,sw or 1.5,0,f); return f
-    end
-
 
 -- Tween tất cả frames + strokes trong icon container (dùng cho tab active/inactive)
 local function TweenIcon(iconContainer, clr, t)
@@ -6467,7 +6431,7 @@ CardHeader(lfCard, "sword", "LEVEL FARM", AMBER)
 RowLabel(lfCard, "Start Level Farm", "Auto kills enemies · respawns", 34)
 
 local StartFarmToggle, SFToggleStroke, SFThumb = CardToggle(lfCard, 44, "AutoFarmLevel", function(state)
-    if AutoFarmLevel then AutoFarmLevel.Toggle(state) end  -- ✅
+    if AutoFarmLevel then AutoFarmLevel.Toggle(state) end
     if state then warn("Auto Farming Level On ..") else warn("Auto Farming Level Off ..") end
 end, COL_FARM)
 
@@ -6771,12 +6735,12 @@ TogglesData["AutoFishMerchant"] = {
     AccentCol = COL_FISH,
     AccentDark= C(8,20,42),
     MasterBar = FishMasterBar,
-    Callback = function(state)
+    Callback  = function(state)
         _G.AutoFishMerchant = state
         if state then
-            if AutoFishMerchantModule then AutoFishMerchantModule.Start(TogglesData) end  -- ✅
+            if AutoFishMerchantModule then AutoFishMerchantModule.Start(TogglesData) end
         else
-            if AutoFishMerchantModule then AutoFishMerchantModule.Stop() end              -- ✅
+            if AutoFishMerchantModule then AutoFishMerchantModule.Stop() end
         end
     end,
 }
@@ -7213,7 +7177,7 @@ local timerLabel = NEW("TextLabel",{
     TextXAlignment=Enum.TextXAlignment.Left
 },cwTimerBar)
 NEW("TextLabel",{
-    Text="ZILI HUB  ·  GPO",
+    Text="ZILI HUB  ·  GBO",
     Size=UDim2.new(0.4,-8,1,0),Position=UDim2.new(0.6,0,0,0),
     BackgroundTransparency=1,TextColor3=GOLD3,
     Font=Enum.Font.GothamBold,TextSize=8,
