@@ -4529,6 +4529,7 @@ local TweenService= game:GetService("TweenService")
 local Players     = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
+local CoreGui     = game:GetService("CoreGui")
 
 -- =====================================================================
 -- SCREEN GUI
@@ -4544,7 +4545,6 @@ elseif syn and syn.protect_gui then
 else
     ScreenGui.Parent = CoreGui:FindFirstChild("RobloxGui") or CoreGui
 end
-if gethui then ScreenGui.Parent = gethui() else ScreenGui.Parent = game.CoreGui end
 
 -- =====================================================================
 -- HELPERS
@@ -6467,8 +6467,8 @@ CardHeader(lfCard, "sword", "LEVEL FARM", AMBER)
 RowLabel(lfCard, "Start Level Farm", "Auto kills enemies · respawns", 34)
 
 local StartFarmToggle, SFToggleStroke, SFThumb = CardToggle(lfCard, 44, "AutoFarmLevel", function(state)
-    AutoFarmLevel.Toggle(state)
-    if state then warn("Auto Farming Level On ..") else warn("Auto Farming Level Off ..") end
+    if AutoFarmLevel then AutoFarmLevel.Toggle(state) end  -- ✅
+    if state then print("Auto Farming Level On ..") else print("Auto Farming Level Off ..") end
 end, COL_FARM)
 
 RowDivider(lfCard, 80)
@@ -6771,12 +6771,12 @@ TogglesData["AutoFishMerchant"] = {
     AccentCol = COL_FISH,
     AccentDark= C(8,20,42),
     MasterBar = FishMasterBar,
-    Callback  = function(state)
+    Callback = function(state)
         _G.AutoFishMerchant = state
         if state then
-            AutoFishMerchantModule.Start(TogglesData)
+            if AutoFishMerchantModule then AutoFishMerchantModule.Start(TogglesData) end  -- ✅
         else
-            AutoFishMerchantModule.Stop()
+            if AutoFishMerchantModule then AutoFishMerchantModule.Stop() end              -- ✅
         end
     end,
 }
