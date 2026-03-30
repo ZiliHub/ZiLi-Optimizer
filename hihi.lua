@@ -4539,13 +4539,13 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 if gethui then
     ScreenGui.Parent = gethui()
-elseif syn and syn.protect_gui then
-    syn.protect_gui(ScreenGui); ScreenGui.Parent = CoreGui
+elseif type(syn) == "table" and syn.protect_gui then
+    syn.protect_gui(ScreenGui)
+    ScreenGui.Parent = CoreGui
 else
     ScreenGui.Parent = CoreGui:FindFirstChild("RobloxGui") or CoreGui
 end
-if gethui then ScreenGui.Parent = gethui() else ScreenGui.Parent = game.CoreGui end
-
+-- Bỏ dòng 259 đi
 -- =====================================================================
 -- HELPERS
 -- =====================================================================
@@ -6467,7 +6467,7 @@ CardHeader(lfCard, "sword", "LEVEL FARM", AMBER)
 RowLabel(lfCard, "Start Level Farm", "Auto kills enemies · respawns", 34)
 
 local StartFarmToggle, SFToggleStroke, SFThumb = CardToggle(lfCard, 44, "AutoFarmLevel", function(state)
-    AutoFarmLevel.Toggle(state)
+    if AutoFarmLevel then AutoFarmLevel.Toggle(state) end  -- ✅
     if state then warn("Auto Farming Level On ..") else warn("Auto Farming Level Off ..") end
 end, COL_FARM)
 
@@ -6771,12 +6771,12 @@ TogglesData["AutoFishMerchant"] = {
     AccentCol = COL_FISH,
     AccentDark= C(8,20,42),
     MasterBar = FishMasterBar,
-    Callback  = function(state)
+    Callback = function(state)
         _G.AutoFishMerchant = state
         if state then
-            AutoFishMerchantModule.Start(TogglesData)
+            if AutoFishMerchantModule then AutoFishMerchantModule.Start(TogglesData) end  -- ✅
         else
-            AutoFishMerchantModule.Stop()
+            if AutoFishMerchantModule then AutoFishMerchantModule.Stop() end              -- ✅
         end
     end,
 }
