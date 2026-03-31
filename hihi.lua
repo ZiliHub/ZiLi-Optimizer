@@ -7518,7 +7518,7 @@ local baitOpts={"Common Fish Bait","Rare Fish Bait","Legendary Fish Bait"}
 CreateDropdown(ConfigFishFrame,"Auto Select Bait",baitOpts,nil,34,"Config_SelectBait",false,false)
 
 -- ── SELL FISH (multi, no default) ──
-local sellOpts={"Common","Rare","Legendary"}
+local sellOpts={"Common Fish","Rare Fish","Legendary Fish"}
 CreateDropdown(ConfigFishFrame,"Auto Sell Fish",sellOpts,nil,78,"Config_SellFish",true,false)
 
 -- ── AUTO BUY ITEMS (multi + always-visible search, full rarity list) ──
@@ -7726,7 +7726,7 @@ do
 end
 
 -- ── CRAFT BAIT (multi, no default) ──
-local craftOpts={"Rare","Legendary"}
+local craftOpts={"Rare Fish Bait","Legendary Fish Bait"}
 CreateDropdown(ConfigFishFrame,"Auto Craft Bait",craftOpts,nil,318,"Config_CraftBait",true,false)
 
 -- ── BAIT BUY AMOUNT ──
