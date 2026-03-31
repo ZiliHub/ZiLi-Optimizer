@@ -6458,6 +6458,10 @@ end  -- end IS_LOBBY/else
 -- ██████  AUTO FARM PAGE  (game world only)
 -- =====================================================================
 if not IS_LOBBY then
+-- Pre-declare so SetToggle (inside do block below) can capture it as upvalue
+local FishMasterBar
+
+do -- ■■ AutoFarm section — scoped to free local registers ■■
 PageLayout(AutoFarmPage, 14, 10)
 
 -- Level Farm card
@@ -6591,9 +6595,12 @@ for i,row in ipairs(MISC_ROWS) do
     end
 end
 
+end -- ■■ end AutoFarm section ■■
+
 -- =====================================================================
 -- ██████  TRAVEL PAGE
 -- =====================================================================
+do -- ■■ Travel section — scoped to free local registers ■■
 PageLayout(TravelPage, 14, 10)
 
 -- Island Teleport card (no Force Stop - use toggle to stop)
@@ -6722,6 +6729,7 @@ local EspToggleBtn=NEW("TextButton",{Text=""},EspSectionFrame)
 local EspToggleStroke=NEW("UIStroke",{},EspToggleBtn)
 local EspThumb=NEW("Frame",{},EspToggleBtn)
 EspToggleBtn.MouseButton1Click:Connect(function() end)
+end -- ■■ end Travel section ■■
 
 -- =====================================================================
 -- ██████  FISHING + MERCHANT PAGE
@@ -6733,7 +6741,7 @@ local fmH = 80
 local fmCard = MakeCard(FishingPage, fmH, 1)
 CardHeader(fmCard, "fish", "FISHING + MERCHANT FARM", ORANGE)
 
-local FishMasterBar = NEW("Frame",{
+FishMasterBar = NEW("Frame",{
     Size=UDim2.new(0,3,1,0), Position=UDim2.new(0,0,0,0),
     BackgroundColor3=GOLD, BorderSizePixel=0
 }, fmCard)
