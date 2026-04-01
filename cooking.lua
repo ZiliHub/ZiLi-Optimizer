@@ -391,9 +391,9 @@ local GatherTime    = 1.5   -- V4: giảm từ 2
 local DangerRadius  = 45
 local EvadeDistance = 60
 
--- V4: Khoảng cách né skill boss
-local EVADE_ENTEI        = 80
-local EVADE_FLAME_PILLAR = 55   -- V5: tăng từ 40 → 55
+-- Khoảng cách né skill boss (user-tuned)
+local EVADE_ENTEI        = 130  -- Dai Enkai: Entei
+local EVADE_FLAME_PILLAR = 75   -- Flame Pillar
 local EVADE_BOSS_GENERIC = 100
 
 -- V4: Giới hạn tween để tránh teleport-back & FPS drop
@@ -863,40 +863,31 @@ end)
 
 -- Priority thấp hơn = quan trọng hơn
 -- action DODGE = chạy ra xa evadeDist studs
--- action BLOCK = đứng yên, giữ F block
--- noRadius = true → bỏ qua giới hạn BOSS_PROX_RADIUS (cho skill AoE lớn như Entei)
+-- action BLOCK = giữ F đỡ background, TIẾP TỤC đánh boss
+-- noRadius = true → không giới hạn khoảng cách detect
 local BossSkillDefs = {
-    -- ── Dai Enkai: Entei — AoE cực lớn, KHÔNG giới hạn radius ────────
-    {pattern = "entei",          action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "en_tei",         action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "dai enkai",      action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "daienkai",       action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "enkai",          action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "en_kai",         action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    -- ── Flame Pillar (55 studs) ───────────────────────────────────────
-    {pattern = "flamepillar",    action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "flame_pillar",   action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "flmplr",         action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "pillar",         action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 3},
-    -- ── Hiken / Fire Fist → BLOCK (đứng đỡ, không né) ───────────────
-    {pattern = "hiken",          action = "BLOCK", evadeDist = 0,                  priority = 4},
-    {pattern = "hi_ken",         action = "BLOCK", evadeDist = 0,                  priority = 4},
-    {pattern = "hikenfist",      action = "BLOCK", evadeDist = 0,                  priority = 4},
-    {pattern = "firepunch",      action = "BLOCK", evadeDist = 0,                  priority = 4},
-    {pattern = "firefist",       action = "BLOCK", evadeDist = 0,                  priority = 4},
-    -- ── Firefly / tracking orbs → BLOCK (đứng đỡ, không né) ─────────
-    {pattern = "firefly",        action = "BLOCK", evadeDist = 0,                  priority = 5},
-    {pattern = "fire_fly",       action = "BLOCK", evadeDist = 0,                  priority = 5},
-    {pattern = "fireflies",      action = "BLOCK", evadeDist = 0,                  priority = 5},
-    -- ── Blaze / Leo skills (specific — không dùng pattern quá rộng) ──
-    {pattern = "blazewave",      action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 6},
-    {pattern = "leoflame",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 6},
-    {pattern = "leoskill",       action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
-    {pattern = "bossskill",      action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
-    {pattern = "inferno",        action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 7},
-    {pattern = "blaze",          action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
-    {pattern = "flamepillar",    action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
-    -- ⚠️ "flame" và "fire" BỎ khỏi đây — quá rộng, gây false positive liên tục
+    -- ── Dai Enkai / Entei → DODGE 130 studs ──────────────────────────
+    {pattern = "enkai",        action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
+    {pattern = "en_kai",       action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
+    {pattern = "entei",        action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
+    -- ── Flame Pillar → DODGE 75 studs ────────────────────────────────
+    {pattern = "flamepillar",  action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
+    {pattern = "flame_pillar", action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
+    {pattern = "flmplr",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
+    {pattern = "pillar",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 3},
+    -- ── Firefly → BLOCK (đứng im đỡ, tiếp tục attack boss) ──────────
+    {pattern = "firefly",      action = "BLOCK", evadeDist = 0, priority = 4},
+    {pattern = "fire_fly",     action = "BLOCK", evadeDist = 0, priority = 4},
+    -- ── Hiken → BLOCK (đứng im đỡ, tiếp tục attack boss) ────────────
+    {pattern = "hiken",        action = "BLOCK", evadeDist = 0, priority = 4},
+    {pattern = "hi_ken",       action = "BLOCK", evadeDist = 0, priority = 4},
+}
+
+-- Instance tên match những pattern này → bỏ qua hoàn toàn (không log, không react)
+local IGNORE_NAME_PATTERNS = {
+    "dmgind", "hitbox", "hurtbox", "indicator", "number",
+    "billboard", "sfx", "sound", "particle", "debris",
+    "decal", "highlight", "selection", "tag", "gui",
 }
 
 -- Khoảng cách tối đa để xét instance là nguy hiểm (boss zone)
@@ -960,25 +951,27 @@ local function SnapshotScan(playerPos)
         local char = Player.Character
         if char and v:IsDescendantOf(char) then continue end
 
-        local vPos = GetInstPos(v)
-        if not vPos then continue end
-
-        -- Proximity check (bỏ qua nếu def.noRadius)
-        local dist = (Vector3.new(vPos.X, 0, vPos.Z) - Vector3.new(playerPos.X, 0, playerPos.Z)).Magnitude
-
+        -- Bỏ qua ngay các instance noise (DMGIND, hitbox, sfx, ...)
         local n = v.Name:lower()
-
-        -- FIX: chỉ react với instance CHƯA từng thấy
-        -- Instance đã known → bỏ qua (tránh loop DODGE liên tục)
-        if _knownInstances[v] then
-            -- Vẫn log UNKNOWN đã known nhưng chưa match (không cần làm thêm)
+        local shouldIgnore = false
+        for _, pat in ipairs(IGNORE_NAME_PATTERNS) do
+            if n:find(pat, 1, true) then shouldIgnore = true; break end
+        end
+        if shouldIgnore then
+            _knownInstances[v] = true  -- đánh dấu để không check lại
             continue
         end
 
-        -- Đánh dấu đã biết TRƯỚC khi check — dù có match hay không
+        local vPos = GetInstPos(v)
+        if not vPos then continue end
+
+        local dist = (Vector3.new(vPos.X, 0, vPos.Z) - Vector3.new(playerPos.X, 0, playerPos.Z)).Magnitude
+
+        -- FIX: chỉ react với instance CHƯA từng thấy
+        if _knownInstances[v] then continue end
         _knownInstances[v] = true
 
-        -- Check pattern
+        -- Check BossSkillDefs
         for _, def in ipairs(BossSkillDefs) do
             local inRadius = def.noRadius or (dist <= BOSS_PROX_RADIUS)
             if inRadius and (not bestDef or def.priority < bestDef.priority) and n:match(def.pattern) then
@@ -989,7 +982,7 @@ local function SnapshotScan(playerPos)
             end
         end
 
-        -- Log instance mới không match pattern nào gần player (để tune thêm)
+        -- Log instance mới không match pattern nào (để tune thêm)
         if not bestDef and dist <= BOSS_PROX_RADIUS and not _loggedUnknown[v] then
             _loggedUnknown[v] = true
             print("🔍 [SnapDetect] UNKNOWN near player:", v.Name, "| dist:", math.floor(dist), "| path:", v:GetFullName())
@@ -1267,21 +1260,13 @@ task.spawn(function()
                     if ZoneState == "ABSORBING_CURSE" then ZoneState = PreviousZoneState or "FLYING" end
                 end
 
-                -- ── V4: SKILL_BLOCKING (Firefly / Hiken) ────────────────────
-                if ZoneState == "SKILL_BLOCKING" then
-                    IsReadyToAttack   = false
-                    CurrentTargetRoot = nil
-                    if tick() > SkillBlockUntil then
-                        ZoneState        = PreviousZoneState or "ATTACKING"
-                        _G.SkillBlocking = false
-                        print("✅ Skill block xong → quay lại:", ZoneState)
-                    end
-                    return
-                end
+                -- ── SKILL_BLOCKING đã được xử lý background trong TriggerSkillBlock
+                -- ZoneState không còn bị đổi sang SKILL_BLOCKING nữa
+                -- → attack loop tiếp tục bình thường khi đỡ Firefly / Hiken
 
                 -- ── DODGE / BLOCK TRIGGER ───────────────────────────────────
                 if CurrentZoneIndex ~= 5 and CurrentHazard.Type ~= "None"
-                and ZoneState ~= "DODGING" and ZoneState ~= "SKILL_BLOCKING" then
+                and ZoneState ~= "DODGING" then
 
                     local action    = CurrentHazard.Action    or "DODGE"
                     local evadeDist = CurrentHazard.MinDist   or EvadeDistance
@@ -1290,32 +1275,45 @@ task.spawn(function()
                     local wName2    = wpn2 and wpn2.Name or "Melee"
 
                     if action == "BLOCK" then
-                        -- Firefly / Hiken: đứng yên, giữ block
-                        if CurrentHazard.Instance then IgnoredHazards[CurrentHazard.Instance] = tick() + 4 end
-                        if ZoneState ~= "ABSORBING_CURSE" then PreviousZoneState = ZoneState end
-                        ZoneState         = "SKILL_BLOCKING"
-                        IsReadyToAttack   = false
-                        CurrentTargetRoot = nil
-                        TriggerSkillBlock(wName2, 2.5)
-                        print("🛡️ BLOCK skill:", CurrentHazard.Type or "?")
+                        -- Firefly / Hiken: giữ F đỡ BACKGROUND, KHÔNG dừng attack
+                        -- Player đứng im tại vị trí boss, combo tiếp tục
+                        if CurrentHazard.Instance then
+                            IgnoredHazards[CurrentHazard.Instance] = tick() + 3.5
+                        end
+                        if not _G.SkillBlocking then
+                            TriggerSkillBlock(wName2, 2.5)
+                            print("🛡️ BLOCK (background, attack tiếp):", CurrentHazard.Instance and CurrentHazard.Instance.Name or "?")
+                        end
+                        -- KHÔNG đổi ZoneState, KHÔNG set IsReadyToAttack = false
                     else
-                        -- Entei / FlamePillar / AoE: chạy ra xa
+                        -- Enkai / FlamePillar: chạy ra xa
                         IsReadyToAttack   = false
                         CurrentTargetRoot = nil
-                        if CurrentHazard.Instance then IgnoredHazards[CurrentHazard.Instance] = tick() + 6 end
+                        if CurrentHazard.Instance then
+                            IgnoredHazards[CurrentHazard.Instance] = tick() + 8
+                        end
                         if ZoneState ~= "ABSORBING_CURSE" then PreviousZoneState = ZoneState end
                         ZoneState = "DODGING"
 
                         local evadeDir = (root.Position - CurrentHazard.Position)
                         if evadeDir.Magnitude < 0.1 then
-                            -- Né ngẫu nhiên nếu đứng quá gần tâm skill
                             local rand = math.random(0, 3)
-                            evadeDir = ({Vector3.new(1,0,0), Vector3.new(-1,0,0),
-                                         Vector3.new(0,0,1), Vector3.new(0,0,-1)})[rand+1]
+                            evadeDir = ({
+                                Vector3.new(1,0,0), Vector3.new(-1,0,0),
+                                Vector3.new(0,0,1), Vector3.new(0,0,-1)
+                            })[rand+1]
                         end
-                        DodgeTimer   = tick() + (evadeDist / MoveSpeed) + 2
-                        TargetCFrame = CFrame.new(root.Position + Vector3.new(evadeDir.X, 0, evadeDir.Z).Unit * evadeDist)
-                        print("🏃 DODGE skill:", CurrentHazard.Type or "Normal", "→", evadeDist, "studs")
+                        -- Giữ Y = floorY + nhỏ để không bay lên cao
+                        local safeY = root.Position.Y
+                        pcall(function()
+                            local zonePart2 = workspace.Effects.Zones["Zone"..CurrentZoneIndex]:FindFirstChild("Zone")
+                            if zonePart2 then safeY = GetZoneFloor(CurrentZoneIndex, zonePart2.Position) + 5 end
+                        end)
+                        local flatDir    = Vector3.new(evadeDir.X, 0, evadeDir.Z)
+                        DodgeTimer   = tick() + (evadeDist / MoveSpeed) + 1.5
+                        TargetCFrame = CFrame.new(root.Position + flatDir.Unit * evadeDist + Vector3.new(0, safeY - root.Position.Y, 0))
+                        print("🏃 DODGE:", CurrentHazard.Instance and CurrentHazard.Instance.Name or "Normal",
+                              "→", evadeDist, "studs")
                     end
                 end
 
