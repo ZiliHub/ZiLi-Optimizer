@@ -384,7 +384,7 @@ end
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
 local MoveSpeed     = 110   -- V4: tăng từ 95 → đi nhanh hơn
-local AttackOffset  = 10.5
+local AttackOffset  = 10
 local SearchRadius  = 800
 local WaitSpawnTime = 12    -- V4: giảm từ 15
 local GatherTime    = 1.5   -- V4: giảm từ 2
