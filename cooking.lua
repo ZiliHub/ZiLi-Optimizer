@@ -384,17 +384,23 @@ end
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
 local MoveSpeed     = 110   -- V4: tăng từ 95 → đi nhanh hơn
-local AttackOffset  = 10
+local AttackOffset  = 10.5
 local SearchRadius  = 800
 local WaitSpawnTime = 12    -- V4: giảm từ 15
 local GatherTime    = 1.5   -- V4: giảm từ 2
 local DangerRadius  = 45
 local EvadeDistance = 60
 
--- Khoảng cách né skill boss (user-tuned)
-local EVADE_ENTEI        = 130  -- Dai Enkai: Entei
-local EVADE_FLAME_PILLAR = 75   -- Flame Pillar
+-- V4: Khoảng cách né skill boss
+local EVADE_ENTEI        = 80
+local EVADE_FLAME_PILLAR = 40
 local EVADE_BOSS_GENERIC = 100
+
+-- V4.1: Zone 7/8 chui dưới lòng đất
+-- Raycast tìm đáy terrain, ngồi dưới đó 8 studs.
+-- Cần đủ sâu để nằm trong khoảng KHÔNG có geometry (không bị overlap detect).
+local UNDERGROUND_DEPTH  = 40    -- Studs dưới floorY (floor surface)
+local UNDERGROUND_EXTRA  = 8     -- Thêm buffer dưới đáy terrain
 
 -- V4: Giới hạn tween để tránh teleport-back & FPS drop
 local MAX_DT             = 0.07   -- Cap dt ở 70ms (tương đương ~14 FPS)
@@ -419,6 +425,7 @@ local Timer             = 0
 local DodgeTimer        = 0
 local SkillBlockUntil   = 0   -- V4: thời điểm kết thúc skill block
 local CachedZoneFloors  = {}
+local currentFloorY     = 0   -- V4.1: floorY của zone hiện tại (dùng cho dodge underground)
 
 local IgnoredHazards = setmetatable({}, {__mode = "k"})
 local CurrentHazard  = {Type = "None", Position = nil, Instance = nil, MinDist = DangerRadius, Action = "DODGE"}
@@ -518,6 +525,43 @@ local function GetZoneFloor(zoneIndex, boxCenter)
     local result = workspace:Raycast(boxCenter, Vector3.new(0, -300, 0), params)
     if result then CachedZoneFloors[zoneIndex] = result.Position.Y; return result.Position.Y end
     return boxCenter.Y - 10
+end
+
+-- V4.1: Tìm Y an toàn dưới lòng đất (zone 7/8)
+-- ┌ floorY          ← surface terrain
+-- │ (terrain body ~10-30 studs)
+-- └ terrain bottom  ← raycast thứ 2 tìm đáy
+--   - UNDERGROUND_EXTRA studs  ← safe Y (empty space, no geometry)
+-- Cache riêng bằng key âm (-zoneIndex) để không đụng GetZoneFloor cache
+local function GetSafeUndergroundY(zoneIndex, floorY, boxCenter)
+    local cacheKey = -zoneIndex
+    if CachedZoneFloors[cacheKey] then return CachedZoneFloors[cacheKey] end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {
+        Player.Character, fakePlatform,
+        workspace:FindFirstChild("Effects"),
+        workspace:FindFirstChild("Enemies"),
+    }
+
+    -- Probe từ ngay dưới surface → tìm đáy terrain (terrain có thể dày 10–30 studs)
+    local probeOrigin = Vector3.new(boxCenter.X, floorY - 2, boxCenter.Z)
+    local hit = workspace:Raycast(probeOrigin, Vector3.new(0, -150, 0), params)
+
+    local safeY
+    if hit then
+        -- Có đáy → ngồi UNDERGROUND_EXTRA studs dưới đáy đó (khoảng trống)
+        safeY = hit.Position.Y - UNDERGROUND_EXTRA
+    else
+        -- Không có geometry thêm bên dưới → đã qua terrain rồi
+        safeY = floorY - UNDERGROUND_DEPTH
+    end
+
+    CachedZoneFloors[cacheKey] = safeY
+    print(string.format("🕳️ SafeUnderground zone%d: Y=%.1f (floor=%.1f, depth=%.1f)",
+        zoneIndex, safeY, floorY, floorY - safeY))
+    return safeY
 end
 
 local function GetRoot(m)
@@ -639,22 +683,15 @@ local function GetMobsInZone(zonePos)
     end
 
     MobSearchCache = {mobs = mobs, time = tick(), zone = CurrentZoneIndex}
-    return mobs
-end
-
--- FIX: priority scan (sword/blade > axe > katana) + pcall bảo vệ EquipTool
-local WEAPON_PRIORITY = {
-    {pattern = "sword",  score = 1},
-    {pattern = "blade",  score = 1},
-    {pattern = "axe",    score = 2},
-    {pattern = "katana", score = 3},
-}
-local function IsWeapon(name)
-    local n = name:lower()
-    for _, w in ipairs(WEAPON_PRIORITY) do
-        if n:match(w.pattern) then return true, w.score end
+    -- V4.1: Ưu tiên "Dungeon Gun User" ở zone 1–4 (đứng đầu danh sách → bị đánh trước)
+    if CurrentZoneIndex >= 1 and CurrentZoneIndex <= 4 and #mobs > 1 then
+        table.sort(mobs, function(a, b)
+            local aGun = (a.Name:lower():match("gun") or a.Name:lower():match("shooter")) and 1 or 0
+            local bGun = (b.Name:lower():match("gun") or b.Name:lower():match("shooter")) and 1 or 0
+            return aGun > bGun
+        end)
     end
-    return false, math.huge
+    return mobs
 end
 
 local function CheckAndEquipWeapon()
@@ -663,28 +700,23 @@ local function CheckAndEquipWeapon()
     if not char then return nil end
     local currentTool = char:FindFirstChildOfClass("Tool")
     if currentTool then
-        local ok, _ = IsWeapon(currentTool.Name)
-        if ok then return currentTool end
+        local n = currentTool.Name:lower()
+        if n:match("sword") or n:match("blade") or n:match("axe") then return currentTool end
     end
     local bp = Player:FindFirstChild("Backpack")
     if not bp then return currentTool end
-
-    -- FIX: scan toàn bộ backpack, chọn vũ khí ưu tiên cao nhất (score thấp nhất)
-    local best, bestScore = nil, math.huge
+    local sword = nil
     for _, t in pairs(bp:GetChildren()) do
         if t:IsA("Tool") then
-            local ok, score = IsWeapon(t.Name)
-            if ok and score < bestScore then
-                best = t; bestScore = score
-            end
+            local n = t.Name:lower()
+            if n:match("sword") or n:match("blade") or n:match("axe") then sword = t; break end
         end
     end
-    if best then
+    if sword and currentTool ~= sword then
         local hum = char:FindFirstChild("Humanoid")
-        -- FIX: bọc pcall để tránh fail silent khi humanoid đang stun/ragdoll
-        if hum then pcall(function() hum:EquipTool(best) end) end
+        if hum then hum:EquipTool(sword) end
     end
-    return best
+    return sword
 end
 
 local function GetAttackAnim(weaponName, combo)
@@ -711,24 +743,11 @@ local function GetAttackAnim(weaponName, combo)
         return wType, anim
     end
 
-    -- FIX: nếu tên weapon match sword/blade/katana/axe → dùng "Sword" type khi fallback
-    -- Tránh bị tính damage theo melee scaling khi cầm katana không có folder riêng
-    local isBladeWeapon = (function()
-        local n = weaponName:lower()
-        return n:match("sword") or n:match("blade") or n:match("katana") or n:match("axe")
-    end)()
-
-    wType  = isBladeWeapon and "Sword" or weaponName
+    wType  = weaponName
     local folder = ReplicatedStorage:WaitForChild("CombatAnimations"):FindFirstChild(weaponName)
     if not folder then
-        -- Thử tìm folder "Sword" trước nếu là blade weapon
-        if isBladeWeapon then
-            folder = ReplicatedStorage:WaitForChild("CombatAnimations"):FindFirstChild("Sword")
-        end
-        if not folder then
-            folder = ReplicatedStorage:WaitForChild("CombatAnimations"):FindFirstChild("Melee")
-            if not isBladeWeapon then wType = "Melee" end
-        end
+        folder = ReplicatedStorage:WaitForChild("CombatAnimations"):FindFirstChild("Melee")
+        wType  = "Melee"
     end
     if folder then
         anim = folder:FindFirstChild("Punch"..combo)
@@ -853,156 +872,28 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- [14] HAZARD SCANNER (V5 — SNAPSHOT DETECTION)
---
--- Vấn đề cũ (V4): dùng hint-filter theo tên → bỏ sót chiêu có tên lạ.
--- Giải pháp mới: snapshot — track instance nào XUẤT HIỆN MỚI gần player
--- thay vì đoán tên trước. Bất kỳ instance mới nào trong BOSS_PROX_RADIUS
--- đều được check pattern. Instance không match → log để tune thêm.
+-- [14] HAZARD SCANNER (V4 IMPROVED)
+-- Boss skill definitions với action rõ ràng:
+--   BLOCK  = đứng yên giữ F (Firefly, Hiken)
+--   DODGE  = chạy ra xa X studs (FlamePillar 40s, Entei 80s)
+-- Scan nhanh hơn ở boss zone (0.02s vs 0.05s)
 -- ==========================================
 
--- Priority thấp hơn = quan trọng hơn
--- action DODGE = chạy ra xa evadeDist studs
--- action BLOCK = giữ F đỡ background, TIẾP TỤC đánh boss
--- noRadius = true → không giới hạn khoảng cách detect
+-- Priority thấp hơn = quan trọng hơn (xử lý trước)
 local BossSkillDefs = {
-    -- ── Dai Enkai / Entei → DODGE 130 studs ──────────────────────────
-    {pattern = "enkai",        action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "en_kai",       action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "entei",        action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    -- ── Flame Pillar → DODGE 75 studs ────────────────────────────────
-    {pattern = "flamepillar",  action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "flame_pillar", action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "flmplr",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "pillar",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 3},
-    -- ── Firefly → BLOCK (đứng im đỡ, tiếp tục attack boss) ──────────
-    {pattern = "firefly",      action = "BLOCK", evadeDist = 0, priority = 4},
-    {pattern = "fire_fly",     action = "BLOCK", evadeDist = 0, priority = 4},
-    -- ── Hiken → BLOCK (đứng im đỡ, tiếp tục attack boss) ────────────
-    {pattern = "hiken",        action = "BLOCK", evadeDist = 0, priority = 4},
-    {pattern = "hi_ken",       action = "BLOCK", evadeDist = 0, priority = 4},
+    {pattern = "entei",         action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1},
+    {pattern = "flamepillar",   action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
+    {pattern = "flame_pillar",  action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
+    {pattern = "flmplr",        action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
+    {pattern = "pillar",        action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 3},
+    {pattern = "hiken",         action = "BLOCK", evadeDist = 0,                  priority = 4},
+    {pattern = "hi_ken",        action = "BLOCK", evadeDist = 0,                  priority = 4},
+    {pattern = "firefly",       action = "BLOCK", evadeDist = 0,                  priority = 5},
+    {pattern = "fire_fly",      action = "BLOCK", evadeDist = 0,                  priority = 5},
+    -- Legacy
+    {pattern = "enkai",         action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
+    {pattern = "flame",         action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
 }
-
--- Instance tên match những pattern này → bỏ qua hoàn toàn (không log, không react)
-local IGNORE_NAME_PATTERNS = {
-    "dmgind", "hitbox", "hurtbox", "indicator", "number",
-    "billboard", "sfx", "sound", "particle", "debris",
-    "decal", "highlight", "selection", "tag", "gui",
-}
-
--- Khoảng cách tối đa để xét instance là nguy hiểm (boss zone)
-local BOSS_PROX_RADIUS = 180  -- studs
-
--- Lấy vị trí instance — BasePart đệ quy
-local function GetInstPos(inst)
-    if not inst then return nil end
-    local pos = nil
-    pcall(function()
-        if inst:IsA("BasePart") then
-            pos = inst.Position
-        elseif inst:IsA("Model") then
-            if inst.PrimaryPart then
-                pos = inst.PrimaryPart.Position
-            else
-                local bp = inst:FindFirstChildWhichIsA("BasePart", true)
-                if bp then pos = bp.Position end
-            end
-            if not pos then pos = inst:GetModelCFrame().Position end
-        end
-    end)
-    return pos
-end
-
--- Snapshot: table weak-key lưu tất cả instance đã biết gần player
--- Khi instance mới xuất hiện trong radius → check pattern ngay
-local _knownInstances  = setmetatable({}, {__mode = "k"})
-local _loggedUnknown   = setmetatable({}, {__mode = "k"})  -- đã log nhưng không match
-
--- Collect tất cả descendants của root vào flat list, giới hạn depth
-local function CollectDescendants(root, depth, out)
-    if depth <= 0 then return end
-    local ok, children = pcall(function() return root:GetChildren() end)
-    if not ok then return end
-    for _, child in ipairs(children) do
-        if child:IsA("BasePart") or child:IsA("Model") or child:IsA("Folder") then
-            table.insert(out, child)
-            if depth > 1 then
-                CollectDescendants(child, depth - 1, out)
-            end
-        end
-    end
-end
-
--- Snapshot-based scan:
---   - Chỉ phản ứng với instance MỚI (chưa từng thấy) → tránh false-positive liên tục
---   - def.noRadius = true → bỏ giới hạn BOSS_PROX_RADIUS (cho Entei AoE lớn)
--- Returns: bestDef, bestInst, bestPos  (nil nếu không detect)
-local function SnapshotScan(playerPos)
-    local allInsts = {}
-    CollectDescendants(workspace, 4, allInsts)
-
-    local bestDef  = nil
-    local bestInst = nil
-    local bestPos  = nil
-
-    for _, v in ipairs(allInsts) do
-        if IgnoredHazards[v] then continue end
-
-        local char = Player.Character
-        if char and v:IsDescendantOf(char) then continue end
-
-        -- Bỏ qua ngay các instance noise (DMGIND, hitbox, sfx, ...)
-        local n = v.Name:lower()
-        local shouldIgnore = false
-        for _, pat in ipairs(IGNORE_NAME_PATTERNS) do
-            if n:find(pat, 1, true) then shouldIgnore = true; break end
-        end
-        if shouldIgnore then
-            _knownInstances[v] = true  -- đánh dấu để không check lại
-            continue
-        end
-
-        local vPos = GetInstPos(v)
-        if not vPos then continue end
-
-        local dist = (Vector3.new(vPos.X, 0, vPos.Z) - Vector3.new(playerPos.X, 0, playerPos.Z)).Magnitude
-
-        -- FIX: chỉ react với instance CHƯA từng thấy
-        if _knownInstances[v] then continue end
-        _knownInstances[v] = true
-
-        -- Check BossSkillDefs
-        for _, def in ipairs(BossSkillDefs) do
-            local inRadius = def.noRadius or (dist <= BOSS_PROX_RADIUS)
-            if inRadius and (not bestDef or def.priority < bestDef.priority) and n:match(def.pattern) then
-                print("⚠️ [SnapDetect] NEW skill:", v.Name, "→", def.action, "dist:", math.floor(dist), "| path:", v:GetFullName())
-                bestDef  = def
-                bestInst = v
-                bestPos  = vPos
-            end
-        end
-
-        -- Log instance mới không match pattern nào (để tune thêm)
-        if not bestDef and dist <= BOSS_PROX_RADIUS and not _loggedUnknown[v] then
-            _loggedUnknown[v] = true
-            print("🔍 [SnapDetect] UNKNOWN near player:", v.Name, "| dist:", math.floor(dist), "| path:", v:GetFullName())
-        end
-    end
-
-    return bestDef, bestInst, bestPos
-end
-
--- Dọn _knownInstances mỗi 5s: xóa instance đã ra khỏi game
-task.spawn(function()
-    while _G.DungeonScriptID == currentScriptID do
-        task.wait(5)
-        for inst in pairs(_knownInstances) do
-            if not inst:IsDescendantOf(workspace) then
-                _knownInstances[inst] = nil
-            end
-        end
-    end
-end)
 
 task.spawn(function()
     while _G.DungeonScriptID == currentScriptID do
@@ -1028,32 +919,74 @@ task.spawn(function()
                 local foundLavaPart   = nil
                 local foundLavaPrompt = nil
 
-                -- Boss skill scan (zone >= 5) dùng snapshot detection
-                if CurrentZoneIndex >= 5 then
-                    local def, inst, pos = SnapshotScan(playerPos)
-                    if def and inst then
-                        detectedHazard  = "BossSkill"
-                        hazardAction    = def.action
-                        hazardEvadeDist = def.evadeDist
-                        hazardInst      = inst
-                        if def.action == "DODGE" and pos then
-                            hazardPos = pos
-                        elseif CurrentTargetRoot and CurrentTargetRoot.Parent then
-                            hazardPos = CurrentTargetRoot.Position
-                        else
-                            hazardPos = playerPos
+                local effectsFolder = workspace:FindFirstChild("Effects")
+                if effectsFolder then
+
+                    -- V4: Boss skill scan (zone >= 7) — quét cả children lẫn grandchildren
+                    if CurrentZoneIndex >= 7 then
+                        local bestPriority = math.huge
+
+                        -- Build danh sách quét: children + 1 cấp sâu hơn
+                        local scanList = effectsFolder:GetChildren()
+                        for _, c in pairs(effectsFolder:GetChildren()) do
+                            if c:IsA("Folder") or c:IsA("Model") then
+                                for _, cc in pairs(c:GetChildren()) do
+                                    table.insert(scanList, cc)
+                                end
+                            end
+                        end
+
+                        for _, v in pairs(scanList) do
+                            if not IgnoredHazards[v] then
+                                local n = v.Name:lower()
+                                for _, def in ipairs(BossSkillDefs) do
+                                    if def.priority < bestPriority and n:match(def.pattern) then
+                                        local vPos = nil
+                                        pcall(function()
+                                            if v:IsA("BasePart") then
+                                                vPos = v.Position
+                                            elseif v:IsA("Model") and v.PrimaryPart then
+                                                vPos = v.PrimaryPart.Position
+                                            elseif v:IsA("Model") then
+                                                vPos = v:GetModelCFrame().Position
+                                            end
+                                        end)
+
+                                        bestPriority  = def.priority
+                                        detectedHazard = "BossSkill"
+                                        hazardAction   = def.action
+                                        hazardEvadeDist = def.evadeDist
+                                        hazardInst     = v
+
+                                        if def.action == "DODGE" and vPos then
+                                            hazardPos = vPos  -- Né ra xa vị trí skill
+                                        elseif CurrentTargetRoot and CurrentTargetRoot.Parent then
+                                            hazardPos = CurrentTargetRoot.Position  -- Né ra xa boss
+                                        else
+                                            hazardPos = playerPos  -- Fallback
+                                        end
+                                        break
+                                    end
+                                end
+                                -- Entei tìm thấy rồi thì dừng sớm
+                                if bestPriority == 1 then break end
+                            end
                         end
                     end
-                end
 
-                -- General AoE + Lava Curse (mọi zone)
-                if detectedHazard == "None" then
-                    local effectsFolder = workspace:FindFirstChild("Effects")
-                    if effectsFolder then
+                    -- General AoE (ngoài boss zone hoặc không phát hiện boss skill)
+                    if detectedHazard == "None" then
                         local minDist = DangerRadius
-                        for _, v in ipairs(effectsFolder:GetChildren()) do
+                        for _, v in pairs(effectsFolder:GetChildren()) do
                             local name = v.Name:lower()
-                            local vPos = GetInstPos(v)
+                            local vPos = nil
+                            pcall(function()
+                                if v:IsA("Model") then
+                                    vPos = (v.PrimaryPart and v.PrimaryPart.Position) or v:GetModelCFrame().Position
+                                elseif v:IsA("BasePart") then
+                                    vPos = v.Position
+                                end
+                            end)
                             if vPos and not IgnoredHazards[v] then
                                 local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
                                 if (name:match("aoe") or name:match("circle") or name:match("bomb") or name:match("meteor")
@@ -1066,7 +999,7 @@ task.spawn(function()
                                     hazardAction    = "DODGE"
                                     hazardEvadeDist = EvadeDistance
                                 end
-                                if name:match("lava") and name:match("curse") and dist < 1500 and not IgnoredHazards[v] then
+                                if name:match("lava curse") and dist < 1500 and not IgnoredHazards[v] then
                                     local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
                                     local part   = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
                                     if part and prompt and prompt.Enabled then
@@ -1088,11 +1021,8 @@ task.spawn(function()
                 CurrentLava.Prompt      = foundLavaPrompt
             end)
         end
-        -- Boss zone quét 0.02s, zone 5-6 quét 0.04s, bình thường 0.06s
-        local scanInterval = IsFarmingReady and (
-            CurrentZoneIndex >= 7 and 0.02 or
-            CurrentZoneIndex >= 5 and 0.04 or 0.06
-        ) or 0.1
+        -- V4: Boss zone quét mỗi 0.02s, bình thường 0.05s
+        local scanInterval = (CurrentZoneIndex >= 7 and IsFarmingReady) and 0.02 or 0.05
         task.wait(scanInterval)
     end
 end)
@@ -1260,13 +1190,21 @@ task.spawn(function()
                     if ZoneState == "ABSORBING_CURSE" then ZoneState = PreviousZoneState or "FLYING" end
                 end
 
-                -- ── SKILL_BLOCKING đã được xử lý background trong TriggerSkillBlock
-                -- ZoneState không còn bị đổi sang SKILL_BLOCKING nữa
-                -- → attack loop tiếp tục bình thường khi đỡ Firefly / Hiken
+                -- ── V4: SKILL_BLOCKING (Firefly / Hiken) ────────────────────
+                if ZoneState == "SKILL_BLOCKING" then
+                    IsReadyToAttack   = false
+                    CurrentTargetRoot = nil
+                    if tick() > SkillBlockUntil then
+                        ZoneState        = PreviousZoneState or "ATTACKING"
+                        _G.SkillBlocking = false
+                        print("✅ Skill block xong → quay lại:", ZoneState)
+                    end
+                    return
+                end
 
                 -- ── DODGE / BLOCK TRIGGER ───────────────────────────────────
                 if CurrentZoneIndex ~= 5 and CurrentHazard.Type ~= "None"
-                and ZoneState ~= "DODGING" then
+                and ZoneState ~= "DODGING" and ZoneState ~= "SKILL_BLOCKING" then
 
                     local action    = CurrentHazard.Action    or "DODGE"
                     local evadeDist = CurrentHazard.MinDist   or EvadeDistance
@@ -1275,45 +1213,50 @@ task.spawn(function()
                     local wName2    = wpn2 and wpn2.Name or "Melee"
 
                     if action == "BLOCK" then
-                        -- Firefly / Hiken: giữ F đỡ BACKGROUND, KHÔNG dừng attack
-                        -- Player đứng im tại vị trí boss, combo tiếp tục
-                        if CurrentHazard.Instance then
-                            IgnoredHazards[CurrentHazard.Instance] = tick() + 3.5
-                        end
-                        if not _G.SkillBlocking then
-                            TriggerSkillBlock(wName2, 2.5)
-                            print("🛡️ BLOCK (background, attack tiếp):", CurrentHazard.Instance and CurrentHazard.Instance.Name or "?")
-                        end
-                        -- KHÔNG đổi ZoneState, KHÔNG set IsReadyToAttack = false
-                    else
-                        -- Enkai / FlamePillar: chạy ra xa
+                        -- Firefly / Hiken: đứng yên, giữ block
+                        if CurrentHazard.Instance then IgnoredHazards[CurrentHazard.Instance] = tick() + 4 end
+                        if ZoneState ~= "ABSORBING_CURSE" then PreviousZoneState = ZoneState end
+                        ZoneState         = "SKILL_BLOCKING"
                         IsReadyToAttack   = false
                         CurrentTargetRoot = nil
-                        if CurrentHazard.Instance then
-                            IgnoredHazards[CurrentHazard.Instance] = tick() + 8
-                        end
+                        TriggerSkillBlock(wName2, 2.5)
+                        print("🛡️ BLOCK skill:", CurrentHazard.Type or "?")
+                    else
+                        -- Entei / FlamePillar / AoE: chạy ra xa
+                        IsReadyToAttack   = false
+                        CurrentTargetRoot = nil
+                        if CurrentHazard.Instance then IgnoredHazards[CurrentHazard.Instance] = tick() + 6 end
                         if ZoneState ~= "ABSORBING_CURSE" then PreviousZoneState = ZoneState end
                         ZoneState = "DODGING"
 
                         local evadeDir = (root.Position - CurrentHazard.Position)
                         if evadeDir.Magnitude < 0.1 then
+                            -- Né ngẫu nhiên nếu đứng quá gần tâm skill
                             local rand = math.random(0, 3)
-                            evadeDir = ({
-                                Vector3.new(1,0,0), Vector3.new(-1,0,0),
-                                Vector3.new(0,0,1), Vector3.new(0,0,-1)
-                            })[rand+1]
+                            evadeDir = ({Vector3.new(1,0,0), Vector3.new(-1,0,0),
+                                         Vector3.new(0,0,1), Vector3.new(0,0,-1)})[rand+1]
                         end
-                        -- Giữ Y = floorY + nhỏ để không bay lên cao
-                        local safeY = root.Position.Y
-                        pcall(function()
-                            local zonePart2 = workspace.Effects.Zones["Zone"..CurrentZoneIndex]:FindFirstChild("Zone")
-                            if zonePart2 then safeY = GetZoneFloor(CurrentZoneIndex, zonePart2.Position) + 5 end
-                        end)
-                        local flatDir    = Vector3.new(evadeDir.X, 0, evadeDir.Z)
-                        DodgeTimer   = tick() + (evadeDist / MoveSpeed) + 1.5
-                        TargetCFrame = CFrame.new(root.Position + flatDir.Unit * evadeDist + Vector3.new(0, safeY - root.Position.Y, 0))
-                        print("🏃 DODGE:", CurrentHazard.Instance and CurrentHazard.Instance.Name or "Normal",
-                              "→", evadeDist, "studs")
+
+                        -- V4.1: Entei/enkai → chui thêm xuống đất khi né
+                        -- FlamePillar / AoE thường trên mặt đất → ở trên cũng né được
+                        local dodgeXZ = root.Position + Vector3.new(evadeDir.X, 0, evadeDir.Z).Unit * evadeDist
+                        local dodgeY  = root.Position.Y  -- default: không đổi Y
+                        if CurrentHazard.Instance then
+                            local hInstName = CurrentHazard.Instance.Name:lower()
+                            if hInstName:match("entei") or hInstName:match("enkai") then
+                                -- Né entei/enkai: chui sâu xuống đất để skill không trúng
+                                if currentFloorY ~= 0 then
+                                    local ugY = CachedZoneFloors[-CurrentZoneIndex]
+                                              or (currentFloorY - UNDERGROUND_DEPTH)
+                                    dodgeY = ugY
+                                    print("🕳️ Entei dodge → underground Y:", dodgeY)
+                                end
+                            end
+                        end
+
+                        DodgeTimer   = tick() + (evadeDist / MoveSpeed) + 2
+                        TargetCFrame = CFrame.new(Vector3.new(dodgeXZ.X, dodgeY, dodgeXZ.Z))
+                        print("🏃 DODGE skill:", CurrentHazard.Type or "Normal", "→", evadeDist, "studs")
                     end
                 end
 
@@ -1333,18 +1276,39 @@ task.spawn(function()
                 pcall(function() zonePart = workspace.Effects.Zones["Zone"..CurrentZoneIndex]:FindFirstChild("Zone") end)
 
                 if zonePart then
-                    local boxCenter = zonePart.Position
-                    local floorY    = GetZoneFloor(CurrentZoneIndex, boxCenter)
-                    local waitPos   = Vector3.new(boxCenter.X, floorY + 20, boxCenter.Z)
-                    local mobs      = GetMobsInZone(boxCenter)
+                    local boxCenter   = zonePart.Position
+                    local floorY      = GetZoneFloor(CurrentZoneIndex, boxCenter)
+                    currentFloorY     = floorY  -- V4.1: cache cho dodge underground
+
+                    -- V4.1: Zone 7/8 → noclip dưới lòng đất
+                    -- Zone 1–6 → bay trên đầu như cũ
+                    local isUnderground = (CurrentZoneIndex >= 7)
+                    local activeY
+                    if isUnderground then
+                        activeY = GetSafeUndergroundY(CurrentZoneIndex, floorY, boxCenter)
+                    else
+                        activeY = floorY + 20
+                    end
+                    local waitPos = Vector3.new(boxCenter.X, activeY, boxCenter.Z)
+                    local mobs    = GetMobsInZone(boxCenter)
 
                     if ZoneState == "FLYING" then
-                        local targetY = math.max(root.Position.Y, floorY + 40)
+                        local targetY
+                        if isUnderground then
+                            -- Đi thẳng xuống điểm underground (không max với Y hiện tại)
+                            targetY = activeY
+                        else
+                            targetY = math.max(root.Position.Y, floorY + 40)
+                        end
                         TargetCFrame  = CFrame.new(Vector3.new(boxCenter.X, targetY, boxCenter.Z))
                         CurrentTargetRoot = nil
                         local xzDist = (Vector2.new(root.Position.X, root.Position.Z)
                                       - Vector2.new(boxCenter.X, boxCenter.Z)).Magnitude
-                        if xzDist < 15 then
+                        -- Arrive check: zone 7/8 dùng full-3D dist vì đang di chuyển theo Y
+                        local arrived = isUnderground
+                            and (root.Position - Vector3.new(boxCenter.X, targetY, boxCenter.Z)).Magnitude < 18
+                            or  xzDist < 15
+                        if arrived then
                             if CurrentZoneIndex == 5 then
                                 ZoneState = "ZONE5_SURVIVAL"
                                 Timer     = tick() + 30
@@ -1427,19 +1391,12 @@ end)
 
 -- ==========================================
 -- [17] AUTO ATTACK
--- Fix combo stability:
---   [A] Cache CombatAnimations folder — tránh WaitForChild yield mỗi đòn
---   [B] Bỏ pre-check nextAnim → không reset combo sớm nữa
---       Combo tự reset ở đầu vòng khi GetAttackAnim trả nil
---   [C] swingsfx + damage trong cùng 1 task.spawn → luôn gửi cặp
 -- ==========================================
 task.spawn(function()
-    local CombatRegister   = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
-    -- [A] Cache folder ngay khi start — WaitForChild 1 lần duy nhất
-    local CombatAnimFolder = ReplicatedStorage:WaitForChild("CombatAnimations")
-    local currentCombo     = 1
-    local strikeDelay      = 0.366
-    local comboResetDelay  = 1.0
+    local CombatRegister  = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
+    local currentCombo    = 1
+    local strikeDelay     = 0.366
+    local comboResetDelay = 1.0
 
     while _G.DungeonScriptID == currentScriptID do
         local currentDelay = strikeDelay
@@ -1447,15 +1404,12 @@ task.spawn(function()
             local char = Player.Character
             if char and char.Parent then
                 pcall(function()
-                    local tool           = CheckAndEquipWeapon()
+                    local tool          = CheckAndEquipWeapon()
                     local realWeaponName = tool and tool.Name or "Melee"
                     local weaponType, fakeAnim = GetAttackAnim(realWeaponName, currentCombo)
 
-                    -- [B] Combo tự reset ở đây khi hết anim
                     if not fakeAnim then
-                        currentCombo = 1
-                        currentDelay = comboResetDelay
-                        return
+                        currentCombo = 1; task.wait(comboResetDelay); return
                     end
 
                     local enemiesToHit  = {}
@@ -1475,27 +1429,23 @@ task.spawn(function()
                     if not primaryCFrame and root then primaryCFrame = root.CFrame end
 
                     if #enemiesToHit > 0 and primaryCFrame then
-                        -- [C] swingsfx + damage trong cùng 1 spawn → luôn gửi cặp
-                        local combo     = currentCombo
-                        local wType     = weaponType
-                        local anim      = fakeAnim
-                        local targets   = enemiesToHit
-                        local pCFrame   = primaryCFrame
                         task.spawn(function()
                             pcall(function()
-                                CombatRegister:InvokeServer({[1]="swingsfx",[2]=wType,[3]=combo,[4]="Ground",[5]=false,[6]=anim,[7]=2,[8]=1.5})
-                            end)
-                            pcall(function()
-                                CombatRegister:InvokeServer({[1]="damage",[2]=targets,[3]=wType,[4]={[1]=combo,[2]="Ground",[3]=wType},[5]=true,[6]=pCFrame,["aircombo"]="Ground"})
+                                CombatRegister:InvokeServer({[1]="swingsfx",[2]=weaponType,[3]=currentCombo,[4]="Ground",[5]=false,[6]=fakeAnim,[7]=2,[8]=1.5})
                             end)
                         end)
-
-                        -- [B] Chỉ tăng combo, KHÔNG pre-check nextAnim
-                        -- Vòng sau GetAttackAnim(combo+1) trả nil → tự reset
+                        task.spawn(function()
+                            pcall(function()
+                                CombatRegister:InvokeServer({[1]="damage",[2]=enemiesToHit,[3]=weaponType,[4]={[1]=currentCombo,[2]="Ground",[3]=weaponType},[5]=true,[6]=primaryCFrame,["aircombo"]="Ground"})
+                            end)
+                        end)
                         currentCombo = currentCombo + 1
+                        local _, nextAnim = GetAttackAnim(realWeaponName, currentCombo)
+                        if not nextAnim then
+                            currentDelay = comboResetDelay; currentCombo = 1
+                        end
                     else
-                        -- Không tìm thấy enemy — giữ combo, thử lại sau delay ngắn
-                        currentDelay = 0.15
+                        currentCombo = 1
                     end
                 end)
             end
@@ -1576,9 +1526,15 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
             end
         end
 
-        for _, v in pairs(char:GetChildren()) do
+        -- V4.1: Noclip nâng cao — scan DESCENDANTS (không chỉ children)
+        -- Set CanCollide = false + CanQuery = false trên mọi BasePart của char
+        --   CanCollide = false → physics engine không push char ra khỏi geometry
+        --   CanQuery = false   → workspace:GetPartsInPart() / spatial queries không return part này
+        --                         → anticheat overlap-check không detect được
+        for _, v in pairs(char:GetDescendants()) do
             if v:IsA("BasePart") then
                 v.CanCollide = false
+                pcall(function() v.CanQuery = false end)   -- Roblox mới hỗ trợ
             elseif v:IsA("ValueBase") then
                 local n = v.Name:lower()
                 if n:match("stun") or n:match("knock") or n:match("ragdoll") or n:match("zombie") or n:match("busy") then
@@ -1588,6 +1544,21 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
                 local name = v.Name:lower()
                 if name:match("stun") or name:match("knock") or name == "ragdoll" or name == "zombie" then
                     v:Destroy()
+                end
+            end
+        end
+
+        -- V4.1: Zone 7/8 underground → dùng Swimming state
+        -- Lý do: Roblox physics cho Swimming state không apply collision resolution
+        -- → char không bị "bật" lên khi nằm trong geometry
+        -- Chỉ apply khi đang thực sự ở dưới floorY (tránh set Swimming khi đang fly đến target)
+        if hum and CurrentZoneIndex >= 7 then
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if root and currentFloorY ~= 0 and root.Position.Y < currentFloorY then
+                local state = hum:GetState()
+                if state ~= Enum.HumanoidStateType.Swimming
+                and state ~= Enum.HumanoidStateType.Dead then
+                    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Swimming) end)
                 end
             end
         end
@@ -1625,16 +1596,26 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not char or not root or not char.Parent then return end
 
-    -- Fake platform theo chân player
+    -- Fake platform theo chân player (chỉ zone 1–6)
+    -- Zone 7/8 underground: platform sẽ bị terrain block → move xa ra
     if fakePlatform then
-        fakePlatform.CFrame = CFrame.new(root.Position.X, root.Position.Y - 3.2, root.Position.Z)
+        if CurrentZoneIndex >= 7 then
+            fakePlatform.CFrame = CFrame.new(0, -9999, 0)
+        else
+            fakePlatform.CFrame = CFrame.new(root.Position.X, root.Position.Y - 3.2, root.Position.Z)
+        end
     end
+
+    -- V4.1: Underground attack — char ở dưới đất, mob ở trên
+    -- AttackOffset dương sẽ đẩy target lên → kéo char lại phía mob (server range check OK)
+    -- Zone 7/8: dùng offset lớn hơn để giữ char trong range hitbox từ dưới đất
+    local effectiveAttackOffset = (CurrentZoneIndex >= 7) and 35 or AttackOffset
 
     local activeTargetPos = nil
     if CurrentTargetRoot and CurrentTargetRoot.Parent then
         activeTargetPos = Vector3.new(
             CurrentTargetRoot.Position.X,
-            CurrentTargetRoot.Position.Y + AttackOffset,
+            CurrentTargetRoot.Position.Y + effectiveAttackOffset,
             CurrentTargetRoot.Position.Z)
     elseif TargetCFrame then
         activeTargetPos = TargetCFrame.Position
