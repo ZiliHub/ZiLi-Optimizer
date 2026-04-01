@@ -649,7 +649,7 @@ local function CheckAndEquipWeapon()
     local currentTool = char:FindFirstChildOfClass("Tool")
     if currentTool then
         local n = currentTool.Name:lower()
-        if n:match("sword") or n:match("blade") or n:match("axe") then return currentTool end
+        if n:match("sword") or n:match("blade") or n:match("axe") or n:match("katana") then return currentTool end
     end
     local bp = Player:FindFirstChild("Backpack")
     if not bp then return currentTool end
@@ -657,7 +657,7 @@ local function CheckAndEquipWeapon()
     for _, t in pairs(bp:GetChildren()) do
         if t:IsA("Tool") then
             local n = t.Name:lower()
-            if n:match("sword") or n:match("blade") or n:match("axe") then sword = t; break end
+            if n:match("sword") or n:match("blade") or n:match("axe") or n:match("katana") then sword = t; break end
         end
     end
     if sword and currentTool ~= sword then
