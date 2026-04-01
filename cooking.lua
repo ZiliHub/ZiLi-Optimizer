@@ -864,39 +864,39 @@ end)
 -- Priority thấp hơn = quan trọng hơn
 -- action DODGE = chạy ra xa evadeDist studs
 -- action BLOCK = đứng yên, giữ F block
+-- noRadius = true → bỏ qua giới hạn BOSS_PROX_RADIUS (cho skill AoE lớn như Entei)
 local BossSkillDefs = {
-    -- ── Entei (AoE lớn nhất) ─────────────────────────────────────────
-    {pattern = "entei",          action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1},
-    {pattern = "en_tei",         action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1},
+    -- ── Dai Enkai: Entei — AoE cực lớn, KHÔNG giới hạn radius ────────
+    {pattern = "entei",          action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
+    {pattern = "en_tei",         action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
+    {pattern = "dai enkai",      action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
+    {pattern = "daienkai",       action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
+    {pattern = "enkai",          action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
+    {pattern = "en_kai",         action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
     -- ── Flame Pillar (55 studs) ───────────────────────────────────────
     {pattern = "flamepillar",    action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
     {pattern = "flame_pillar",   action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
     {pattern = "flmplr",         action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
     {pattern = "pillar",         action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 3},
-    -- ── Hiken / Fire Fist → BLOCK ────────────────────────────────────
+    -- ── Hiken / Fire Fist → BLOCK (đứng đỡ, không né) ───────────────
     {pattern = "hiken",          action = "BLOCK", evadeDist = 0,                  priority = 4},
     {pattern = "hi_ken",         action = "BLOCK", evadeDist = 0,                  priority = 4},
     {pattern = "hikenfist",      action = "BLOCK", evadeDist = 0,                  priority = 4},
     {pattern = "firepunch",      action = "BLOCK", evadeDist = 0,                  priority = 4},
     {pattern = "firefist",       action = "BLOCK", evadeDist = 0,                  priority = 4},
-    -- ── Firefly / tracking orbs → BLOCK ──────────────────────────────
+    -- ── Firefly / tracking orbs → BLOCK (đứng đỡ, không né) ─────────
     {pattern = "firefly",        action = "BLOCK", evadeDist = 0,                  priority = 5},
     {pattern = "fire_fly",       action = "BLOCK", evadeDist = 0,                  priority = 5},
     {pattern = "fireflies",      action = "BLOCK", evadeDist = 0,                  priority = 5},
-    {pattern = "orb",            action = "BLOCK", evadeDist = 0,                  priority = 5},
-    -- ── Enkai / Inferno ring ─────────────────────────────────────────
-    {pattern = "enkai",          action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
-    {pattern = "en_kai",         action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
-    {pattern = "inferno",        action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
-    {pattern = "ring",           action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
-    -- ── Generic flame / blaze / leo skills ───────────────────────────
-    {pattern = "blazewave",      action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
+    -- ── Blaze / Leo skills (specific — không dùng pattern quá rộng) ──
+    {pattern = "blazewave",      action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 6},
+    {pattern = "leoflame",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 6},
+    {pattern = "leoskill",       action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
+    {pattern = "bossskill",      action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
+    {pattern = "inferno",        action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 7},
     {pattern = "blaze",          action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
-    {pattern = "leoflame",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
-    {pattern = "leoskill",       action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 7},
-    {pattern = "bossskill",      action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 7},
-    {pattern = "flame",          action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 8},
-    {pattern = "fire",           action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 9},
+    {pattern = "flamepillar",    action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
+    -- ⚠️ "flame" và "fire" BỎ khỏi đây — quá rộng, gây false positive liên tục
 }
 
 -- Khoảng cách tối đa để xét instance là nguy hiểm (boss zone)
@@ -942,10 +942,11 @@ local function CollectDescendants(root, depth, out)
     end
 end
 
--- Snapshot-based scan: chỉ phản ứng với instance MỚI xuất hiện trong radius
+-- Snapshot-based scan:
+--   - Chỉ phản ứng với instance MỚI (chưa từng thấy) → tránh false-positive liên tục
+--   - def.noRadius = true → bỏ giới hạn BOSS_PROX_RADIUS (cho Entei AoE lớn)
 -- Returns: bestDef, bestInst, bestPos  (nil nếu không detect)
 local function SnapshotScan(playerPos)
-    -- Thu thập toàn bộ workspace descendants (depth 4)
     local allInsts = {}
     CollectDescendants(workspace, 4, allInsts)
 
@@ -954,38 +955,44 @@ local function SnapshotScan(playerPos)
     local bestPos  = nil
 
     for _, v in ipairs(allInsts) do
-        -- Bỏ qua: đã ignore, char player, terrain
         if IgnoredHazards[v] then continue end
-        if v:IsDescendantOf(Player.Character or workspace.Terrain) then continue end
+
+        local char = Player.Character
+        if char and v:IsDescendantOf(char) then continue end
 
         local vPos = GetInstPos(v)
         if not vPos then continue end
 
-        -- Proximity check — chỉ xử lý instance trong BOSS_PROX_RADIUS
+        -- Proximity check (bỏ qua nếu def.noRadius)
         local dist = (Vector3.new(vPos.X, 0, vPos.Z) - Vector3.new(playerPos.X, 0, playerPos.Z)).Magnitude
-        if dist > BOSS_PROX_RADIUS then continue end
-
-        local isNew = not _knownInstances[v]
-        _knownInstances[v] = true
 
         local n = v.Name:lower()
 
-        -- Check pattern với tất cả BossSkillDefs
+        -- FIX: chỉ react với instance CHƯA từng thấy
+        -- Instance đã known → bỏ qua (tránh loop DODGE liên tục)
+        if _knownInstances[v] then
+            -- Vẫn log UNKNOWN đã known nhưng chưa match (không cần làm thêm)
+            continue
+        end
+
+        -- Đánh dấu đã biết TRƯỚC khi check — dù có match hay không
+        _knownInstances[v] = true
+
+        -- Check pattern
         for _, def in ipairs(BossSkillDefs) do
-            if (not bestDef or def.priority < bestDef.priority) and n:match(def.pattern) then
-                if isNew then
-                    print("⚠️ [SnapDetect] NEW skill:", v.Name, "→", def.action, "| path:", v:GetFullName())
-                end
+            local inRadius = def.noRadius or (dist <= BOSS_PROX_RADIUS)
+            if inRadius and (not bestDef or def.priority < bestDef.priority) and n:match(def.pattern) then
+                print("⚠️ [SnapDetect] NEW skill:", v.Name, "→", def.action, "dist:", math.floor(dist), "| path:", v:GetFullName())
                 bestDef  = def
                 bestInst = v
                 bestPos  = vPos
             end
         end
 
-        -- Log instance mới không match pattern nào (để tune thêm)
-        if isNew and not bestDef and not _loggedUnknown[v] then
+        -- Log instance mới không match pattern nào gần player (để tune thêm)
+        if not bestDef and dist <= BOSS_PROX_RADIUS and not _loggedUnknown[v] then
             _loggedUnknown[v] = true
-            print("🔍 [SnapDetect] UNKNOWN new instance near player:", v.Name, "| dist:", math.floor(dist), "| path:", v:GetFullName())
+            print("🔍 [SnapDetect] UNKNOWN near player:", v.Name, "| dist:", math.floor(dist), "| path:", v:GetFullName())
         end
     end
 
@@ -1422,12 +1429,19 @@ end)
 
 -- ==========================================
 -- [17] AUTO ATTACK
+-- Fix combo stability:
+--   [A] Cache CombatAnimations folder — tránh WaitForChild yield mỗi đòn
+--   [B] Bỏ pre-check nextAnim → không reset combo sớm nữa
+--       Combo tự reset ở đầu vòng khi GetAttackAnim trả nil
+--   [C] swingsfx + damage trong cùng 1 task.spawn → luôn gửi cặp
 -- ==========================================
 task.spawn(function()
-    local CombatRegister  = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
-    local currentCombo    = 1
-    local strikeDelay     = 0.366
-    local comboResetDelay = 1.0
+    local CombatRegister   = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
+    -- [A] Cache folder ngay khi start — WaitForChild 1 lần duy nhất
+    local CombatAnimFolder = ReplicatedStorage:WaitForChild("CombatAnimations")
+    local currentCombo     = 1
+    local strikeDelay      = 0.366
+    local comboResetDelay  = 1.0
 
     while _G.DungeonScriptID == currentScriptID do
         local currentDelay = strikeDelay
@@ -1435,12 +1449,15 @@ task.spawn(function()
             local char = Player.Character
             if char and char.Parent then
                 pcall(function()
-                    local tool          = CheckAndEquipWeapon()
+                    local tool           = CheckAndEquipWeapon()
                     local realWeaponName = tool and tool.Name or "Melee"
                     local weaponType, fakeAnim = GetAttackAnim(realWeaponName, currentCombo)
 
+                    -- [B] Combo tự reset ở đây khi hết anim
                     if not fakeAnim then
-                        currentCombo = 1; task.wait(comboResetDelay); return
+                        currentCombo = 1
+                        currentDelay = comboResetDelay
+                        return
                     end
 
                     local enemiesToHit  = {}
@@ -1460,23 +1477,27 @@ task.spawn(function()
                     if not primaryCFrame and root then primaryCFrame = root.CFrame end
 
                     if #enemiesToHit > 0 and primaryCFrame then
+                        -- [C] swingsfx + damage trong cùng 1 spawn → luôn gửi cặp
+                        local combo     = currentCombo
+                        local wType     = weaponType
+                        local anim      = fakeAnim
+                        local targets   = enemiesToHit
+                        local pCFrame   = primaryCFrame
                         task.spawn(function()
                             pcall(function()
-                                CombatRegister:InvokeServer({[1]="swingsfx",[2]=weaponType,[3]=currentCombo,[4]="Ground",[5]=false,[6]=fakeAnim,[7]=2,[8]=1.5})
+                                CombatRegister:InvokeServer({[1]="swingsfx",[2]=wType,[3]=combo,[4]="Ground",[5]=false,[6]=anim,[7]=2,[8]=1.5})
                             end)
-                        end)
-                        task.spawn(function()
                             pcall(function()
-                                CombatRegister:InvokeServer({[1]="damage",[2]=enemiesToHit,[3]=weaponType,[4]={[1]=currentCombo,[2]="Ground",[3]=weaponType},[5]=true,[6]=primaryCFrame,["aircombo"]="Ground"})
+                                CombatRegister:InvokeServer({[1]="damage",[2]=targets,[3]=wType,[4]={[1]=combo,[2]="Ground",[3]=wType},[5]=true,[6]=pCFrame,["aircombo"]="Ground"})
                             end)
                         end)
+
+                        -- [B] Chỉ tăng combo, KHÔNG pre-check nextAnim
+                        -- Vòng sau GetAttackAnim(combo+1) trả nil → tự reset
                         currentCombo = currentCombo + 1
-                        local _, nextAnim = GetAttackAnim(realWeaponName, currentCombo)
-                        if not nextAnim then
-                            currentDelay = comboResetDelay; currentCombo = 1
-                        end
                     else
-                        currentCombo = 1
+                        -- Không tìm thấy enemy — giữ combo, thử lại sau delay ngắn
+                        currentDelay = 0.15
                     end
                 end)
             end
