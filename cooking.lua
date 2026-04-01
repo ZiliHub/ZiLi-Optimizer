@@ -393,7 +393,7 @@ local EvadeDistance = 60
 
 -- V4: Khoảng cách né skill boss
 local EVADE_ENTEI        = 80
-local EVADE_FLAME_PILLAR = 40
+local EVADE_FLAME_PILLAR = 55   -- V5: tăng từ 40 → 55
 local EVADE_BOSS_GENERIC = 100
 
 -- V4: Giới hạn tween để tránh teleport-back & FPS drop
@@ -853,28 +853,156 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- [14] HAZARD SCANNER (V4 IMPROVED)
--- Boss skill definitions với action rõ ràng:
---   BLOCK  = đứng yên giữ F (Firefly, Hiken)
---   DODGE  = chạy ra xa X studs (FlamePillar 40s, Entei 80s)
--- Scan nhanh hơn ở boss zone (0.02s vs 0.05s)
+-- [14] HAZARD SCANNER (V5 — SNAPSHOT DETECTION)
+--
+-- Vấn đề cũ (V4): dùng hint-filter theo tên → bỏ sót chiêu có tên lạ.
+-- Giải pháp mới: snapshot — track instance nào XUẤT HIỆN MỚI gần player
+-- thay vì đoán tên trước. Bất kỳ instance mới nào trong BOSS_PROX_RADIUS
+-- đều được check pattern. Instance không match → log để tune thêm.
 -- ==========================================
 
--- Priority thấp hơn = quan trọng hơn (xử lý trước)
+-- Priority thấp hơn = quan trọng hơn
+-- action DODGE = chạy ra xa evadeDist studs
+-- action BLOCK = đứng yên, giữ F block
 local BossSkillDefs = {
-    {pattern = "entei",         action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1},
-    {pattern = "flamepillar",   action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "flame_pillar",  action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "flmplr",        action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "pillar",        action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 3},
-    {pattern = "hiken",         action = "BLOCK", evadeDist = 0,                  priority = 4},
-    {pattern = "hi_ken",        action = "BLOCK", evadeDist = 0,                  priority = 4},
-    {pattern = "firefly",       action = "BLOCK", evadeDist = 0,                  priority = 5},
-    {pattern = "fire_fly",      action = "BLOCK", evadeDist = 0,                  priority = 5},
-    -- Legacy
-    {pattern = "enkai",         action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
-    {pattern = "flame",         action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
+    -- ── Entei (AoE lớn nhất) ─────────────────────────────────────────
+    {pattern = "entei",          action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1},
+    {pattern = "en_tei",         action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1},
+    -- ── Flame Pillar (55 studs) ───────────────────────────────────────
+    {pattern = "flamepillar",    action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
+    {pattern = "flame_pillar",   action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
+    {pattern = "flmplr",         action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
+    {pattern = "pillar",         action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 3},
+    -- ── Hiken / Fire Fist → BLOCK ────────────────────────────────────
+    {pattern = "hiken",          action = "BLOCK", evadeDist = 0,                  priority = 4},
+    {pattern = "hi_ken",         action = "BLOCK", evadeDist = 0,                  priority = 4},
+    {pattern = "hikenfist",      action = "BLOCK", evadeDist = 0,                  priority = 4},
+    {pattern = "firepunch",      action = "BLOCK", evadeDist = 0,                  priority = 4},
+    {pattern = "firefist",       action = "BLOCK", evadeDist = 0,                  priority = 4},
+    -- ── Firefly / tracking orbs → BLOCK ──────────────────────────────
+    {pattern = "firefly",        action = "BLOCK", evadeDist = 0,                  priority = 5},
+    {pattern = "fire_fly",       action = "BLOCK", evadeDist = 0,                  priority = 5},
+    {pattern = "fireflies",      action = "BLOCK", evadeDist = 0,                  priority = 5},
+    {pattern = "orb",            action = "BLOCK", evadeDist = 0,                  priority = 5},
+    -- ── Enkai / Inferno ring ─────────────────────────────────────────
+    {pattern = "enkai",          action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
+    {pattern = "en_kai",         action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
+    {pattern = "inferno",        action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
+    {pattern = "ring",           action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 6},
+    -- ── Generic flame / blaze / leo skills ───────────────────────────
+    {pattern = "blazewave",      action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
+    {pattern = "blaze",          action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
+    {pattern = "leoflame",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 7},
+    {pattern = "leoskill",       action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 7},
+    {pattern = "bossskill",      action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 7},
+    {pattern = "flame",          action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 8},
+    {pattern = "fire",           action = "DODGE", evadeDist = EVADE_BOSS_GENERIC, priority = 9},
 }
+
+-- Khoảng cách tối đa để xét instance là nguy hiểm (boss zone)
+local BOSS_PROX_RADIUS = 180  -- studs
+
+-- Lấy vị trí instance — BasePart đệ quy
+local function GetInstPos(inst)
+    if not inst then return nil end
+    local pos = nil
+    pcall(function()
+        if inst:IsA("BasePart") then
+            pos = inst.Position
+        elseif inst:IsA("Model") then
+            if inst.PrimaryPart then
+                pos = inst.PrimaryPart.Position
+            else
+                local bp = inst:FindFirstChildWhichIsA("BasePart", true)
+                if bp then pos = bp.Position end
+            end
+            if not pos then pos = inst:GetModelCFrame().Position end
+        end
+    end)
+    return pos
+end
+
+-- Snapshot: table weak-key lưu tất cả instance đã biết gần player
+-- Khi instance mới xuất hiện trong radius → check pattern ngay
+local _knownInstances  = setmetatable({}, {__mode = "k"})
+local _loggedUnknown   = setmetatable({}, {__mode = "k"})  -- đã log nhưng không match
+
+-- Collect tất cả descendants của root vào flat list, giới hạn depth
+local function CollectDescendants(root, depth, out)
+    if depth <= 0 then return end
+    local ok, children = pcall(function() return root:GetChildren() end)
+    if not ok then return end
+    for _, child in ipairs(children) do
+        if child:IsA("BasePart") or child:IsA("Model") or child:IsA("Folder") then
+            table.insert(out, child)
+            if depth > 1 then
+                CollectDescendants(child, depth - 1, out)
+            end
+        end
+    end
+end
+
+-- Snapshot-based scan: chỉ phản ứng với instance MỚI xuất hiện trong radius
+-- Returns: bestDef, bestInst, bestPos  (nil nếu không detect)
+local function SnapshotScan(playerPos)
+    -- Thu thập toàn bộ workspace descendants (depth 4)
+    local allInsts = {}
+    CollectDescendants(workspace, 4, allInsts)
+
+    local bestDef  = nil
+    local bestInst = nil
+    local bestPos  = nil
+
+    for _, v in ipairs(allInsts) do
+        -- Bỏ qua: đã ignore, char player, terrain
+        if IgnoredHazards[v] then continue end
+        if v:IsDescendantOf(Player.Character or workspace.Terrain) then continue end
+
+        local vPos = GetInstPos(v)
+        if not vPos then continue end
+
+        -- Proximity check — chỉ xử lý instance trong BOSS_PROX_RADIUS
+        local dist = (Vector3.new(vPos.X, 0, vPos.Z) - Vector3.new(playerPos.X, 0, playerPos.Z)).Magnitude
+        if dist > BOSS_PROX_RADIUS then continue end
+
+        local isNew = not _knownInstances[v]
+        _knownInstances[v] = true
+
+        local n = v.Name:lower()
+
+        -- Check pattern với tất cả BossSkillDefs
+        for _, def in ipairs(BossSkillDefs) do
+            if (not bestDef or def.priority < bestDef.priority) and n:match(def.pattern) then
+                if isNew then
+                    print("⚠️ [SnapDetect] NEW skill:", v.Name, "→", def.action, "| path:", v:GetFullName())
+                end
+                bestDef  = def
+                bestInst = v
+                bestPos  = vPos
+            end
+        end
+
+        -- Log instance mới không match pattern nào (để tune thêm)
+        if isNew and not bestDef and not _loggedUnknown[v] then
+            _loggedUnknown[v] = true
+            print("🔍 [SnapDetect] UNKNOWN new instance near player:", v.Name, "| dist:", math.floor(dist), "| path:", v:GetFullName())
+        end
+    end
+
+    return bestDef, bestInst, bestPos
+end
+
+-- Dọn _knownInstances mỗi 5s: xóa instance đã ra khỏi game
+task.spawn(function()
+    while _G.DungeonScriptID == currentScriptID do
+        task.wait(5)
+        for inst in pairs(_knownInstances) do
+            if not inst:IsDescendantOf(workspace) then
+                _knownInstances[inst] = nil
+            end
+        end
+    end
+end)
 
 task.spawn(function()
     while _G.DungeonScriptID == currentScriptID do
@@ -900,74 +1028,32 @@ task.spawn(function()
                 local foundLavaPart   = nil
                 local foundLavaPrompt = nil
 
-                local effectsFolder = workspace:FindFirstChild("Effects")
-                if effectsFolder then
-
-                    -- V4: Boss skill scan (zone >= 7) — quét cả children lẫn grandchildren
-                    if CurrentZoneIndex >= 7 then
-                        local bestPriority = math.huge
-
-                        -- Build danh sách quét: children + 1 cấp sâu hơn
-                        local scanList = effectsFolder:GetChildren()
-                        for _, c in pairs(effectsFolder:GetChildren()) do
-                            if c:IsA("Folder") or c:IsA("Model") then
-                                for _, cc in pairs(c:GetChildren()) do
-                                    table.insert(scanList, cc)
-                                end
-                            end
-                        end
-
-                        for _, v in pairs(scanList) do
-                            if not IgnoredHazards[v] then
-                                local n = v.Name:lower()
-                                for _, def in ipairs(BossSkillDefs) do
-                                    if def.priority < bestPriority and n:match(def.pattern) then
-                                        local vPos = nil
-                                        pcall(function()
-                                            if v:IsA("BasePart") then
-                                                vPos = v.Position
-                                            elseif v:IsA("Model") and v.PrimaryPart then
-                                                vPos = v.PrimaryPart.Position
-                                            elseif v:IsA("Model") then
-                                                vPos = v:GetModelCFrame().Position
-                                            end
-                                        end)
-
-                                        bestPriority  = def.priority
-                                        detectedHazard = "BossSkill"
-                                        hazardAction   = def.action
-                                        hazardEvadeDist = def.evadeDist
-                                        hazardInst     = v
-
-                                        if def.action == "DODGE" and vPos then
-                                            hazardPos = vPos  -- Né ra xa vị trí skill
-                                        elseif CurrentTargetRoot and CurrentTargetRoot.Parent then
-                                            hazardPos = CurrentTargetRoot.Position  -- Né ra xa boss
-                                        else
-                                            hazardPos = playerPos  -- Fallback
-                                        end
-                                        break
-                                    end
-                                end
-                                -- Entei tìm thấy rồi thì dừng sớm
-                                if bestPriority == 1 then break end
-                            end
+                -- Boss skill scan (zone >= 5) dùng snapshot detection
+                if CurrentZoneIndex >= 5 then
+                    local def, inst, pos = SnapshotScan(playerPos)
+                    if def and inst then
+                        detectedHazard  = "BossSkill"
+                        hazardAction    = def.action
+                        hazardEvadeDist = def.evadeDist
+                        hazardInst      = inst
+                        if def.action == "DODGE" and pos then
+                            hazardPos = pos
+                        elseif CurrentTargetRoot and CurrentTargetRoot.Parent then
+                            hazardPos = CurrentTargetRoot.Position
+                        else
+                            hazardPos = playerPos
                         end
                     end
+                end
 
-                    -- General AoE (ngoài boss zone hoặc không phát hiện boss skill)
-                    if detectedHazard == "None" then
+                -- General AoE + Lava Curse (mọi zone)
+                if detectedHazard == "None" then
+                    local effectsFolder = workspace:FindFirstChild("Effects")
+                    if effectsFolder then
                         local minDist = DangerRadius
-                        for _, v in pairs(effectsFolder:GetChildren()) do
+                        for _, v in ipairs(effectsFolder:GetChildren()) do
                             local name = v.Name:lower()
-                            local vPos = nil
-                            pcall(function()
-                                if v:IsA("Model") then
-                                    vPos = (v.PrimaryPart and v.PrimaryPart.Position) or v:GetModelCFrame().Position
-                                elseif v:IsA("BasePart") then
-                                    vPos = v.Position
-                                end
-                            end)
+                            local vPos = GetInstPos(v)
                             if vPos and not IgnoredHazards[v] then
                                 local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
                                 if (name:match("aoe") or name:match("circle") or name:match("bomb") or name:match("meteor")
@@ -980,7 +1066,7 @@ task.spawn(function()
                                     hazardAction    = "DODGE"
                                     hazardEvadeDist = EvadeDistance
                                 end
-                                if name:match("lava curse") and dist < 1500 and not IgnoredHazards[v] then
+                                if name:match("lava") and name:match("curse") and dist < 1500 and not IgnoredHazards[v] then
                                     local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
                                     local part   = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
                                     if part and prompt and prompt.Enabled then
@@ -1002,8 +1088,11 @@ task.spawn(function()
                 CurrentLava.Prompt      = foundLavaPrompt
             end)
         end
-        -- V4: Boss zone quét mỗi 0.02s, bình thường 0.05s
-        local scanInterval = (CurrentZoneIndex >= 7 and IsFarmingReady) and 0.02 or 0.05
+        -- Boss zone quét 0.02s, zone 5-6 quét 0.04s, bình thường 0.06s
+        local scanInterval = IsFarmingReady and (
+            CurrentZoneIndex >= 7 and 0.02 or
+            CurrentZoneIndex >= 5 and 0.04 or 0.06
+        ) or 0.1
         task.wait(scanInterval)
     end
 end)
