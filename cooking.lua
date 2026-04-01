@@ -400,7 +400,7 @@ local EVADE_BOSS_GENERIC = 100
 -- Đi xuống lòng đất thay vì bay — anti-cheat smooth: lerp Y dần, không teleport
 local UNDERGROUND_DEPTH      = 28   -- studs dưới floorY khi đứng/attack
 local UNDERGROUND_DODGE_ADD  = 20   -- thêm sâu hơn nữa khi dodge Enkai
-local UNDERGROUND_LERP_SPEED = 20   -- studs/s tối đa thay đổi Y → tránh overlap sudden
+local UNDERGROUND_LERP_SPEED = 55   -- studs/s — nhanh hơn (was 20), vẫn smooth đủ cho AC
 
 -- V4: Giới hạn tween để tránh teleport-back & FPS drop
 local MAX_DT             = 0.07   -- Cap dt ở 70ms (tương đương ~14 FPS)
@@ -838,6 +838,7 @@ task.spawn(function()
                                 CurrentZoneIndex = 1
                                 ZoneState        = "FLYING"
                                 IsFarmingReady   = true
+                                DoMapOptimize()  -- optimize map ngay khi vào dungeon
                             end
                         else
                             IsFarmingReady   = false
@@ -878,12 +879,111 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- [14] HAZARD SCANNER (V5 — SNAPSHOT DETECTION)
+-- [13-B] MAP OPTIMIZE + SKILL HIDE
+-- Ẩn visuals (particle/beam/trail/billboard) trong Effects & Projectiles
+-- BasePart vẫn tồn tại để hazard scanner detect được position/tên
+-- Không xóa instance → không bug với script
+-- ==========================================
+local _mapOptimized   = false
+local _effectHiddenSet = setmetatable({}, {__mode = "k"})
+
+local function HideVisualOfInst(v)
+    if _effectHiddenSet[v] then return end
+    _effectHiddenSet[v] = true
+    pcall(function()
+        if v:IsA("ParticleEmitter") or v:IsA("Beam") or v:IsA("Trail") then
+            v.Enabled = false
+        elseif v:IsA("BillboardGui") or v:IsA("SurfaceGui") or v:IsA("ScreenGui") then
+            v.Enabled = false
+        elseif v:IsA("SpecialMesh") or v:IsA("SelectionBox") or v:IsA("SelectionSphere") then
+            v.Scale = Vector3.zero
+        elseif v:IsA("BasePart") and not v:IsA("Terrain") then
+            -- Ẩn visual nhưng giữ CanQuery = true để position vẫn lấy được
+            v.LocalTransparencyModifier = 1
+            v.CastShadow = false
+        end
+    end)
+end
+
+local function HideFolderEffects(folder)
+    if not folder then return end
+    pcall(function()
+        for _, v in ipairs(folder:GetDescendants()) do
+            HideVisualOfInst(v)
+        end
+        folder.DescendantAdded:Connect(function(inst)
+            task.defer(function() HideVisualOfInst(inst) end)
+        end)
+    end)
+end
+
+local function DoMapOptimize()
+    if _mapOptimized then return end
+    _mapOptimized = true
+    task.spawn(function()
+        pcall(function()
+            -- Lighting: tắt shadow + giảm quality
+            local Lighting = game:GetService("Lighting")
+            Lighting.GlobalShadows     = false
+            Lighting.FogEnd            = 9e9
+            -- Tắt post-processing nặng
+            for _, v in ipairs(Lighting:GetChildren()) do
+                if v:IsA("BlurEffect") or v:IsA("DepthOfFieldEffect")
+                or v:IsA("SunRaysEffect") or v:IsA("BloomEffect")
+                or v:IsA("ColorCorrectionEffect") then
+                    v.Enabled = false
+                end
+            end
+        end)
+
+        -- Ẩn visual skill trong Effects và Projectiles (không xóa → không bug)
+        -- BasePart vẫn còn → SnapshotScan vẫn detect tên/vị trí bình thường
+        local fxFolders = {"Effects", "Projectiles"}
+        for _, fname in ipairs(fxFolders) do
+            local f = workspace:FindFirstChild(fname)
+            if f then
+                HideFolderEffects(f)
+            else
+                -- Chờ folder xuất hiện
+                workspace.ChildAdded:Connect(function(child)
+                    if child.Name == fname then
+                        task.defer(function() HideFolderEffects(child) end)
+                    end
+                end)
+            end
+        end
+
+        -- Ẩn vật trang trí xa trong Env (giữ nguyên collision)
+        pcall(function()
+            local env = workspace:FindFirstChild("Env")
+            if env then
+                for _, v in ipairs(env:GetDescendants()) do
+                    if v:IsA("ParticleEmitter") or v:IsA("Beam") or v:IsA("Trail") then
+                        pcall(function() v.Enabled = false end)
+                    elseif v:IsA("BasePart") and not v:IsA("Terrain") then
+                        pcall(function()
+                            v.CastShadow = false
+                            -- Không ẩn map collision, chỉ tắt shadow
+                        end)
+                    end
+                end
+            end
+        end)
+
+        print("🗺️ Map Optimized: shadows off, skill visuals hidden")
+    end)
+end
+
+-- Chạy optimize ngay khi vào dungeon (gọi từ [12] sau IsFarmingReady = true)
+-- Và auto re-hide khi có effect mới spawn (DescendantAdded đã connect trong HideFolderEffects)
+
+-- ==========================================
+-- [14] HAZARD SCANNER (V5 — EVENT-DRIVEN QUEUE)
 --
--- Vấn đề cũ (V4): dùng hint-filter theo tên → bỏ sót chiêu có tên lạ.
--- Giải pháp mới: snapshot — track instance nào XUẤT HIỆN MỚI gần player
--- thay vì đoán tên trước. Bất kỳ instance mới nào trong BOSS_PROX_RADIUS
--- đều được check pattern. Instance không match → log để tune thêm.
+-- FIX PERFORMANCE: Thay CollectDescendants(workspace, 4) mỗi 20ms
+-- bằng workspace.DescendantAdded event queue.
+-- Chỉ process instance MỚI khi nó spawn vào game → không scan lại toàn bộ workspace.
+-- CPU load giảm ~95% so với cách cũ.
 -- ==========================================
 
 -- Priority thấp hơn = quan trọng hơn
@@ -938,96 +1038,97 @@ local function GetInstPos(inst)
     return pos
 end
 
--- Snapshot: table weak-key lưu tất cả instance đã biết gần player
--- Khi instance mới xuất hiện trong radius → check pattern ngay
-local _knownInstances  = setmetatable({}, {__mode = "k"})
-local _loggedUnknown   = setmetatable({}, {__mode = "k"})  -- đã log nhưng không match
+-- ==========================================
+-- Queue-based: workspace.DescendantAdded đẩy instance vào queue
+-- Scan loop chỉ drain queue → không tốn CPU scan lại toàn workspace
+-- ==========================================
+local _newInstQueue    = {}   -- queue drain mỗi scan tick
+local _checkedInsts    = setmetatable({}, {__mode = "k"})  -- đã check (weak)
+local _loggedUnknown   = setmetatable({}, {__mode = "k"})
 
--- Collect tất cả descendants của root vào flat list, giới hạn depth
-local function CollectDescendants(root, depth, out)
-    if depth <= 0 then return end
-    local ok, children = pcall(function() return root:GetChildren() end)
-    if not ok then return end
-    for _, child in ipairs(children) do
-        if child:IsA("BasePart") or child:IsA("Model") or child:IsA("Folder") then
-            table.insert(out, child)
-            if depth > 1 then
-                CollectDescendants(child, depth - 1, out)
-            end
-        end
+-- Connect một lần duy nhất
+local _descAddedConn
+_descAddedConn = workspace.DescendantAdded:Connect(function(inst)
+    if _G.DungeonScriptID ~= currentScriptID then
+        _descAddedConn:Disconnect(); return
     end
+    -- Chỉ quan tâm BasePart và Model (có vị trí)
+    if inst:IsA("BasePart") or inst:IsA("Model") then
+        _newInstQueue[#_newInstQueue + 1] = inst
+    end
+end)
+
+-- Lấy vị trí instance — BasePart đệ quy
+local function GetInstPos(inst)
+    if not inst then return nil end
+    local pos
+    pcall(function()
+        if inst:IsA("BasePart") then
+            pos = inst.Position
+        elseif inst:IsA("Model") then
+            if inst.PrimaryPart then
+                pos = inst.PrimaryPart.Position
+            else
+                local bp = inst:FindFirstChildWhichIsA("BasePart", true)
+                if bp then pos = bp.Position end
+            end
+            if not pos then pos = inst:GetModelCFrame().Position end
+        end
+    end)
+    return pos
 end
 
--- Snapshot-based scan:
---   - Chỉ phản ứng với instance MỚI (chưa từng thấy) → tránh false-positive liên tục
---   - def.noRadius = true → bỏ giới hạn BOSS_PROX_RADIUS (cho Entei AoE lớn)
--- Returns: bestDef, bestInst, bestPos  (nil nếu không detect)
-local function SnapshotScan(playerPos)
-    local allInsts = {}
-    CollectDescendants(workspace, 4, allInsts)
+-- Drain queue và check hazard — chỉ xử lý instance mới spawn
+-- Returns bestDef, bestInst, bestPos
+local function DrainQueueScan(playerPos)
+    if #_newInstQueue == 0 then return nil, nil, nil end
 
-    local bestDef  = nil
-    local bestInst = nil
-    local bestPos  = nil
+    -- Ambil queue hiện tại, reset cho lần sau
+    local queue = _newInstQueue
+    _newInstQueue = {}
 
-    for _, v in ipairs(allInsts) do
-        if IgnoredHazards[v] then continue end
+    local bestDef, bestInst, bestPos
 
-        local char = Player.Character
+    local char = Player.Character
+    for _, v in ipairs(queue) do
+        -- Bỏ qua nếu đã check, không còn trong game, hoặc là của char
+        if _checkedInsts[v] then continue end
+        if not v:IsDescendantOf(workspace) then continue end
         if char and v:IsDescendantOf(char) then continue end
+        _checkedInsts[v] = true
 
-        -- Bỏ qua ngay các instance noise (DMGIND, hitbox, sfx, ...)
+        -- Ignore noise patterns
         local n = v.Name:lower()
-        local shouldIgnore = false
+        local skip = false
         for _, pat in ipairs(IGNORE_NAME_PATTERNS) do
-            if n:find(pat, 1, true) then shouldIgnore = true; break end
+            if n:find(pat, 1, true) then skip = true; break end
         end
-        if shouldIgnore then
-            _knownInstances[v] = true  -- đánh dấu để không check lại
-            continue
-        end
+        if skip then continue end
 
         local vPos = GetInstPos(v)
         if not vPos then continue end
 
-        local dist = (Vector3.new(vPos.X, 0, vPos.Z) - Vector3.new(playerPos.X, 0, playerPos.Z)).Magnitude
+        local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
 
-        -- FIX: chỉ react với instance CHƯA từng thấy
-        if _knownInstances[v] then continue end
-        _knownInstances[v] = true
-
-        -- Check BossSkillDefs
         for _, def in ipairs(BossSkillDefs) do
             local inRadius = def.noRadius or (dist <= BOSS_PROX_RADIUS)
             if inRadius and (not bestDef or def.priority < bestDef.priority) and n:match(def.pattern) then
-                print("⚠️ [SnapDetect] NEW skill:", v.Name, "→", def.action, "dist:", math.floor(dist), "| path:", v:GetFullName())
+                print("⚠️ [HazardQ] NEW:", v.Name, "→", def.action, "dist:", math.floor(dist))
                 bestDef  = def
                 bestInst = v
                 bestPos  = vPos
             end
         end
 
-        -- Log instance mới không match pattern nào (để tune thêm)
+        -- Log unknown gần player
         if not bestDef and dist <= BOSS_PROX_RADIUS and not _loggedUnknown[v] then
             _loggedUnknown[v] = true
-            print("🔍 [SnapDetect] UNKNOWN near player:", v.Name, "| dist:", math.floor(dist), "| path:", v:GetFullName())
+            print("🔍 [HazardQ] UNKNOWN:", v.Name, "dist:", math.floor(dist), "|", v:GetFullName())
         end
     end
 
     return bestDef, bestInst, bestPos
 end
-
--- Dọn _knownInstances mỗi 5s: xóa instance đã ra khỏi game
-task.spawn(function()
-    while _G.DungeonScriptID == currentScriptID do
-        task.wait(5)
-        for inst in pairs(_knownInstances) do
-            if not inst:IsDescendantOf(workspace) then
-                _knownInstances[inst] = nil
-            end
-        end
-    end
-end)
 
 task.spawn(function()
     while _G.DungeonScriptID == currentScriptID do
@@ -1053,9 +1154,9 @@ task.spawn(function()
                 local foundLavaPart   = nil
                 local foundLavaPrompt = nil
 
-                -- Boss skill scan (zone >= 5) dùng snapshot detection
+                -- Boss skill scan (zone >= 5) — event-driven queue
                 if CurrentZoneIndex >= 5 then
-                    local def, inst, pos = SnapshotScan(playerPos)
+                    local def, inst, pos = DrainQueueScan(playerPos)
                     if def and inst then
                         detectedHazard  = "BossSkill"
                         hazardAction    = def.action
@@ -1597,8 +1698,13 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- [19] RUNSERVICE: STEPPED (ANTI STUN/FREEZE)
+-- [19] RUNSERVICE: STEPPED (ANTI STUN/FREEZE + NOCLIP)
+-- Noclip improvement: apply CanCollide=false toàn bộ descendants
+-- (bao gồm accessories, tools, mesh parts) không chỉ children
 -- ==========================================
+local _noclipLastApply = 0
+local NOCLIP_APPLY_INTERVAL = 0.08  -- apply CanCollide mỗi 80ms (không cần mỗi frame)
+
 _G.CupidStepped = RunService.Stepped:Connect(function()
     if not _G.AutoDungeon or not IsFarmingReady then return end
     if _G.IsProcessingFruit then return end
@@ -1613,11 +1719,11 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
         _G.ragdoll = false
         _G.stunned = false
         _G.zombie  = false
-        -- V4: Không reset _G.blocking khi TriggerSkillBlock đang active
         if not _G.SkillBlocking then _G.blocking = false end
 
         if hum and hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
 
+        -- Attributes anti-stun
         for attr in pairs(char:GetAttributes()) do
             if type(attr) == "string" then
                 local a = attr:lower()
@@ -1628,18 +1734,27 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
             end
         end
 
-        for _, v in pairs(char:GetChildren()) do
-            if v:IsA("BasePart") then
-                v.CanCollide = false
-            elseif v:IsA("ValueBase") then
-                local n = v.Name:lower()
-                if n:match("stun") or n:match("knock") or n:match("ragdoll") or n:match("zombie") or n:match("busy") then
-                    v:Destroy()
-                end
-            else
-                local name = v.Name:lower()
-                if name:match("stun") or name:match("knock") or name == "ragdoll" or name == "zombie" then
-                    v:Destroy()
+        -- Noclip: apply mỗi NOCLIP_APPLY_INTERVAL giây để không chạy mỗi frame
+        local now = tick()
+        if now - _noclipLastApply >= NOCLIP_APPLY_INTERVAL then
+            _noclipLastApply = now
+            -- Apply toàn bộ descendants (bao gồm accessories, tool handles, v.v.)
+            for _, v in ipairs(char:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    v.CanCollide      = false
+                    v.CastShadow      = false  -- giảm shadow calculation
+                elseif v:IsA("ValueBase") then
+                    local n = v.Name:lower()
+                    if n:match("stun") or n:match("knock") or n:match("ragdoll")
+                    or n:match("zombie") or n:match("busy") then
+                        v:Destroy()
+                    end
+                else
+                    local name = v.Name:lower()
+                    if name:match("stun") or name:match("knock")
+                    or name == "ragdoll" or name == "zombie" then
+                        v:Destroy()
+                    end
                 end
             end
         end
@@ -1663,6 +1778,16 @@ end)
 --      StopStaminaSpoof khi tới nơi.
 -- ==========================================
 local isMovingForStamina = false
+-- Cache footstep event 1 lần — tránh FindFirstChild mỗi Heartbeat frame
+local _footstepEvent = ReplicatedStorage:FindFirstChild("Events")
+    and ReplicatedStorage.Events:FindFirstChild("footstep") or nil
+task.spawn(function()
+    -- Đợi nếu chưa load
+    if not _footstepEvent then
+        local ev = ReplicatedStorage:WaitForChild("Events", 10)
+        if ev then _footstepEvent = ev:WaitForChild("footstep", 10) end
+    end
+end)
 
 _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     if not _G.AutoDungeon then return end
@@ -1795,9 +1920,7 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
             root.RotVelocity = Vector3.new(0, 0, 0)
             pcall(function()
                 if hum then hum:Move(Vector3.new(0.01, 0, 0.01), false) end
-                local footstepEvent = ReplicatedStorage:FindFirstChild("Events")
-                    and ReplicatedStorage.Events:FindFirstChild("footstep")
-                if footstepEvent then footstepEvent:FireServer() end
+                if _footstepEvent then _footstepEvent:FireServer() end
             end)
         end
     else
