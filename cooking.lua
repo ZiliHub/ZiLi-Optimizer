@@ -642,29 +642,49 @@ local function GetMobsInZone(zonePos)
     return mobs
 end
 
+-- FIX: priority scan (sword/blade > axe > katana) + pcall bảo vệ EquipTool
+local WEAPON_PRIORITY = {
+    {pattern = "sword",  score = 1},
+    {pattern = "blade",  score = 1},
+    {pattern = "axe",    score = 2},
+    {pattern = "katana", score = 3},
+}
+local function IsWeapon(name)
+    local n = name:lower()
+    for _, w in ipairs(WEAPON_PRIORITY) do
+        if n:match(w.pattern) then return true, w.score end
+    end
+    return false, math.huge
+end
+
 local function CheckAndEquipWeapon()
     if _G.IsProcessingFruit then return nil end
     local char = Player.Character
     if not char then return nil end
     local currentTool = char:FindFirstChildOfClass("Tool")
     if currentTool then
-        local n = currentTool.Name:lower()
-        if n:match("sword") or n:match("blade") or n:match("axe") or n:match("katana") then return currentTool end
+        local ok, _ = IsWeapon(currentTool.Name)
+        if ok then return currentTool end
     end
     local bp = Player:FindFirstChild("Backpack")
     if not bp then return currentTool end
-    local sword = nil
+
+    -- FIX: scan toàn bộ backpack, chọn vũ khí ưu tiên cao nhất (score thấp nhất)
+    local best, bestScore = nil, math.huge
     for _, t in pairs(bp:GetChildren()) do
         if t:IsA("Tool") then
-            local n = t.Name:lower()
-            if n:match("sword") or n:match("blade") or n:match("axe") or n:match("katana") then sword = t; break end
+            local ok, score = IsWeapon(t.Name)
+            if ok and score < bestScore then
+                best = t; bestScore = score
+            end
         end
     end
-    if sword and currentTool ~= sword then
+    if best then
         local hum = char:FindFirstChild("Humanoid")
-        if hum then hum:EquipTool(sword) end
+        -- FIX: bọc pcall để tránh fail silent khi humanoid đang stun/ragdoll
+        if hum then pcall(function() hum:EquipTool(best) end) end
     end
-    return sword
+    return best
 end
 
 local function GetAttackAnim(weaponName, combo)
@@ -691,11 +711,24 @@ local function GetAttackAnim(weaponName, combo)
         return wType, anim
     end
 
-    wType  = weaponName
+    -- FIX: nếu tên weapon match sword/blade/katana/axe → dùng "Sword" type khi fallback
+    -- Tránh bị tính damage theo melee scaling khi cầm katana không có folder riêng
+    local isBladeWeapon = (function()
+        local n = weaponName:lower()
+        return n:match("sword") or n:match("blade") or n:match("katana") or n:match("axe")
+    end)()
+
+    wType  = isBladeWeapon and "Sword" or weaponName
     local folder = ReplicatedStorage:WaitForChild("CombatAnimations"):FindFirstChild(weaponName)
     if not folder then
-        folder = ReplicatedStorage:WaitForChild("CombatAnimations"):FindFirstChild("Melee")
-        wType  = "Melee"
+        -- Thử tìm folder "Sword" trước nếu là blade weapon
+        if isBladeWeapon then
+            folder = ReplicatedStorage:WaitForChild("CombatAnimations"):FindFirstChild("Sword")
+        end
+        if not folder then
+            folder = ReplicatedStorage:WaitForChild("CombatAnimations"):FindFirstChild("Melee")
+            if not isBladeWeapon then wType = "Melee" end
+        end
     end
     if folder then
         anim = folder:FindFirstChild("Punch"..combo)
