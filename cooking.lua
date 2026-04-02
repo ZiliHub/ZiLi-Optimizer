@@ -383,28 +383,35 @@ end
 -- ==========================================
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
-local MoveSpeed     = 115   -- V4: tăng từ 95 → đi nhanh hơn
-local AttackOffset  = 10
+local MoveSpeed     = 115
+local AttackOffset  = 10    -- FIX: 10 thay vì 10.5, dùng chung cho flying & underground
 local SearchRadius  = 800
-local WaitSpawnTime = 12    -- V4: giảm từ 15
-local GatherTime    = 1.5   -- V4: giảm từ 2
+local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
+local GatherTime    = 0.2   -- gather nhanh hơn
 local DangerRadius  = 45
 local EvadeDistance = 60
 
--- Khoảng cách né skill boss (user-tuned)
-local EVADE_ENTEI        = 130  -- Dai Enkai: Entei
-local EVADE_FLAME_PILLAR = 75   -- Flame Pillar
+-- Khoảng cách né skill boss
+local EVADE_ENTEI        = 130
+local EVADE_FLAME_PILLAR = 75
 local EVADE_BOSS_GENERIC = 100
 
--- Underground noclip (zone 7 & 8)
--- Đi xuống lòng đất thay vì bay — anti-cheat smooth: lerp Y dần, không teleport
-local UNDERGROUND_DEPTH      = 28   -- studs dưới floorY khi đứng/attack
-local UNDERGROUND_DODGE_ADD  = 20   -- thêm sâu hơn nữa khi dodge Enkai
-local UNDERGROUND_LERP_SPEED = 55   -- studs/s — nhanh hơn (was 20), vẫn smooth đủ cho AC
+-- Underground noclip (zone 7+8)
+-- FIX: dùng mob.Y ± AttackOffset thay vì floorY - depth
+-- → khoảng cách tới mob = AttackOffset (10), giống flying
+local UNDERGROUND_DEPTH     = AttackOffset   -- = 10, đồng nhất với flying
+local UNDERGROUND_DODGE_ADD = 10             -- thêm khi dodge (tổng 20 dưới mob)
+local UNDERGROUND_LERP_SPEED = 80            -- studs/s smooth descent
 
--- V4: Giới hạn tween để tránh teleport-back & FPS drop
-local MAX_DT             = 0.07   -- Cap dt ở 70ms (tương đương ~14 FPS)
-local MAX_STEP_PER_FRAME = 10     -- Tối đa 10 studs/frame để server không kick
+-- Ground AoE (arrow rain, lightning): chui xuống dưới mob thay vì chạy xa
+local GROUND_AOE_DEPTH = 20   -- studs dưới mob.Y khi né ground AoE
+
+-- Giới hạn tween
+local MAX_DT             = 0.1    -- 100ms cap — an toàn hơn ở FPS thấp
+local MAX_STEP_PER_FRAME = 8      -- giảm từ 10 → server ít kick hơn khi FPS < 5
+
+-- Thời gian đứng yên sau khi né dodge xong
+local DODGE_RETURN_WAIT = 4  -- giây
 
 local Zone5Points = {
     Vector3.new(-1166.94, 442.27, -3332.41),
@@ -449,9 +456,9 @@ if not fakePlatform then
 end
 
 -- ==========================================
--- [5-A] STAMINA SPOOF — NOCLIP TWEEN (V4 NEW)
--- FireServer TakeStam mỗi 0.05s khi đang di chuyển
--- Trick server nghĩ char đang dash → bypass teleport-back check
+-- [5-A] STAMINA SPOOF — ALWAYS ON
+-- Chạy liên tục suốt session — server luôn nghĩ char đang dash
+-- bypass mọi distance / teleport-back check kể cả khi đứng yên
 -- ==========================================
 local Events   = ReplicatedStorage:WaitForChild("Events", 5)
 local TakeStam = Events and Events:WaitForChild("takestam", 5)
@@ -463,12 +470,10 @@ local function StartStaminaSpoof()
     isSpoofingStamina = true
     task.spawn(function()
         while isSpoofingStamina and _G.DungeonScriptID == currentScriptID do
-            task.wait(0.05)
             if TakeStam and TakeStam.Parent then
                 pcall(function() TakeStam:FireServer(0.545, "dash") end)
-            else
-                break
             end
+            task.wait(0.05)
         end
         isSpoofingStamina = false
     end)
@@ -477,6 +482,9 @@ end
 local function StopStaminaSpoof()
     isSpoofingStamina = false
 end
+
+-- Bắt đầu ngay, chạy mãi mãi không cần đợi di chuyển
+StartStaminaSpoof()
 
 -- ==========================================
 -- [5-B] SKILL BLOCK TRIGGER (V4 NEW)
@@ -921,56 +929,89 @@ local function DoMapOptimize()
     if _mapOptimized then return end
     _mapOptimized = true
     task.spawn(function()
+        -- [A] Lighting & quality
         pcall(function()
-            -- Lighting: tắt shadow + giảm quality
             local Lighting = game:GetService("Lighting")
             Lighting.GlobalShadows     = false
             Lighting.FogEnd            = 9e9
-            -- Tắt post-processing nặng
+            Lighting.Brightness        = 2
             for _, v in ipairs(Lighting:GetChildren()) do
                 if v:IsA("BlurEffect") or v:IsA("DepthOfFieldEffect")
                 or v:IsA("SunRaysEffect") or v:IsA("BloomEffect")
-                or v:IsA("ColorCorrectionEffect") then
-                    v.Enabled = false
+                or v:IsA("ColorCorrectionEffect") or v:IsA("Sky") then
+                    pcall(function() v.Enabled = false end)
                 end
             end
         end)
 
-        -- Ẩn visual skill trong Effects và Projectiles (không xóa → không bug)
-        -- BasePart vẫn còn → SnapshotScan vẫn detect tên/vị trí bình thường
+        -- [B] Render quality xuống thấp nhất
+        pcall(function()
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        end)
+
+        -- [C] Terrain: tắt decoration & water render
+        pcall(function()
+            local t = workspace:FindFirstChildOfClass("Terrain")
+            if t then
+                t.Decoration         = false
+                t.WaterWaveSize      = 0
+                t.WaterWaveSpeed     = 0
+                t.WaterReflectance   = 0
+                t.WaterTransparency  = 1
+                t.CastShadow         = false
+            end
+        end)
+
+        -- [D] Ẩn visual skill trong Effects & Projectiles
+        -- BasePart vẫn còn → HazardScanner detect bình thường
         local fxFolders = {"Effects", "Projectiles"}
         for _, fname in ipairs(fxFolders) do
             local f = workspace:FindFirstChild(fname)
             if f then
                 HideFolderEffects(f)
-            else
-                -- Chờ folder xuất hiện
-                workspace.ChildAdded:Connect(function(child)
-                    if child.Name == fname then
-                        task.defer(function() HideFolderEffects(child) end)
-                    end
-                end)
             end
+            workspace.ChildAdded:Connect(function(child)
+                if child.Name == fname then
+                    task.defer(function() HideFolderEffects(child) end)
+                end
+            end)
         end
 
-        -- Ẩn vật trang trí xa trong Env (giữ nguyên collision)
+        -- [E] Islands / Env: ẩn toàn bộ particle + tắt shadow
+        -- Không xóa model để không phá physics
         pcall(function()
-            local env = workspace:FindFirstChild("Env")
-            if env then
-                for _, v in ipairs(env:GetDescendants()) do
-                    if v:IsA("ParticleEmitter") or v:IsA("Beam") or v:IsA("Trail") then
-                        pcall(function() v.Enabled = false end)
-                    elseif v:IsA("BasePart") and not v:IsA("Terrain") then
-                        pcall(function()
-                            v.CastShadow = false
-                            -- Không ẩn map collision, chỉ tắt shadow
-                        end)
-                    end
+            local islands = workspace:FindFirstChild("Islands")
+            if islands then
+                for _, desc in ipairs(islands:GetDescendants()) do
+                    pcall(function()
+                        if desc:IsA("ParticleEmitter") or desc:IsA("Beam")
+                        or desc:IsA("Trail") or desc:IsA("Fire")
+                        or desc:IsA("Smoke") or desc:IsA("Sparkles") then
+                            desc.Enabled = false
+                        elseif desc:IsA("BasePart") then
+                            desc.CastShadow = false
+                            -- Ẩn parts trang trí (không có CanCollide) để giảm render
+                            if not desc.CanCollide and not desc.Anchored == false then
+                                desc.LocalTransparencyModifier = 1
+                            end
+                        elseif desc:IsA("Decal") or desc:IsA("Texture") then
+                            desc.Transparency = 1
+                        end
+                    end)
                 end
             end
         end)
 
-        print("🗺️ Map Optimized: shadows off, skill visuals hidden")
+        -- [F] Ẩn các folder không cần thiết khác trong workspace
+        pcall(function()
+            local hideFolders = {"Sky", "Clouds", "Atmosphere"}
+            for _, name in ipairs(hideFolders) do
+                local f = workspace:FindFirstChild(name)
+                if f then pcall(function() f:Destroy() end) end
+            end
+        end)
+
+        print("🗺️ Map Optimized: quality L01, shadows off, particles off, terrain deco off")
     end)
 end
 
@@ -1173,6 +1214,7 @@ task.spawn(function()
                 end
 
                 -- General AoE + Lava Curse (mọi zone)
+                -- Arrow rain / lightning → chui xuống dưới mob thay vì chạy xa
                 if detectedHazard == "None" then
                     local effectsFolder = workspace:FindFirstChild("Effects")
                     if effectsFolder then
@@ -1182,14 +1224,18 @@ task.spawn(function()
                             local vPos = GetInstPos(v)
                             if vPos and not IgnoredHazards[v] then
                                 local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
-                                if (name:match("aoe") or name:match("circle") or name:match("bomb") or name:match("meteor")
-                                or name:match("lightning") or name:match("arrow") or name:match("rain") or name:match("projectile"))
-                                and dist < minDist then
-                                    detectedHazard  = "Normal"
+                                local isGroundAoe = name:match("arrow") or name:match("rain")
+                                    or name:match("lightning") or name:match("bomb")
+                                    or name:match("meteor") or name:match("projectile")
+                                local isRunAoe = name:match("aoe") or name:match("circle")
+                                if (isGroundAoe or isRunAoe) and dist < minDist then
+                                    -- Ground AoE (arrow/rain/lightning): action chui đất
+                                    -- Run AoE (aoe/circle): chạy xa như cũ
+                                    detectedHazard  = isGroundAoe and "GroundAoe" or "Normal"
                                     hazardPos       = vPos
                                     minDist         = dist
                                     hazardInst      = v
-                                    hazardAction    = "DODGE"
+                                    hazardAction    = isGroundAoe and "UNDERGROUND" or "DODGE"
                                     hazardEvadeDist = EvadeDistance
                                 end
                                 if name:match("lava") and name:match("curse") and dist < 1500 and not IgnoredHazards[v] then
@@ -1390,29 +1436,44 @@ task.spawn(function()
                 -- ZoneState không còn bị đổi sang SKILL_BLOCKING nữa
                 -- → attack loop tiếp tục bình thường khi đỡ Firefly / Hiken
 
-                -- ── DODGE / BLOCK TRIGGER ───────────────────────────────────
+                -- ── DODGE / BLOCK / UNDERGROUND TRIGGER ─────────────────────
                 if CurrentZoneIndex ~= 5 and CurrentHazard.Type ~= "None"
-                and ZoneState ~= "DODGING" then
+                and ZoneState ~= "DODGING" and ZoneState ~= "DODGE_WAIT"
+                and ZoneState ~= "GROUND_AVOIDING" then
 
-                    local action    = CurrentHazard.Action    or "DODGE"
-                    local evadeDist = CurrentHazard.MinDist   or EvadeDistance
+                    local action    = CurrentHazard.Action  or "DODGE"
+                    local evadeDist = CurrentHazard.MinDist or EvadeDistance
                     local char2     = Player.Character
                     local wpn2      = char2 and char2:FindFirstChildOfClass("Tool")
                     local wName2    = wpn2 and wpn2.Name or "Melee"
 
                     if action == "BLOCK" then
-                        -- Firefly / Hiken: giữ F đỡ BACKGROUND, KHÔNG dừng attack
-                        -- Player đứng im tại vị trí boss, combo tiếp tục
                         if CurrentHazard.Instance then
                             IgnoredHazards[CurrentHazard.Instance] = tick() + 3.5
                         end
                         if not _G.SkillBlocking then
                             TriggerSkillBlock(wName2, 2.5)
-                            print("🛡️ BLOCK (background, attack tiếp):", CurrentHazard.Instance and CurrentHazard.Instance.Name or "?")
+                            print("🛡️ BLOCK background:", CurrentHazard.Instance and CurrentHazard.Instance.Name or "?")
                         end
-                        -- KHÔNG đổi ZoneState, KHÔNG set IsReadyToAttack = false
+
+                    elseif action == "UNDERGROUND" then
+                        -- Arrow rain / lightning: chui xuống dưới mob, tiếp tục đánh
+                        if CurrentHazard.Instance then
+                            IgnoredHazards[CurrentHazard.Instance] = tick() + 5
+                        end
+                        if ZoneState ~= "ABSORBING_CURSE" then PreviousZoneState = ZoneState end
+                        ZoneState = "GROUND_AVOIDING"
+                        -- Target: XZ của mob (hoặc vị trí hiện tại), Y = mob.Y - GROUND_AOE_DEPTH
+                        local targetX = CurrentTargetRoot and CurrentTargetRoot.Position.X or root.Position.X
+                        local targetZ = CurrentTargetRoot and CurrentTargetRoot.Position.Z or root.Position.Z
+                        local targetMobY = CurrentTargetRoot and CurrentTargetRoot.Position.Y or root.Position.Y
+                        TargetCFrame = CFrame.new(targetX, targetMobY - GROUND_AOE_DEPTH, targetZ)
+                        DodgeTimer = tick() + 4  -- ở dưới 4s
+                        print("⬇️ GROUND_AVOID:", CurrentHazard.Instance and CurrentHazard.Instance.Name or "?",
+                              "→ xuống", GROUND_AOE_DEPTH, "studs")
+
                     else
-                        -- Enkai / FlamePillar: chạy ra xa
+                        -- DODGE: Enkai / FlamePillar — chạy xa
                         IsReadyToAttack   = false
                         CurrentTargetRoot = nil
                         if CurrentHazard.Instance then
@@ -1429,25 +1490,45 @@ task.spawn(function()
                                 Vector3.new(0,0,1), Vector3.new(0,0,-1)
                             })[rand+1]
                         end
-                        -- Giữ Y dưới lòng đất nếu đang underground mode, ngược lại dùng floorY
                         local safeY = root.Position.Y
                         pcall(function()
-                            local zonePart2 = workspace.Effects.Zones["Zone"..CurrentZoneIndex]:FindFirstChild("Zone")
-                            if zonePart2 then
-                                local fY = GetZoneFloor(CurrentZoneIndex, zonePart2.Position)
-                                if _isUndergroundMode then
-                                    -- Trong lúc dodge enkai: đi sâu hơn bình thường
-                                    safeY = fY - UNDERGROUND_DEPTH - UNDERGROUND_DODGE_ADD
-                                else
-                                    safeY = fY + 5
-                                end
+                            local zp2 = workspace.Effects.Zones["Zone"..CurrentZoneIndex]:FindFirstChild("Zone")
+                            if zp2 then
+                                local fY2 = GetZoneFloor(CurrentZoneIndex, zp2.Position)
+                                safeY = _isUndergroundMode
+                                    and (root.Position.Y - UNDERGROUND_DODGE_ADD)  -- sâu thêm khi underground
+                                    or  (fY2 + 5)
                             end
                         end)
-                        local flatDir    = Vector3.new(evadeDir.X, 0, evadeDir.Z)
-                        DodgeTimer   = tick() + (evadeDist / MoveSpeed) + 1.5
-                        TargetCFrame = CFrame.new(root.Position + flatDir.Unit * evadeDist + Vector3.new(0, safeY - root.Position.Y, 0))
+                        local flatDir = Vector3.new(evadeDir.X, 0, evadeDir.Z)
+                        -- Timer = thời gian di chuyển + 4s đứng yên
+                        DodgeTimer   = tick() + (evadeDist / MoveSpeed) + DODGE_RETURN_WAIT
+                        TargetCFrame = CFrame.new(root.Position
+                            + flatDir.Unit * evadeDist
+                            + Vector3.new(0, safeY - root.Position.Y, 0))
                         print("🏃 DODGE:", CurrentHazard.Instance and CurrentHazard.Instance.Name or "Normal",
-                              "→", evadeDist, "studs")
+                              "→", evadeDist, "studs | wait", DODGE_RETURN_WAIT, "s")
+                    end
+                end
+
+                -- GROUND_AVOIDING: nằm dưới đất né AoE, vẫn attack nếu có mob
+                if ZoneState == "GROUND_AVOIDING" then
+                    -- Giữ Y thấp nhưng tiếp tục attack
+                    IsReadyToAttack = CurrentTargetRoot ~= nil
+                    if tick() > DodgeTimer then
+                        ZoneState = PreviousZoneState or "ATTACKING"
+                        CurrentHazard.Type = "None"
+                        print("✅ GROUND_AVOID xong → quay lại:", ZoneState)
+                    else
+                        -- Update target Y xuống dưới mob nếu mob di chuyển
+                        if CurrentTargetRoot and CurrentTargetRoot.Parent then
+                            local mY = CurrentTargetRoot.Position.Y
+                            TargetCFrame = CFrame.new(
+                                CurrentTargetRoot.Position.X,
+                                mY - GROUND_AOE_DEPTH,
+                                CurrentTargetRoot.Position.Z)
+                        end
+                        -- không return — vẫn chạy zone machine bên dưới
                     end
                 end
 
@@ -1455,8 +1536,10 @@ task.spawn(function()
                     IsReadyToAttack   = false
                     CurrentTargetRoot = nil
                     if tick() > DodgeTimer then
-                        ZoneState            = PreviousZoneState or "FLYING"
-                        CurrentHazard.Type   = "None"
+                        -- Dodge xong: quay lại zone cũ
+                        ZoneState          = PreviousZoneState or "ATTACKING"
+                        CurrentHazard.Type = "None"
+                        print("✅ DODGE xong (4s wait included) → quay lại:", ZoneState)
                     else
                         return
                     end
@@ -1486,77 +1569,94 @@ task.spawn(function()
                     local mobs = GetMobsInZone(boxCenter)
 
                     if ZoneState == "FLYING" then
-                        -- Zone 7+8: đi xuống đất, zone khác: bay lên
                         local targetY
                         if isUnderground then
                             targetY = floorY - UNDERGROUND_DEPTH
                         else
                             targetY = math.max(root.Position.Y, floorY + 40)
                         end
-                        TargetCFrame  = CFrame.new(Vector3.new(boxCenter.X, targetY, boxCenter.Z))
+                        TargetCFrame = CFrame.new(Vector3.new(boxCenter.X, targetY, boxCenter.Z))
                         CurrentTargetRoot = nil
                         local xzDist = (Vector2.new(root.Position.X, root.Position.Z)
                                       - Vector2.new(boxCenter.X, boxCenter.Z)).Magnitude
                         if xzDist < 15 then
                             if CurrentZoneIndex == 5 then
-                                ZoneState = "ZONE5_SURVIVAL"
-                                Timer     = tick() + 30
-                                Z5Index   = 1
+                                ZoneState = "ZONE5_SURVIVAL"; Timer = tick() + 30; Z5Index = 1
                             else
-                                ZoneState = "WAITING_SPAWN"
-                                Timer     = tick() + WaitSpawnTime
+                                -- Nếu đã có mob ngay → attack luôn, không chờ
+                                if #mobs > 0 then
+                                    ZoneState = "ATTACKING"
+                                else
+                                    ZoneState = "WAITING_SPAWN"; Timer = tick() + WaitSpawnTime
+                                end
                             end
                         end
 
                     elseif ZoneState == "ZONE5_SURVIVAL" then
-                        IsReadyToAttack   = false
-                        CurrentTargetRoot = nil
+                        IsReadyToAttack = false; CurrentTargetRoot = nil
                         local z5t = Zone5Points[Z5Index]
                         TargetCFrame = CFrame.new(z5t)
-                        if (Vector3.new(root.Position.X,0,root.Position.Z) - Vector3.new(z5t.X,0,z5t.Z)).Magnitude < 10 then
+                        if (Vector3.new(root.Position.X,0,root.Position.Z)
+                          - Vector3.new(z5t.X,0,z5t.Z)).Magnitude < 10 then
                             Z5Index = Z5Index < #Zone5Points and Z5Index + 1 or 1
                         end
-                        if tick() > Timer then CurrentZoneIndex = CurrentZoneIndex + 1; ZoneState = "FLYING"; task.wait(0.2) end
+                        if tick() > Timer then
+                            CurrentZoneIndex = CurrentZoneIndex + 1; ZoneState = "FLYING"; task.wait(0.1)
+                        end
 
                     elseif ZoneState == "WAITING_SPAWN" then
-                        TargetCFrame      = CFrame.new(waitPos)
-                        CurrentTargetRoot = nil
+                        -- FIX: đứng ở waitPos nhưng KHÔNG reset mỗi frame
+                        if TargetCFrame == nil then TargetCFrame = CFrame.new(waitPos) end
+                        CurrentTargetRoot = nil; IsReadyToAttack = false
                         if #mobs > 0 then
-                            ZoneState = "GATHERING"; Timer = tick() + GatherTime
+                            ZoneState = "ATTACKING"
                         elseif tick() > Timer then
-                            CurrentZoneIndex = CurrentZoneIndex + 1; ZoneState = "FLYING"; task.wait(0.2)
+                            CurrentZoneIndex = CurrentZoneIndex + 1; ZoneState = "FLYING"; task.wait(0.1)
                         end
 
                     elseif ZoneState == "GATHERING" then
-                        if #mobs > 0 then CurrentTargetRoot = GetRoot(mobs[1]) end
-                        if tick() > Timer then ZoneState = "ATTACKING" end
+                        -- Shortcut: luôn vào ATTACKING ngay
+                        if #mobs > 0 then
+                            ZoneState = "ATTACKING"
+                        else
+                            ZoneState = "WAITING_SPAWN"; Timer = tick() + WaitSpawnTime
+                        end
 
                     elseif ZoneState == "ATTACKING" then
                         if #mobs == 0 then
-                            ZoneState = "VERIFY_CLEAR"; Timer = tick() + 2
+                            IsReadyToAttack = false; CurrentTargetRoot = nil
+                            ZoneState = "VERIFY_CLEAR"; Timer = tick() + 0.8
                         else
-                            CurrentTargetRoot = GetRoot(mobs[1])
+                            -- Target mob gần nhất
+                            local bestMob, bestD = mobs[1], math.huge
+                            for _, m in ipairs(mobs) do
+                                local mr = GetRoot(m)
+                                if mr then
+                                    local d = (mr.Position - root.Position).Magnitude
+                                    if d < bestD then bestD = d; bestMob = m end
+                                end
+                            end
+                            CurrentTargetRoot = GetRoot(bestMob)
                             IsReadyToAttack   = true
                         end
 
                     elseif ZoneState == "VERIFY_CLEAR" then
+                        -- FIX: không bay về tâm zone, đứng im chờ 0.8s
+                        IsReadyToAttack = false; CurrentTargetRoot = nil
                         if #mobs > 0 then
                             ZoneState = "ATTACKING"
                         elseif tick() > Timer then
                             if CurrentZoneIndex == 7 then
                                 ZoneState = "WAIT_30S"; Timer = tick() + 20
-                                IsReadyToAttack = false; CurrentTargetRoot = nil
                             else
                                 CurrentZoneIndex = CurrentZoneIndex + 1
-                                ZoneState = "FLYING"
-                                IsReadyToAttack = false; CurrentTargetRoot = nil; task.wait(0.2)
+                                ZoneState = "FLYING"; task.wait(0.1)
                             end
                         end
 
                     elseif ZoneState == "WAIT_30S" then
-                        TargetCFrame      = CFrame.new(waitPos)
-                        CurrentTargetRoot = nil
-                        IsReadyToAttack   = false
+                        TargetCFrame = CFrame.new(waitPos)
+                        CurrentTargetRoot = nil; IsReadyToAttack = false
                         if tick() > Timer then CurrentZoneIndex = 8; ZoneState = "FLYING" end
                     end
                 else
@@ -1579,83 +1679,94 @@ end)
 -- ==========================================
 
 -- ==========================================
--- [17] AUTO ATTACK
--- Fix combo stability:
---   [A] Cache CombatAnimations folder — tránh WaitForChild yield mỗi đòn
---   [B] Bỏ pre-check nextAnim → không reset combo sớm nữa
---       Combo tự reset ở đầu vòng khi GetAttackAnim trả nil
---   [C] swingsfx + damage trong cùng 1 task.spawn → luôn gửi cặp
+-- [17] AUTO ATTACK — FPS-RESILIENT
+-- Vấn đề cũ: task.wait(0.366) với FPS < 5:
+--   - task.wait có thể trả về sau 0.1s-1s tuỳ frame budget
+--   - FPS drop → yield dài → attack thưa; freeze → yield ngắn → double-fire
+-- Fix: track _lastFireTime bằng tick() thực tế
+--   → chỉ fire khi đã đủ strikeDelay thực (không phụ thuộc task.wait)
+--   → freeze/FPS drop không gây double-fire hay bỏ đòn
 -- ==========================================
 task.spawn(function()
     local CombatRegister   = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
-    -- [A] Cache folder ngay khi start — WaitForChild 1 lần duy nhất
     local CombatAnimFolder = ReplicatedStorage:WaitForChild("CombatAnimations")
     local currentCombo     = 1
-    local strikeDelay      = 0.366
+    local strikeDelay      = 0.366   -- giây giữa 2 đòn
     local comboResetDelay  = 1.0
+    local _lastFireTime    = 0       -- tick() lần fire cuối
 
     while _G.DungeonScriptID == currentScriptID do
-        local currentDelay = strikeDelay
         if _G.AutoDungeon and IsReadyToAttack and IsFarmingReady and not _G.IsProcessingFruit then
             local char = Player.Character
             if char and char.Parent then
-                pcall(function()
-                    local tool           = CheckAndEquipWeapon()
-                    local realWeaponName = tool and tool.Name or "Melee"
-                    local weaponType, fakeAnim = GetAttackAnim(realWeaponName, currentCombo)
+                local now = tick()
+                -- FPS guard: chỉ fire khi đã đủ strikeDelay kể từ lần trước
+                if now - _lastFireTime >= strikeDelay then
+                    local fired = false
+                    pcall(function()
+                        local tool           = CheckAndEquipWeapon()
+                        local realWeaponName = tool and tool.Name or "Melee"
+                        local weaponType, fakeAnim = GetAttackAnim(realWeaponName, currentCombo)
 
-                    -- [B] Combo tự reset ở đây khi hết anim
-                    if not fakeAnim then
-                        currentCombo = 1
-                        currentDelay = comboResetDelay
-                        return
-                    end
+                        if not fakeAnim then
+                            currentCombo  = 1
+                            _lastFireTime = now + comboResetDelay - strikeDelay
+                            return
+                        end
 
-                    local enemiesToHit  = {}
-                    local root          = char:FindFirstChild("HumanoidRootPart")
-                    local primaryCFrame = nil
+                        local enemiesToHit = {}
+                        local root         = char:FindFirstChild("HumanoidRootPart")
+                        local primaryCFrame
 
-                    if root then
-                        for _, m in pairs(GetMobsInZone(root.Position)) do
-                            local eRoot = GetRoot(m)
-                            if eRoot and (eRoot.Position - root.Position).Magnitude <= 300 then
-                                table.insert(enemiesToHit, eRoot)
-                                table.insert(enemiesToHit, m)
-                                if not primaryCFrame then primaryCFrame = eRoot.CFrame end
+                        if root then
+                            for _, m in ipairs(GetMobsInZone(root.Position)) do
+                                local eRoot = GetRoot(m)
+                                if eRoot and (eRoot.Position - root.Position).Magnitude <= 300 then
+                                    enemiesToHit[#enemiesToHit+1] = eRoot
+                                    enemiesToHit[#enemiesToHit+1] = m
+                                    if not primaryCFrame then primaryCFrame = eRoot.CFrame end
+                                end
                             end
                         end
-                    end
-                    if not primaryCFrame and root then primaryCFrame = root.CFrame end
+                        if not primaryCFrame and root then primaryCFrame = root.CFrame end
 
-                    if #enemiesToHit > 0 and primaryCFrame then
-                        -- [C] swingsfx + damage trong cùng 1 spawn → luôn gửi cặp
-                        local combo     = currentCombo
-                        local wType     = weaponType
-                        local anim      = fakeAnim
-                        local targets   = enemiesToHit
-                        local pCFrame   = primaryCFrame
-                        task.spawn(function()
-                            pcall(function()
-                                CombatRegister:InvokeServer({[1]="swingsfx",[2]=wType,[3]=combo,[4]="Ground",[5]=false,[6]=anim,[7]=2,[8]=1.5})
+                        if #enemiesToHit > 0 and primaryCFrame then
+                            _lastFireTime = now   -- stamp TRƯỚC khi spawn để không double-fire
+                            fired = true
+                            local combo   = currentCombo
+                            local wType   = weaponType
+                            local anim    = fakeAnim
+                            local targets = enemiesToHit
+                            local pCF     = primaryCFrame
+                            task.spawn(function()
+                                pcall(function()
+                                    CombatRegister:InvokeServer({
+                                        [1]="swingsfx",[2]=wType,[3]=combo,
+                                        [4]="Ground",[5]=false,[6]=anim,[7]=2,[8]=1.5
+                                    })
+                                end)
+                                pcall(function()
+                                    CombatRegister:InvokeServer({
+                                        [1]="damage",[2]=targets,[3]=wType,
+                                        [4]={[1]=combo,[2]="Ground",[3]=wType},
+                                        [5]=true,[6]=pCF,["aircombo"]="Ground"
+                                    })
+                                end)
                             end)
-                            pcall(function()
-                                CombatRegister:InvokeServer({[1]="damage",[2]=targets,[3]=wType,[4]={[1]=combo,[2]="Ground",[3]=wType},[5]=true,[6]=pCFrame,["aircombo"]="Ground"})
-                            end)
-                        end)
-
-                        -- [B] Chỉ tăng combo, KHÔNG pre-check nextAnim
-                        -- Vòng sau GetAttackAnim(combo+1) trả nil → tự reset
-                        currentCombo = currentCombo + 1
-                    else
-                        -- Không tìm thấy enemy — giữ combo, thử lại sau delay ngắn
-                        currentDelay = 0.15
+                            currentCombo = currentCombo + 1
+                        end
+                    end)
+                    if not fired then
+                        -- Không có enemy hoặc anim — đừng stamp time, thử lại ngay
                     end
-                end)
+                end
             end
         else
-            currentCombo = 1
+            currentCombo  = 1
+            _lastFireTime = 0
         end
-        task.wait(currentDelay)
+        -- Poll nhanh để không bỏ lỡ strike window dù FPS thấp
+        task.wait(0.05)
     end
 end)
 
@@ -1807,26 +1918,28 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         fakePlatform.CFrame = CFrame.new(root.Position.X, root.Position.Y - 3.2, root.Position.Z)
     end
 
-    -- Tính underground Y hiện tại (smooth lerp để tránh sudden overlap anti-cheat)
-    -- Chỉ active zone 7+8
+    -- Tính underground Y — dùng mob.Y làm reference (không phải floorY)
+    -- FIX: mob.Y + 10 (flying) vs mob.Y - 10 (underground) = cùng khoảng cách
     local undergroundY = nil
     if _isUndergroundMode then
-        -- Lấy floorY từ cache nếu có
-        local fY = CachedZoneFloors[CurrentZoneIndex]
-        if fY then
-            local targetUnderY = fY - UNDERGROUND_DEPTH
+        -- Nếu có mob, lấy Y từ mob; không có thì lấy từ cache floorY
+        local refY = nil
+        if CurrentTargetRoot and CurrentTargetRoot.Parent then
+            refY = CurrentTargetRoot.Position.Y
+        else
+            local fY = CachedZoneFloors[CurrentZoneIndex]
+            if fY then refY = fY end
+        end
+        if refY then
+            local targetUnderY = refY - UNDERGROUND_DEPTH  -- mob.Y - 10
             if _undergroundCurrentY == nil then
-                -- Lần đầu vào underground: bắt đầu từ Y hiện tại
                 _undergroundCurrentY = root.Position.Y
             end
-            -- Lerp Y xuống nhưng cap speed → không teleport đột ngột
             local yDiff = targetUnderY - _undergroundCurrentY
-            local maxStep = UNDERGROUND_LERP_SPEED * dt
-            if math.abs(yDiff) <= maxStep then
-                _undergroundCurrentY = targetUnderY
-            else
-                _undergroundCurrentY = _undergroundCurrentY + math.sign(yDiff) * maxStep
-            end
+            local maxStep = UNDERGROUND_LERP_SPEED * math.min(dt, MAX_DT)
+            _undergroundCurrentY = math.abs(yDiff) <= maxStep
+                and targetUnderY
+                or (_undergroundCurrentY + math.sign(yDiff) * maxStep)
             undergroundY = _undergroundCurrentY
         end
     else
@@ -1835,22 +1948,21 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
 
     local activeTargetPos = nil
     if CurrentTargetRoot and CurrentTargetRoot.Parent then
+        local mobX = CurrentTargetRoot.Position.X
+        local mobY = CurrentTargetRoot.Position.Y
+        local mobZ = CurrentTargetRoot.Position.Z
         if undergroundY then
-            -- Zone 7+8: theo XZ của mob, Y = underground
-            activeTargetPos = Vector3.new(
-                CurrentTargetRoot.Position.X,
-                undergroundY,
-                CurrentTargetRoot.Position.Z)
+            -- Underground: XZ mob, Y = undergroundY (lerp smooth)
+            activeTargetPos = Vector3.new(mobX, undergroundY, mobZ)
+        elseif ZoneState == "GROUND_AVOIDING" then
+            -- Ground AoE avoid: xuống dưới mob 20 studs
+            activeTargetPos = Vector3.new(mobX, mobY - GROUND_AOE_DEPTH, mobZ)
         else
-            -- Zone thường: bay trên đầu mob
-            activeTargetPos = Vector3.new(
-                CurrentTargetRoot.Position.X,
-                CurrentTargetRoot.Position.Y + AttackOffset,
-                CurrentTargetRoot.Position.Z)
+            -- Bình thường: bay trên mob
+            activeTargetPos = Vector3.new(mobX, mobY + AttackOffset, mobZ)
         end
     elseif TargetCFrame then
-        if undergroundY and not (ZoneState == "DODGING") then
-            -- Giữ Y underground khi đứng chờ/flying (không apply khi đang dodge)
+        if undergroundY and ZoneState ~= "DODGING" then
             local tp = TargetCFrame.Position
             activeTargetPos = Vector3.new(tp.X, undergroundY, tp.Z)
         else
@@ -1862,36 +1974,17 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         local currentPos = root.Position
         local dist       = (currentPos - activeTargetPos).Magnitude
 
-        -- ③ Stamina spoof control
-        if dist > 1.5 then
-            if not isMovingForStamina then
-                isMovingForStamina = true
-                StartStaminaSpoof()
-            end
-        else
-            if isMovingForStamina then
-                isMovingForStamina = false
-                StopStaminaSpoof()
-            end
-        end
+        -- Stamina spoof đã always-on, không cần start/stop ở đây
 
-        -- ① Cap dt để không bị nhảy xa khi FPS thấp / freeze
         local effectiveDt = math.min(dt, MAX_DT)
-
         local newPos = currentPos
-        if dist > 0.5 then
-            -- ② Tính step nhưng cap ở MAX_STEP_PER_FRAME
+        if dist > 0.3 then
             local rawStep    = MoveSpeed * effectiveDt
             local cappedStep = math.min(rawStep, MAX_STEP_PER_FRAME)
-            local step       = math.min(cappedStep, dist)  -- Không đi quá target
+            local step       = math.min(cappedStep, dist)
             newPos = currentPos + (activeTargetPos - currentPos).Unit * step
         else
             newPos = activeTargetPos
-            -- Tới nơi: tắt stamina spoof
-            if isMovingForStamina then
-                isMovingForStamina = false
-                StopStaminaSpoof()
-            end
         end
 
         if IsReadyToAttack then
@@ -1902,8 +1995,8 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
                 activeTargetPos.X - currentPos.X, 0,
                 activeTargetPos.Z - currentPos.Z)
             if dist > 0.1 and flatDir.Magnitude > 0.01 then
-                local targetRot  = CFrame.lookAt(newPos, newPos + flatDir.Unit)
                 local lerpFactor = 1 - math.exp(-12 * effectiveDt)
+                local targetRot  = CFrame.lookAt(newPos, newPos + flatDir.Unit)
                 local smoothRot  = root.CFrame:Lerp(targetRot, lerpFactor).Rotation
                 root.CFrame = CFrame.new(newPos) * smoothRot
             else
@@ -1922,12 +2015,6 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
                 if hum then hum:Move(Vector3.new(0.01, 0, 0.01), false) end
                 if _footstepEvent then _footstepEvent:FireServer() end
             end)
-        end
-    else
-        -- Không có target: tắt stamina spoof
-        if isMovingForStamina then
-            isMovingForStamina = false
-            StopStaminaSpoof()
         end
     end
 end)
