@@ -400,7 +400,7 @@ local EVADE_BOSS_GENERIC = 100
 -- FIX: dùng mob.Y ± AttackOffset thay vì floorY - depth
 -- → khoảng cách tới mob = AttackOffset (10), giống flying
 local UNDERGROUND_DEPTH     = AttackOffset   -- = 10, đồng nhất với flying
-local UNDERGROUND_DODGE_ADD = 10             -- thêm khi dodge (tổng 20 dưới mob)
+local UNDERGROUND_DODGE_ADD = 11            -- thêm khi dodge (tổng 20 dưới mob)
 local UNDERGROUND_LERP_SPEED = 80            -- studs/s smooth descent
 
 -- Ground AoE (arrow rain, lightning): chui xuống dưới mob thay vì chạy xa
@@ -463,12 +463,16 @@ if not fakePlatform then
 end
 
 -- ==========================================
--- [5-A] STAMINA SPOOF — ALWAYS ON AGGRESSIVE
--- Fire TakeStam 2 lần song song mỗi 0.03s
--- Re-fetch TakeStam trong loop nếu nil
+-- [5-A] STAMINA SPOOF — V5 REWRITE
+-- Pattern từ fishing module:
+--   • WaitForChild(5) timeout thay vì WaitForChild(30) blocking
+--   • while task.wait(0.05) — sạch hơn, không double-yield
+--   • Re-fetch nếu TakeStam bị nil/destroy
+--   • Dual-fire qua task.defer (tăng throughput)
+--   • Session guard: thoát khi scriptID thay đổi
 -- ==========================================
-local Events   = ReplicatedStorage:WaitForChild("Events", 30)
-local TakeStam = nil
+local Events   = ReplicatedStorage:WaitForChild("Events", 5)
+local TakeStam = Events and Events:WaitForChild("takestam", 5)
 
 local isSpoofingStamina = false
 
@@ -476,26 +480,36 @@ local function StartStaminaSpoof()
     if isSpoofingStamina then return end
     isSpoofingStamina = true
     task.spawn(function()
-        while isSpoofingStamina and _G.DungeonScriptID == currentScriptID do
-            if not TakeStam then
+        while task.wait(0.05) do
+            -- Session guard — thoát khi re-run script
+            if not isSpoofingStamina or _G.DungeonScriptID ~= currentScriptID then break end
+            -- Re-fetch nếu remote bị nil hoặc rời khỏi parent (game reload zone)
+            if not TakeStam or not TakeStam.Parent then
                 pcall(function()
                     local ev = ReplicatedStorage:FindFirstChild("Events")
                     if ev then TakeStam = ev:FindFirstChild("takestam") end
                 end)
             end
-            if TakeStam then
+            if TakeStam and TakeStam.Parent then
+                -- Fire 1: immediate
                 pcall(function() TakeStam:FireServer(0.545, "dash") end)
+                -- Fire 2: deferred → server nhận 2 packet/tick, bypass throttle tốt hơn
                 task.defer(function()
-                    pcall(function() TakeStam:FireServer(0.545, "dash") end)
+                    pcall(function()
+                        if TakeStam and TakeStam.Parent then
+                            TakeStam:FireServer(0.545, "dash")
+                        end
+                    end)
                 end)
             end
-            task.wait(0.03)
         end
         isSpoofingStamina = false
     end)
 end
 
-local function StopStaminaSpoof() end  -- no-op
+local function StopStaminaSpoof()
+    isSpoofingStamina = false
+end
 
 StartStaminaSpoof()
 
@@ -1647,28 +1661,28 @@ end)
 -- ==========================================
 
 -- ==========================================
--- [17] AUTO ATTACK — FPS-RESILIENT
--- Vấn đề cũ: task.wait(0.366) với FPS < 5:
---   - task.wait có thể trả về sau 0.1s-1s tuỳ frame budget
---   - FPS drop → yield dài → attack thưa; freeze → yield ngắn → double-fire
--- Fix: track _lastFireTime bằng tick() thực tế
---   → chỉ fire khi đã đủ strikeDelay thực (không phụ thuộc task.wait)
---   → freeze/FPS drop không gây double-fire hay bỏ đòn
+-- [17] AUTO ATTACK — V5 FASTER + PARALLEL FIRE
+-- V5 Changes:
+--   • strikeDelay: 0.366 → 0.22s (nhanh hơn ~40%)
+--   • comboResetDelay: 1.0 → 0.6s (reset combo nhanh hơn)
+--   • swingsfx + damage fire SONG SONG (2 task.spawn riêng biệt)
+--     thay vì sequential trong 1 task.spawn → giảm latency mỗi hit
+--   • Poll interval: 0.05 → 0.015s (dùng RunService.Heartbeat sẽ còn tốt hơn
+--     nhưng task.wait(0.015) đã đủ để không bỏ lỡ window ở FPS 60)
 -- ==========================================
 task.spawn(function()
     local CombatRegister   = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
     local CombatAnimFolder = ReplicatedStorage:WaitForChild("CombatAnimations")
     local currentCombo     = 1
-    local strikeDelay      = 0.366   -- giây giữa 2 đòn
-    local comboResetDelay  = 1.0
-    local _lastFireTime    = 0       -- tick() lần fire cuối
+    local strikeDelay      = 0.22    -- V5: giảm từ 0.366 → 0.22s
+    local comboResetDelay  = 0.6     -- V5: giảm từ 1.0 → 0.6s
+    local _lastFireTime    = 0
 
     while _G.DungeonScriptID == currentScriptID do
         if _G.AutoDungeon and IsReadyToAttack and IsFarmingReady and not _G.IsProcessingFruit then
             local char = Player.Character
             if char and char.Parent then
                 local now = tick()
-                -- FPS guard: chỉ fire khi đã đủ strikeDelay kể từ lần trước
                 if now - _lastFireTime >= strikeDelay then
                     local fired = false
                     pcall(function()
@@ -1699,13 +1713,16 @@ task.spawn(function()
                         if not primaryCFrame and root then primaryCFrame = root.CFrame end
 
                         if #enemiesToHit > 0 and primaryCFrame then
-                            _lastFireTime = now   -- stamp TRƯỚC khi spawn để không double-fire
-                            fired = true
+                            _lastFireTime = now  -- stamp trước để không double-fire
+
                             local combo   = currentCombo
                             local wType   = weaponType
                             local anim    = fakeAnim
                             local targets = enemiesToHit
                             local pCF     = primaryCFrame
+
+                            -- V5: Song song hoá — swingsfx và damage fire đồng thời
+                            -- không phải sequential trong 1 task.spawn
                             task.spawn(function()
                                 pcall(function()
                                     CombatRegister:InvokeServer({
@@ -1713,6 +1730,8 @@ task.spawn(function()
                                         [4]="Ground",[5]=false,[6]=anim,[7]=2,[8]=1.5
                                     })
                                 end)
+                            end)
+                            task.spawn(function()
                                 pcall(function()
                                     CombatRegister:InvokeServer({
                                         [1]="damage",[2]=targets,[3]=wType,
@@ -1721,11 +1740,13 @@ task.spawn(function()
                                     })
                                 end)
                             end)
+
+                            fired = true
                             currentCombo = currentCombo + 1
                         end
                     end)
                     if not fired then
-                        -- Không có enemy hoặc anim — đừng stamp time, thử lại ngay
+                        -- Không có enemy / anim → không stamp time, thử lại ngay
                     end
                 end
             end
@@ -1733,8 +1754,8 @@ task.spawn(function()
             currentCombo  = 1
             _lastFireTime = 0
         end
-        -- Poll nhanh để không bỏ lỡ strike window dù FPS thấp
-        task.wait(0.05)
+        -- V5: poll 0.015s — đủ responsive mà không block thread
+        task.wait(0.015)
     end
 end)
 
@@ -1778,11 +1799,51 @@ end)
 
 -- ==========================================
 -- [19] RUNSERVICE: STEPPED (ANTI STUN/FREEZE + NOCLIP)
--- Noclip improvement: apply CanCollide=false toàn bộ descendants
--- (bao gồm accessories, tools, mesh parts) không chỉ children
+-- V5 IMPROVE (từ fishing module):
+--   • Cache BasePart list, chỉ rebuild khi character đổi (tránh GetDescendants mỗi frame)
+--   • Backup noclip loop độc lập với task.wait(0.05) — vẫn chạy khi FPS < 5 / freeze
+--   • Gen-based invalidation: Stop/Start nhanh không gây loop leak
 -- ==========================================
-local _noclipLastApply = 0
-local NOCLIP_APPLY_INTERVAL = 0.08  -- apply CanCollide mỗi 80ms (không cần mỗi frame)
+local _noclipLastApply   = 0
+local _noclipGen         = 0    -- tăng khi char đổi để invalidate backup loop cũ
+local _noclipParts       = {}   -- cache BasePart list
+local _noclipCharRef     = nil  -- character tương ứng với cache
+local NOCLIP_APPLY_INTERVAL = 0.08
+
+local function _rebuildNoclipCache(char)
+    _noclipCharRef = char
+    _noclipParts   = {}
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then _noclipParts[#_noclipParts + 1] = p end
+    end
+end
+
+-- Backup noclip loop: chạy song song với Stepped, đảm bảo CanCollide = false
+-- ngay cả khi FPS < 5 hoặc game freeze (Stepped ngưng chạy)
+local _backupNoclipGen = 0
+local function _startBackupNoclip()
+    _backupNoclipGen = _backupNoclipGen + 1
+    local myGen = _backupNoclipGen
+    task.spawn(function()
+        while _G.AutoDungeon and _G.DungeonScriptID == currentScriptID and myGen == _backupNoclipGen do
+            local char = Player.Character
+            if char and IsFarmingReady then
+                if char ~= _noclipCharRef then _rebuildNoclipCache(char) end
+                for _, p in ipairs(_noclipParts) do
+                    if p and p.Parent then p.CanCollide = false end
+                end
+            end
+            task.wait(0.05)
+        end
+    end)
+end
+_startBackupNoclip()
+
+-- Restart backup loop khi character respawn
+Player.CharacterAdded:Connect(function()
+    _noclipCharRef = nil  -- force rebuild
+    _startBackupNoclip()
+end)
 
 _G.CupidStepped = RunService.Stepped:Connect(function()
     if not _G.AutoDungeon or not IsFarmingReady then return end
@@ -1813,22 +1874,26 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
             end
         end
 
-        -- Noclip: apply mỗi NOCLIP_APPLY_INTERVAL giây để không chạy mỗi frame
+        -- Noclip: dùng cache, rebuild chỉ khi char đổi
         local now = tick()
         if now - _noclipLastApply >= NOCLIP_APPLY_INTERVAL then
             _noclipLastApply = now
-            -- Apply toàn bộ descendants (bao gồm accessories, tool handles, v.v.)
+            if char ~= _noclipCharRef then _rebuildNoclipCache(char) end
+            for _, v in ipairs(_noclipParts) do
+                if v and v.Parent then
+                    v.CanCollide = false
+                    v.CastShadow = false
+                end
+            end
+            -- Dọn ValueBase / Instance stun còn sót lại (không trong BasePart cache)
             for _, v in ipairs(char:GetDescendants()) do
-                if v:IsA("BasePart") then
-                    v.CanCollide      = false
-                    v.CastShadow      = false  -- giảm shadow calculation
-                elseif v:IsA("ValueBase") then
+                if v:IsA("ValueBase") then
                     local n = v.Name:lower()
                     if n:match("stun") or n:match("knock") or n:match("ragdoll")
                     or n:match("zombie") or n:match("busy") then
                         v:Destroy()
                     end
-                else
+                elseif not v:IsA("BasePart") then
                     local name = v.Name:lower()
                     if name:match("stun") or name:match("knock")
                     or name == "ragdoll" or name == "zombie" then
@@ -1865,6 +1930,72 @@ task.spawn(function()
     if not _footstepEvent then
         local ev = ReplicatedStorage:WaitForChild("Events", 10)
         if ev then _footstepEvent = ev:WaitForChild("footstep", 10) end
+    end
+end)
+
+-- V5: Anti-gravity BodyVelocity (từ fishing module)
+-- Giữ character không bị gravity kéo xuống khi tween ngang
+-- Tên "CVFD_AntiGravity" để tránh xung đột với fishing
+local _antiGravName = "CVFD_AntiGravity"
+
+local function _ensureAntiGrav(root)
+    local ag = root:FindFirstChild(_antiGravName)
+    if not ag then
+        ag             = Instance.new("BodyVelocity")
+        ag.Name        = _antiGravName
+        ag.MaxForce    = Vector3.new(9e9, 9e9, 9e9)
+        ag.Velocity    = Vector3.zero
+        ag.Parent      = root
+    end
+    return ag
+end
+
+local function _removeAntiGrav(root)
+    if not root then return end
+    local ag = root:FindFirstChild(_antiGravName)
+    if ag then ag:Destroy() end
+end
+
+-- V5: Watchdog — phát hiện character bị stuck, force CFrame snap
+-- Chạy 1 loop duy nhất, check mỗi 3s
+local _watchdogPos    = nil
+local _watchdogTimer  = 0
+local WATCHDOG_INTERVAL = 3    -- giây không nhích → snap
+local WATCHDOG_MIN_MOVE = 3    -- studs tối thiểu phải di chuyển
+
+task.spawn(function()
+    while _G.DungeonScriptID == currentScriptID do
+        task.wait(WATCHDOG_INTERVAL)
+        if not _G.AutoDungeon or not IsFarmingReady or _G.IsProcessingFruit then
+            _watchdogPos = nil; continue
+        end
+        local char = Player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local activeTarget = CurrentTargetRoot or (TargetCFrame and TargetCFrame.Position)
+        if not root or not activeTarget then _watchdogPos = nil; continue end
+
+        local targetPos = type(activeTarget) == "userdata" and activeTarget.Position or activeTarget
+        local curPos    = root.Position
+        local distToTarget = (curPos - targetPos).Magnitude
+
+        -- Hướng tới target rồi thì không cần snap
+        if distToTarget < 8 then _watchdogPos = nil; continue end
+
+        -- Kiểm tra có di chuyển không
+        if _watchdogPos and (curPos - _watchdogPos).Magnitude < WATCHDOG_MIN_MOVE then
+            -- BỊ STUCK → force snap thẳng đến target
+            print("⚠️ Watchdog: stuck", math.floor(distToTarget), "studs → CFrame snap")
+            pcall(function()
+                local snapY = _isUndergroundMode
+                    and (_undergroundCurrentY or curPos.Y)
+                    or curPos.Y  -- giữ Y hiện tại, không snap Y đột ngột
+                root.CFrame = CFrame.new(targetPos.X, snapY, targetPos.Z)
+                    * root.CFrame.Rotation
+                local ag = root:FindFirstChild(_antiGravName)
+                if ag then ag.Velocity = Vector3.zero end
+            end)
+        end
+        _watchdogPos = curPos
     end
 end)
 
@@ -1945,6 +2076,9 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     if activeTargetPos then
         local currentPos  = root.Position
         local effectiveDt = math.min(dt, MAX_DT)
+
+        -- V5: Đảm bảo anti-gravity BodyVelocity tồn tại khi đang di chuyển
+        local ag = _ensureAntiGrav(root)
 
         -- ── FIX 3: SMOOTH MOVEMENT ZONE 7+8 ────────────────────────────
         -- Zone 1-6: lerp đơn giản, nhanh
@@ -2047,7 +2181,8 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
             end)
         end
     else
-        -- Không có target: reset smooth pos
+        -- Không có target: reset smooth pos + xóa anti-gravity
         if _smoothPos then _smoothPos = nil end
+        _removeAntiGrav(root)
     end
 end)
