@@ -430,12 +430,19 @@ local ZoneState         = "FLYING"
 local PreviousZoneState = "FLYING"
 local Timer             = 0
 local DodgeTimer        = 0
-local SkillBlockUntil   = 0   -- V4: thời điểm kết thúc skill block
+local SkillBlockUntil   = 0
 local CachedZoneFloors  = {}
 
--- Underground tracking: Y hiện tại player đang lerp tới (smooth descent)
-local _undergroundCurrentY = nil   -- nil = chưa ở underground mode
+-- Underground tracking
+local _undergroundCurrentY = nil
 local _isUndergroundMode   = false
+
+-- Fix 1: track loại dodge để biết có cần BLOCK sau khi dodge không
+local _currentDodgeIsAoe = false   -- true = general AoE → block sau khi dodge
+
+-- Fix 3: smooth movement zone 7+8 — velocity accumulator
+local _smoothPos    = nil  -- Vector3 vị trí smooth hiện tại (nil = chưa init)
+local _smoothVelXZ  = Vector3.new(0,0,0)  -- XZ velocity
 
 local IgnoredHazards = setmetatable({}, {__mode = "k"})
 local CurrentHazard  = {Type = "None", Position = nil, Instance = nil, MinDist = DangerRadius, Action = "DODGE"}
@@ -456,12 +463,12 @@ if not fakePlatform then
 end
 
 -- ==========================================
--- [5-A] STAMINA SPOOF — ALWAYS ON
--- Chạy liên tục suốt session — server luôn nghĩ char đang dash
--- FIX: không dùng WaitForChild timeout → re-fetch TakeStam trong loop nếu nil
+-- [5-A] STAMINA SPOOF — ALWAYS ON AGGRESSIVE
+-- Fire TakeStam 2 lần song song mỗi 0.03s
+-- Re-fetch TakeStam trong loop nếu nil
 -- ==========================================
 local Events   = ReplicatedStorage:WaitForChild("Events", 30)
-local TakeStam = nil  -- re-fetch trong loop, không fix timeout
+local TakeStam = nil
 
 local isSpoofingStamina = false
 
@@ -470,7 +477,6 @@ local function StartStaminaSpoof()
     isSpoofingStamina = true
     task.spawn(function()
         while isSpoofingStamina and _G.DungeonScriptID == currentScriptID do
-            -- Re-fetch nếu chưa có (game chưa load event lúc start)
             if not TakeStam then
                 pcall(function()
                     local ev = ReplicatedStorage:FindFirstChild("Events")
@@ -479,16 +485,18 @@ local function StartStaminaSpoof()
             end
             if TakeStam then
                 pcall(function() TakeStam:FireServer(0.545, "dash") end)
+                task.defer(function()
+                    pcall(function() TakeStam:FireServer(0.545, "dash") end)
+                end)
             end
-            task.wait(0.05)
+            task.wait(0.03)
         end
         isSpoofingStamina = false
     end)
 end
 
-local function StopStaminaSpoof() end  -- no-op: spoof luôn chạy, không dừng
+local function StopStaminaSpoof() end  -- no-op
 
--- Bắt đầu ngay khi load script
 StartStaminaSpoof()
 
 -- ==========================================
@@ -957,14 +965,9 @@ local function DoMapOptimize()
             end
         end)
 
-        -- [B] Render quality — thử cả 3 cách phổ biến nhất trong executors
+        -- [B] Render quality — thử cả 2 cách phổ biến nhất trong executors
         pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
         pcall(function() UserSettings():GetService("UserGameSettings").SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1 end)
-        pcall(function()
-            local UserInputService = game:GetService("UserInputService")
-            -- VSync off = ít tốn CPU
-            UserInputService.MouseIconEnabled = false
-        end)
 
         -- [C] Terrain
         pcall(function()
@@ -1052,25 +1055,13 @@ DoMapOptimize()
 -- ==========================================
 
 -- Priority thấp hơn = quan trọng hơn
--- action DODGE = chạy ra xa evadeDist studs
--- action BLOCK = giữ F đỡ background, TIẾP TỤC đánh boss
--- noRadius = true → không giới hạn khoảng cách detect
+-- BossSkillDefs: CHỈ Enkai/Entei
+-- FlamePillar, Firefly, Hiken → xử lý bởi general AoE scanner (DODGE 40 + BLOCK)
+-- Underground zone (7+8): Enkai → đứng yên sâu hơn 5 studs, đợi hết chiêu
 local BossSkillDefs = {
-    -- ── Dai Enkai / Entei → DODGE 130 studs ──────────────────────────
-    {pattern = "enkai",        action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "en_kai",       action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "entei",        action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    -- ── Flame Pillar → DODGE 75 studs ────────────────────────────────
-    {pattern = "flamepillar",  action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "flame_pillar", action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "flmplr",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2},
-    {pattern = "pillar",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 3},
-    -- ── Firefly → BLOCK (đứng im đỡ, tiếp tục attack boss) ──────────
-    {pattern = "firefly",      action = "BLOCK", evadeDist = 0, priority = 4},
-    {pattern = "fire_fly",     action = "BLOCK", evadeDist = 0, priority = 4},
-    -- ── Hiken → BLOCK (đứng im đỡ, tiếp tục attack boss) ────────────
-    {pattern = "hiken",        action = "BLOCK", evadeDist = 0, priority = 4},
-    {pattern = "hi_ken",       action = "BLOCK", evadeDist = 0, priority = 4},
+    {pattern = "enkai",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
+    {pattern = "en_kai", action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
+    {pattern = "entei",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
 }
 
 -- Instance tên match những pattern này → bỏ qua hoàn toàn (không log, không react)
@@ -1238,7 +1229,7 @@ task.spawn(function()
                 end
 
                 -- General AoE + Lava Curse (mọi zone)
-                -- Arrow rain / lightning → chui xuống dưới mob thay vì chạy xa
+                -- Arrow rain / lightning / AoE → DODGE 40 studs như cũ
                 if detectedHazard == "None" then
                     local effectsFolder = workspace:FindFirstChild("Effects")
                     if effectsFolder then
@@ -1248,21 +1239,18 @@ task.spawn(function()
                             local vPos = GetInstPos(v)
                             if vPos and not IgnoredHazards[v] then
                                 local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
-                                local isGroundAoe = name:match("arrow") or name:match("rain")
-                                    or name:match("lightning") or name:match("bomb")
-                                    or name:match("meteor") or name:match("projectile")
-                                local isRunAoe = name:match("aoe") or name:match("circle")
-                                if (isGroundAoe or isRunAoe) and dist < minDist then
-                                    -- Ground AoE (arrow/rain/lightning): action chui đất
-                                    -- Run AoE (aoe/circle): chạy xa như cũ
-                                    detectedHazard  = isGroundAoe and "GroundAoe" or "Normal"
+                                if (name:match("aoe") or name:match("circle") or name:match("bomb")
+                                or name:match("meteor") or name:match("arrow") or name:match("rain")
+                                or name:match("lightning") or name:match("projectile"))
+                                and dist < minDist then
+                                    detectedHazard  = "Normal"
                                     hazardPos       = vPos
                                     minDist         = dist
                                     hazardInst      = v
-                                    hazardAction    = isGroundAoe and "UNDERGROUND" or "DODGE"
-                                    hazardEvadeDist = EvadeDistance
+                                    hazardAction    = "DODGE"
+                                    hazardEvadeDist = 40
                                 end
-                                if name:match("lava") and name:match("curse") and dist < 1500 and not IgnoredHazards[v] then
+                                if name:match("lava") and name:match("curse") and dist < 1500 then
                                     local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
                                     local part   = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
                                     if part and prompt and prompt.Enabled then
@@ -1460,51 +1448,33 @@ task.spawn(function()
                 -- ZoneState không còn bị đổi sang SKILL_BLOCKING nữa
                 -- → attack loop tiếp tục bình thường khi đỡ Firefly / Hiken
 
-                -- ── DODGE / BLOCK / UNDERGROUND TRIGGER ─────────────────────
+                -- ── DODGE TRIGGER ────────────────────────────────────────────
                 if CurrentZoneIndex ~= 5 and CurrentHazard.Type ~= "None"
-                and ZoneState ~= "DODGING" and ZoneState ~= "DODGE_WAIT"
-                and ZoneState ~= "GROUND_AVOIDING" then
+                and ZoneState ~= "DODGING" then
 
                     local action    = CurrentHazard.Action  or "DODGE"
                     local evadeDist = CurrentHazard.MinDist or EvadeDistance
-                    local char2     = Player.Character
-                    local wpn2      = char2 and char2:FindFirstChildOfClass("Tool")
-                    local wName2    = wpn2 and wpn2.Name or "Melee"
+                    if CurrentHazard.Instance then
+                        IgnoredHazards[CurrentHazard.Instance] = tick() + 8
+                    end
+                    if ZoneState ~= "ABSORBING_CURSE" then PreviousZoneState = ZoneState end
+                    IsReadyToAttack   = false
+                    CurrentTargetRoot = nil
 
-                    if action == "BLOCK" then
-                        if CurrentHazard.Instance then
-                            IgnoredHazards[CurrentHazard.Instance] = tick() + 3.5
-                        end
-                        if not _G.SkillBlocking then
-                            TriggerSkillBlock(wName2, 2.5)
-                            print("🛡️ BLOCK background:", CurrentHazard.Instance and CurrentHazard.Instance.Name or "?")
-                        end
-
-                    elseif action == "UNDERGROUND" then
-                        -- Arrow rain / lightning: chui xuống dưới mob, tiếp tục đánh
-                        if CurrentHazard.Instance then
-                            IgnoredHazards[CurrentHazard.Instance] = tick() + 5
-                        end
-                        if ZoneState ~= "ABSORBING_CURSE" then PreviousZoneState = ZoneState end
-                        ZoneState = "GROUND_AVOIDING"
-                        -- Target: XZ của mob (hoặc vị trí hiện tại), Y = mob.Y - GROUND_AOE_DEPTH
-                        local targetX = CurrentTargetRoot and CurrentTargetRoot.Position.X or root.Position.X
-                        local targetZ = CurrentTargetRoot and CurrentTargetRoot.Position.Z or root.Position.Z
-                        local targetMobY = CurrentTargetRoot and CurrentTargetRoot.Position.Y or root.Position.Y
-                        TargetCFrame = CFrame.new(targetX, targetMobY - GROUND_AOE_DEPTH, targetZ)
-                        DodgeTimer = tick() + 4  -- ở dưới 4s
-                        print("⬇️ GROUND_AVOID:", CurrentHazard.Instance and CurrentHazard.Instance.Name or "?",
-                              "→ xuống", GROUND_AOE_DEPTH, "studs")
+                    if action == "DODGE_DEEP" and _isUndergroundMode then
+                        -- FIX 2: Enkai ở zone 7+8 → đứng yên sâu hơn 5 studs, không di chuyển XZ
+                        -- Đợi hết chiêu rồi bay lên đánh lại
+                        ZoneState = "DODGING"
+                        _currentDodgeIsAoe = false
+                        local deeperY = (_undergroundCurrentY or root.Position.Y) - 5
+                        TargetCFrame = CFrame.new(root.Position.X, deeperY, root.Position.Z)
+                        DodgeTimer = tick() + DODGE_RETURN_WAIT  -- đứng yên chờ
+                        print("⬇️ DODGE_DEEP underground: Enkai → sâu thêm 5 studs, đứng yên", DODGE_RETURN_WAIT, "s")
 
                     else
-                        -- DODGE: Enkai / FlamePillar — chạy xa
-                        IsReadyToAttack   = false
-                        CurrentTargetRoot = nil
-                        if CurrentHazard.Instance then
-                            IgnoredHazards[CurrentHazard.Instance] = tick() + 8
-                        end
-                        if ZoneState ~= "ABSORBING_CURSE" then PreviousZoneState = ZoneState end
+                        -- DODGE thường (Enkai ở zone 1-6, general AoE, v.v.)
                         ZoneState = "DODGING"
+                        _currentDodgeIsAoe = (CurrentHazard.Type == "Normal")  -- chỉ AoE thường mới BLOCK sau
 
                         local evadeDir = (root.Position - CurrentHazard.Position)
                         if evadeDir.Magnitude < 0.1 then
@@ -1514,45 +1484,12 @@ task.spawn(function()
                                 Vector3.new(0,0,1), Vector3.new(0,0,-1)
                             })[rand+1]
                         end
-                        local safeY = root.Position.Y
-                        pcall(function()
-                            local zp2 = workspace.Effects.Zones["Zone"..CurrentZoneIndex]:FindFirstChild("Zone")
-                            if zp2 then
-                                local fY2 = GetZoneFloor(CurrentZoneIndex, zp2.Position)
-                                safeY = _isUndergroundMode
-                                    and (root.Position.Y - UNDERGROUND_DODGE_ADD)  -- sâu thêm khi underground
-                                    or  (fY2 + 5)
-                            end
-                        end)
                         local flatDir = Vector3.new(evadeDir.X, 0, evadeDir.Z)
-                        -- Timer = thời gian di chuyển + 4s đứng yên
+                        -- Giữ Y hiện tại → không thay đổi độ cao khi dodge
                         DodgeTimer   = tick() + (evadeDist / MoveSpeed) + DODGE_RETURN_WAIT
-                        TargetCFrame = CFrame.new(root.Position
-                            + flatDir.Unit * evadeDist
-                            + Vector3.new(0, safeY - root.Position.Y, 0))
+                        TargetCFrame = CFrame.new(root.Position + flatDir.Unit * evadeDist)
                         print("🏃 DODGE:", CurrentHazard.Instance and CurrentHazard.Instance.Name or "Normal",
-                              "→", evadeDist, "studs | wait", DODGE_RETURN_WAIT, "s")
-                    end
-                end
-
-                -- GROUND_AVOIDING: nằm dưới đất né AoE, vẫn attack nếu có mob
-                if ZoneState == "GROUND_AVOIDING" then
-                    -- Giữ Y thấp nhưng tiếp tục attack
-                    IsReadyToAttack = CurrentTargetRoot ~= nil
-                    if tick() > DodgeTimer then
-                        ZoneState = PreviousZoneState or "ATTACKING"
-                        CurrentHazard.Type = "None"
-                        print("✅ GROUND_AVOID xong → quay lại:", ZoneState)
-                    else
-                        -- Update target Y xuống dưới mob nếu mob di chuyển
-                        if CurrentTargetRoot and CurrentTargetRoot.Parent then
-                            local mY = CurrentTargetRoot.Position.Y
-                            TargetCFrame = CFrame.new(
-                                CurrentTargetRoot.Position.X,
-                                mY - GROUND_AOE_DEPTH,
-                                CurrentTargetRoot.Position.Z)
-                        end
-                        -- không return — vẫn chạy zone machine bên dưới
+                              action, "→", evadeDist, "studs | aoe=", _currentDodgeIsAoe)
                     end
                 end
 
@@ -1560,10 +1497,17 @@ task.spawn(function()
                     IsReadyToAttack   = false
                     CurrentTargetRoot = nil
                     if tick() > DodgeTimer then
-                        -- Dodge xong: quay lại zone cũ
                         ZoneState          = PreviousZoneState or "ATTACKING"
                         CurrentHazard.Type = "None"
-                        print("✅ DODGE xong (4s wait included) → quay lại:", ZoneState)
+                        -- FIX 1: general AoE → BLOCK sau khi dodge xong
+                        if _currentDodgeIsAoe then
+                            _currentDodgeIsAoe = false
+                            local char2 = Player.Character
+                            local wpn2  = char2 and char2:FindFirstChildOfClass("Tool")
+                            TriggerSkillBlock(wpn2 and wpn2.Name or "Melee", 2.5)
+                            print("🛡️ BLOCK sau AoE dodge")
+                        end
+                        print("✅ DODGE xong → quay lại:", ZoneState)
                     else
                         return
                     end
@@ -1942,47 +1886,51 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         fakePlatform.CFrame = CFrame.new(root.Position.X, root.Position.Y - 3.2, root.Position.Z)
     end
 
-    -- Tính underground Y — dùng mob.Y làm reference (không phải floorY)
-    -- FIX: mob.Y + 10 (flying) vs mob.Y - 10 (underground) = cùng khoảng cách
+    -- ── UNDERGROUND Y LERP ────────────────────────────────────────────
+    -- Zone 7+8: Y target = mob.Y - UNDERGROUND_DEPTH (hoặc sâu hơn khi dodging Enkai)
     local undergroundY = nil
     if _isUndergroundMode then
-        -- Nếu có mob, lấy Y từ mob; không có thì lấy từ cache floorY
         local refY = nil
         if CurrentTargetRoot and CurrentTargetRoot.Parent then
             refY = CurrentTargetRoot.Position.Y
         else
-            local fY = CachedZoneFloors[CurrentZoneIndex]
-            if fY then refY = fY end
+            refY = CachedZoneFloors[CurrentZoneIndex]
         end
         if refY then
-            local targetUnderY = refY - UNDERGROUND_DEPTH  -- mob.Y - 10
+            -- Nếu đang DODGING Enkai underground: sâu thêm 5 studs nữa
+            local targetUnderY = refY - UNDERGROUND_DEPTH
+            if ZoneState == "DODGING" and not _currentDodgeIsAoe then
+                targetUnderY = targetUnderY - 5
+            end
             if _undergroundCurrentY == nil then
                 _undergroundCurrentY = root.Position.Y
             end
-            local yDiff = targetUnderY - _undergroundCurrentY
+            local yDiff   = targetUnderY - _undergroundCurrentY
             local maxStep = UNDERGROUND_LERP_SPEED * math.min(dt, MAX_DT)
-            _undergroundCurrentY = math.abs(yDiff) <= maxStep
+            -- Exponential approach: nhanh khi xa, chậm khi gần → cực mượt
+            local expStep = math.abs(yDiff) * (1 - math.exp(-10 * math.min(dt, MAX_DT)))
+            local step    = math.min(math.max(expStep, 0.01), maxStep)
+            _undergroundCurrentY = math.abs(yDiff) <= 0.05
                 and targetUnderY
-                or (_undergroundCurrentY + math.sign(yDiff) * maxStep)
+                or (_undergroundCurrentY + math.sign(yDiff) * step)
             undergroundY = _undergroundCurrentY
         end
     else
-        _undergroundCurrentY = nil
+        if _undergroundCurrentY ~= nil then
+            _undergroundCurrentY = nil
+            _smoothPos = nil  -- reset smooth pos khi thoát underground
+        end
     end
 
+    -- ── TARGET POSITION ───────────────────────────────────────────────
     local activeTargetPos = nil
     if CurrentTargetRoot and CurrentTargetRoot.Parent then
         local mobX = CurrentTargetRoot.Position.X
         local mobY = CurrentTargetRoot.Position.Y
         local mobZ = CurrentTargetRoot.Position.Z
         if undergroundY then
-            -- Underground: XZ mob, Y = undergroundY (lerp smooth)
             activeTargetPos = Vector3.new(mobX, undergroundY, mobZ)
-        elseif ZoneState == "GROUND_AVOIDING" then
-            -- Ground AoE avoid: xuống dưới mob 20 studs
-            activeTargetPos = Vector3.new(mobX, mobY - GROUND_AOE_DEPTH, mobZ)
         else
-            -- Bình thường: bay trên mob
             activeTargetPos = Vector3.new(mobX, mobY + AttackOffset, mobZ)
         end
     elseif TargetCFrame then
@@ -1995,31 +1943,81 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     end
 
     if activeTargetPos then
-        local currentPos = root.Position
-        local dist       = (currentPos - activeTargetPos).Magnitude
-
-        -- Stamina spoof đã always-on, không cần start/stop ở đây
-
+        local currentPos  = root.Position
         local effectiveDt = math.min(dt, MAX_DT)
-        local newPos = currentPos
-        if dist > 0.3 then
-            local rawStep    = MoveSpeed * effectiveDt
-            local cappedStep = math.min(rawStep, MAX_STEP_PER_FRAME)
-            local step       = math.min(cappedStep, dist)
-            newPos = currentPos + (activeTargetPos - currentPos).Unit * step
+
+        -- ── FIX 3: SMOOTH MOVEMENT ZONE 7+8 ────────────────────────────
+        -- Zone 1-6: lerp đơn giản, nhanh
+        -- Zone 7+8: exponential smoothing riêng cho XZ và Y
+        --   → không jitter, không snap, cực mượt dù FPS thấp
+        local newPos
+        if _isUndergroundMode then
+            -- Init smooth pos nếu chưa có
+            if _smoothPos == nil then _smoothPos = currentPos end
+
+            -- XZ: exponential approach với acceleration cap
+            local targetXZ  = Vector3.new(activeTargetPos.X, _smoothPos.Y, activeTargetPos.Z)
+            local xzDist    = (Vector3.new(_smoothPos.X, 0, _smoothPos.Z)
+                             - Vector3.new(activeTargetPos.X, 0, activeTargetPos.Z)).Magnitude
+            -- Tốc độ XZ: smooth curve — nhanh khi xa (>5 studs), chậm dần khi gần
+            local xzSpeed
+            if xzDist > 20 then
+                xzSpeed = MoveSpeed
+            elseif xzDist > 5 then
+                -- Ramp down: tránh overshoot khi đến gần
+                xzSpeed = MoveSpeed * (0.3 + 0.7 * (xzDist / 20))
+            else
+                -- Cực gần: creepcrawl để không jitter
+                xzSpeed = MoveSpeed * 0.3
+            end
+            local xzStep    = math.min(xzSpeed * effectiveDt, MAX_STEP_PER_FRAME, xzDist)
+            local newXZ     = xzDist > 0.05
+                and Vector3.new(_smoothPos.X, 0, _smoothPos.Z)
+                   + (Vector3.new(activeTargetPos.X, 0, activeTargetPos.Z)
+                   - Vector3.new(_smoothPos.X, 0, _smoothPos.Z)).Unit * xzStep
+                or Vector3.new(activeTargetPos.X, 0, activeTargetPos.Z)
+
+            -- Y: đã xử lý bởi undergroundY lerp ở trên — dùng trực tiếp
+            _smoothPos = Vector3.new(newXZ.X, undergroundY or _smoothPos.Y, newXZ.Z)
+            newPos     = _smoothPos
+
         else
-            newPos = activeTargetPos
+            -- Zone thường: lerp đơn giản
+            _smoothPos = nil
+            local dist = (currentPos - activeTargetPos).Magnitude
+            if dist > 0.3 then
+                local rawStep    = MoveSpeed * effectiveDt
+                local cappedStep = math.min(rawStep, MAX_STEP_PER_FRAME)
+                newPos = currentPos + (activeTargetPos - currentPos).Unit
+                         * math.min(cappedStep, dist)
+            else
+                newPos = activeTargetPos
+            end
         end
 
+        -- ── ROTATION ─────────────────────────────────────────────────
         if IsReadyToAttack then
-            local _, currentYaw, _ = root.CFrame:ToOrientation()
-            root.CFrame = CFrame.new(newPos) * CFrame.Angles(0, currentYaw, 0) * CFrame.Angles(math.rad(-90), 0, 0)
+            -- Đứng thẳng, mặt hướng mob (XZ only, không tilt)
+            if CurrentTargetRoot and CurrentTargetRoot.Parent then
+                local flat = Vector3.new(
+                    CurrentTargetRoot.Position.X - newPos.X, 0,
+                    CurrentTargetRoot.Position.Z - newPos.Z)
+                if flat.Magnitude > 0.1 then
+                    root.CFrame = CFrame.new(newPos, newPos + flat.Unit)
+                else
+                    root.CFrame = CFrame.new(newPos) * root.CFrame.Rotation
+                end
+            else
+                root.CFrame = CFrame.new(newPos) * root.CFrame.Rotation
+            end
         else
             local flatDir = Vector3.new(
                 activeTargetPos.X - currentPos.X, 0,
                 activeTargetPos.Z - currentPos.Z)
-            if dist > 0.1 and flatDir.Magnitude > 0.01 then
-                local lerpFactor = 1 - math.exp(-12 * effectiveDt)
+            if flatDir.Magnitude > 0.01 then
+                -- Zone 7+8: lerp rotation chậm hơn để không xoay giật
+                local rotSpeed   = _isUndergroundMode and 8 or 12
+                local lerpFactor = 1 - math.exp(-rotSpeed * effectiveDt)
                 local targetRot  = CFrame.lookAt(newPos, newPos + flatDir.Unit)
                 local smoothRot  = root.CFrame:Lerp(targetRot, lerpFactor).Rotation
                 root.CFrame = CFrame.new(newPos) * smoothRot
@@ -2040,5 +2038,8 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
                 if _footstepEvent then _footstepEvent:FireServer() end
             end)
         end
+    else
+        -- Không có target: reset smooth pos
+        if _smoothPos then _smoothPos = nil end
     end
 end)
