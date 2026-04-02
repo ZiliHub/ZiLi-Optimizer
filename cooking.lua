@@ -383,7 +383,7 @@ end
 -- ==========================================
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
-local MoveSpeed     = 115
+local MoveSpeed     = 110
 local AttackOffset  = 10    -- FIX: 10 thay vì 10.5, dùng chung cho flying & underground
 local SearchRadius  = 800
 local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
@@ -458,10 +458,10 @@ end
 -- ==========================================
 -- [5-A] STAMINA SPOOF — ALWAYS ON
 -- Chạy liên tục suốt session — server luôn nghĩ char đang dash
--- bypass mọi distance / teleport-back check kể cả khi đứng yên
+-- FIX: không dùng WaitForChild timeout → re-fetch TakeStam trong loop nếu nil
 -- ==========================================
-local Events   = ReplicatedStorage:WaitForChild("Events", 5)
-local TakeStam = Events and Events:WaitForChild("takestam", 5)
+local Events   = ReplicatedStorage:WaitForChild("Events", 30)
+local TakeStam = nil  -- re-fetch trong loop, không fix timeout
 
 local isSpoofingStamina = false
 
@@ -470,7 +470,14 @@ local function StartStaminaSpoof()
     isSpoofingStamina = true
     task.spawn(function()
         while isSpoofingStamina and _G.DungeonScriptID == currentScriptID do
-            if TakeStam and TakeStam.Parent then
+            -- Re-fetch nếu chưa có (game chưa load event lúc start)
+            if not TakeStam then
+                pcall(function()
+                    local ev = ReplicatedStorage:FindFirstChild("Events")
+                    if ev then TakeStam = ev:FindFirstChild("takestam") end
+                end)
+            end
+            if TakeStam then
                 pcall(function() TakeStam:FireServer(0.545, "dash") end)
             end
             task.wait(0.05)
@@ -479,11 +486,9 @@ local function StartStaminaSpoof()
     end)
 end
 
-local function StopStaminaSpoof()
-    isSpoofingStamina = false
-end
+local function StopStaminaSpoof() end  -- no-op: spoof luôn chạy, không dừng
 
--- Bắt đầu ngay, chạy mãi mãi không cần đợi di chuyển
+-- Bắt đầu ngay khi load script
 StartStaminaSpoof()
 
 -- ==========================================
@@ -846,7 +851,6 @@ task.spawn(function()
                                 CurrentZoneIndex = 1
                                 ZoneState        = "FLYING"
                                 IsFarmingReady   = true
-                                DoMapOptimize()  -- optimize map ngay khi vào dungeon
                             end
                         else
                             IsFarmingReady   = false
@@ -888,27 +892,31 @@ end)
 
 -- ==========================================
 -- [13-B] MAP OPTIMIZE + SKILL HIDE
--- Ẩn visuals (particle/beam/trail/billboard) trong Effects & Projectiles
--- BasePart vẫn tồn tại để hazard scanner detect được position/tên
--- Không xóa instance → không bug với script
+-- FIX: _mapOptimized reset khi script re-run
+-- Gọi ngay khi load script (không chờ dungeon entry)
 -- ==========================================
-local _mapOptimized   = false
+local _mapOptimized    = false  -- reset mỗi lần load script (không dùng _G)
 local _effectHiddenSet = setmetatable({}, {__mode = "k"})
 
 local function HideVisualOfInst(v)
     if _effectHiddenSet[v] then return end
     _effectHiddenSet[v] = true
     pcall(function()
-        if v:IsA("ParticleEmitter") or v:IsA("Beam") or v:IsA("Trail") then
+        if v:IsA("ParticleEmitter") or v:IsA("Beam") or v:IsA("Trail")
+        or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
             v.Enabled = false
-        elseif v:IsA("BillboardGui") or v:IsA("SurfaceGui") or v:IsA("ScreenGui") then
+        elseif v:IsA("BillboardGui") or v:IsA("SurfaceGui") then
             v.Enabled = false
-        elseif v:IsA("SpecialMesh") or v:IsA("SelectionBox") or v:IsA("SelectionSphere") then
+        elseif v:IsA("SpecialMesh") then
             v.Scale = Vector3.zero
         elseif v:IsA("BasePart") and not v:IsA("Terrain") then
-            -- Ẩn visual nhưng giữ CanQuery = true để position vẫn lấy được
             v.LocalTransparencyModifier = 1
             v.CastShadow = false
+            v.CanCollide = false  -- noclip thêm cho effect parts
+        elseif v:IsA("Decal") or v:IsA("Texture") then
+            v.Transparency = 1
+        elseif v:IsA("Sound") then
+            v.Volume = 0  -- tắt âm thanh effect → giảm CPU audio
         end
     end)
 end
@@ -929,47 +937,52 @@ local function DoMapOptimize()
     if _mapOptimized then return end
     _mapOptimized = true
     task.spawn(function()
-        -- [A] Lighting & quality
+
+        -- [A] Lighting
         pcall(function()
-            local Lighting = game:GetService("Lighting")
-            Lighting.GlobalShadows     = false
-            Lighting.FogEnd            = 9e9
-            Lighting.Brightness        = 2
-            for _, v in ipairs(Lighting:GetChildren()) do
+            local L = game:GetService("Lighting")
+            L.GlobalShadows = false
+            L.FogEnd        = 9e9
+            L.Brightness    = 2
+            L.ClockTime     = 14
+            L.Ambient       = Color3.fromRGB(178, 178, 178)
+            for _, v in ipairs(L:GetDescendants()) do
                 if v:IsA("BlurEffect") or v:IsA("DepthOfFieldEffect")
                 or v:IsA("SunRaysEffect") or v:IsA("BloomEffect")
-                or v:IsA("ColorCorrectionEffect") or v:IsA("Sky") then
+                or v:IsA("ColorCorrectionEffect") then
                     pcall(function() v.Enabled = false end)
+                elseif v:IsA("Sky") or v:IsA("Atmosphere") or v:IsA("Clouds") then
+                    pcall(function() v:Destroy() end)
                 end
             end
         end)
 
-        -- [B] Render quality xuống thấp nhất
+        -- [B] Render quality — thử cả 3 cách phổ biến nhất trong executors
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+        pcall(function() UserSettings():GetService("UserGameSettings").SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1 end)
         pcall(function()
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            local UserInputService = game:GetService("UserInputService")
+            -- VSync off = ít tốn CPU
+            UserInputService.MouseIconEnabled = false
         end)
 
-        -- [C] Terrain: tắt decoration & water render
+        -- [C] Terrain
         pcall(function()
             local t = workspace:FindFirstChildOfClass("Terrain")
             if t then
-                t.Decoration         = false
-                t.WaterWaveSize      = 0
-                t.WaterWaveSpeed     = 0
-                t.WaterReflectance   = 0
-                t.WaterTransparency  = 1
-                t.CastShadow         = false
+                t.Decoration       = false
+                t.WaterWaveSize    = 0
+                t.WaterWaveSpeed   = 0
+                t.WaterReflectance = 0
+                t.WaterTransparency = 1
+                t.CastShadow       = false
             end
         end)
 
-        -- [D] Ẩn visual skill trong Effects & Projectiles
-        -- BasePart vẫn còn → HazardScanner detect bình thường
-        local fxFolders = {"Effects", "Projectiles"}
-        for _, fname in ipairs(fxFolders) do
+        -- [D] Effects & Projectiles — ẩn visual, giữ BasePart để detect
+        for _, fname in ipairs({"Effects", "Projectiles"}) do
             local f = workspace:FindFirstChild(fname)
-            if f then
-                HideFolderEffects(f)
-            end
+            if f then HideFolderEffects(f) end
             workspace.ChildAdded:Connect(function(child)
                 if child.Name == fname then
                     task.defer(function() HideFolderEffects(child) end)
@@ -977,43 +990,54 @@ local function DoMapOptimize()
             end)
         end
 
-        -- [E] Islands / Env: ẩn toàn bộ particle + tắt shadow
-        -- Không xóa model để không phá physics
-        pcall(function()
-            local islands = workspace:FindFirstChild("Islands")
-            if islands then
-                for _, desc in ipairs(islands:GetDescendants()) do
+        -- [E] Toàn bộ workspace — tắt shadow + particles + non-collision parts
+        task.spawn(function()
+            for _, desc in ipairs(workspace:GetDescendants()) do
+                pcall(function()
+                    if desc:IsA("ParticleEmitter") or desc:IsA("Beam")
+                    or desc:IsA("Trail") or desc:IsA("Fire")
+                    or desc:IsA("Smoke") or desc:IsA("Sparkles") then
+                        desc.Enabled = false
+                    elseif desc:IsA("BasePart") and not desc:IsA("Terrain") then
+                        desc.CastShadow = false
+                        -- Ẩn hoàn toàn parts trang trí không có collision
+                        if not desc.CanCollide then
+                            desc.LocalTransparencyModifier = 1
+                        end
+                    elseif desc:IsA("Sound") then
+                        -- Tắt hầu hết âm thanh ambient
+                        if desc.Parent and not (desc.Parent == Player.Character) then
+                            desc.Volume = 0
+                        end
+                    end
+                end)
+            end
+            -- Auto-hide mọi thứ mới spawn vào workspace
+            workspace.DescendantAdded:Connect(function(inst)
+                task.defer(function()
                     pcall(function()
-                        if desc:IsA("ParticleEmitter") or desc:IsA("Beam")
-                        or desc:IsA("Trail") or desc:IsA("Fire")
-                        or desc:IsA("Smoke") or desc:IsA("Sparkles") then
-                            desc.Enabled = false
-                        elseif desc:IsA("BasePart") then
-                            desc.CastShadow = false
-                            -- Ẩn parts trang trí (không có CanCollide) để giảm render
-                            if not desc.CanCollide and not desc.Anchored == false then
-                                desc.LocalTransparencyModifier = 1
+                        if inst:IsA("ParticleEmitter") or inst:IsA("Beam")
+                        or inst:IsA("Trail") or inst:IsA("Fire")
+                        or inst:IsA("Smoke") or inst:IsA("Sparkles") then
+                            inst.Enabled = false
+                        elseif inst:IsA("BasePart") and not inst:IsA("Terrain")
+                        and not (Player.Character and inst:IsDescendantOf(Player.Character)) then
+                            inst.CastShadow = false
+                            if not inst.CanCollide then
+                                inst.LocalTransparencyModifier = 1
                             end
-                        elseif desc:IsA("Decal") or desc:IsA("Texture") then
-                            desc.Transparency = 1
                         end
                     end)
-                end
-            end
+                end)
+            end)
         end)
 
-        -- [F] Ẩn các folder không cần thiết khác trong workspace
-        pcall(function()
-            local hideFolders = {"Sky", "Clouds", "Atmosphere"}
-            for _, name in ipairs(hideFolders) do
-                local f = workspace:FindFirstChild(name)
-                if f then pcall(function() f:Destroy() end) end
-            end
-        end)
-
-        print("🗺️ Map Optimized: quality L01, shadows off, particles off, terrain deco off")
+        print("🗺️ Map Optimized OK")
     end)
 end
+
+-- Gọi ngay khi load script — không chờ dungeon entry
+DoMapOptimize()
 
 -- Chạy optimize ngay khi vào dungeon (gọi từ [12] sau IsFarmingReady = true)
 -- Và auto re-hide khi có effect mới spawn (DescendantAdded đã connect trong HideFolderEffects)
