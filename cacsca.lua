@@ -385,7 +385,7 @@ end
 -- ==========================================
 local MoveSpeed     = 110
 local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
-local AttackOffset2 = 11.0   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
+local AttackOffset2 = 10.5   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
 local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
 local GatherTime    = 0.2   -- gather nhanh hơn
@@ -1142,6 +1142,9 @@ local BossSkillDefs = {
     {pattern = "enkai",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
     {pattern = "en_kai", action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
     {pattern = "entei",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
+    {pattern = "flame pillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
+    {pattern = "flame_pillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
+    {pattern = "flamepillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
 }
 
 -- Instance tên match những pattern này → bỏ qua hoàn toàn (không log, không react)
@@ -1589,7 +1592,7 @@ task.spawn(function()
                             ZoneState          = "DODGING"
                             _currentDodgeIsAoe = false
                             _isDodgeDeep       = true   -- V9: chỉ case này mới đi sâu
-                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 25
+                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 30
                             TargetCFrame = CFrame.new(root.Position.X, deeperY, root.Position.Z)
                             DodgeTimer   = tick() + DODGE_RETURN_WAIT2
                             print("⬇️ DODGE_DEEP: Enkai underground → sâu 5 studs, đứng yên", DODGE_RETURN_WAIT2, "s")
