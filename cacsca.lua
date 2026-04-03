@@ -2074,6 +2074,9 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
     local hum  = char and char:FindFirstChild("Humanoid")
     if not char or not char.Parent then return end
 
+    -- =======================================
+    -- BẠN COPY VÀ CHÈN THÊM ĐOẠN NOCLIP NÀY VÀO ĐÂY:
+    -- Xuyên tường/quái cho nhân vật
     for _, part in ipairs(char:GetDescendants()) do
         if part:IsA("BasePart") and part.CanCollide then
             part.CanCollide = false
@@ -2085,6 +2088,9 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
     if fakePlatform then
         fakePlatform.CanCollide = true
     end
+    -- =======================================
+
+    -- ... (Bên dưới này là các code cũ của bạn, HÃY GIỮ NGUYÊN) ...
 
     pcall(function()
         _G.canuse  = true
