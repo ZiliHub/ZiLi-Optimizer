@@ -1586,7 +1586,7 @@ task.spawn(function()
                             ZoneState          = "DODGING"
                             _currentDodgeIsAoe = false
                             _isDodgeDeep       = true   -- V9: chỉ case này mới đi sâu
-                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 20
+                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 35
                             TargetCFrame = CFrame.new(root.Position.X, deeperY, root.Position.Z)
                             DodgeTimer   = tick() + DODGE_RETURN_WAIT2
                             print("⬇️ DODGE_DEEP: Enkai underground → sâu 5 studs, đứng yên", DODGE_RETURN_WAIT2, "s")
