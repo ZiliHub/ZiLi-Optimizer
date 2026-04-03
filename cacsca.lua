@@ -1,18 +1,16 @@
 -- ==========================================
--- 🏹 SCRIPT: AUTO CUPID (V10)
+-- 🏹 SCRIPT: AUTO CUPID (V9)
 -- Game: GET BETTER OUT | Cupid Dungeon
--- V10 Changes vs V9:
---   [1]  🎯 UNDERGROUND_DEPTH: 10 → 2 studs
---          Server validate damage = GetPartsInPart(hitboxPart, OverlapParams).
---          HitboxPart weld HRP, extend ~5-8 studs ngang. Depth=10 → không overlap
---          mob parts (mob.Y ± 3) → damage rejected. Depth=2 → overlap tốt → hit.
---   [2]  🏗️ fakePlatform Y fix cho underground:
---          Underground nhân vật đứng thẳng (không nghiêng -90°).
---          Cũ: dùng root.Y - 0.8 (tilt offset) → platform cao hơn feet → float.
---          Mới: underground luôn dùng root.Y - 3.7 → đúng mức feet → server OK.
---   [3]  🎯 Attack targets: gửi cả eRoot (HRP) + Model
---          HitboxScan trả về v_2.Parent (Model). Nếu server tìm theo Model
---          mà targets chỉ có HRP → miss. Gửi cả 2 để cover mọi validation path.
+-- V9 Changes vs V8:
+--   [1]  🏃 Dodge XZ-only: TargetCFrame giữ nguyên Y=root.Position.Y → không bị kéo xuống
+--   [2]  🔧 Underground Y: chỉ đi sâu -5 studs khi _isDodgeDeep (Enkai DODGE_DEEP)
+--          ArrowRain/Normal AoE không còn bị kéo xuống bãi quái
+--   [3]  🛡️ Block không thay đổi IsReadyToAttack/CurrentTargetRoot
+--          → char ở nguyên vị trí tấn công (không dạt lên đỉnh đầu quái)
+--   [4]  👻 Noclip xuyên suốt: xóa NoclipPaused + CanCollide restore
+--          Server check block qua RemoteEvent, không phụ thuộc phys state
+--   [5]  🔧 Heartbeat: xóa root.Velocity set (xung đột BodyVelocity → jitter)
+--   [6]  🔧 Anti-ragdoll: bảo vệ CVFD_AntiGravity không bị destroy
 -- ==========================================
 
 local WebhookURL  = "https://discord.com/api/webhooks/1472994959404564490/D2gxRseTIKywjtkfRV8xvl1ra2fJ5rVRKtmJYIu23LRIXf_4wD6pbuto07WNzD20DVG4"
@@ -389,7 +387,8 @@ end
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
 local MoveSpeed     = 110
-local AttackOffset  = 10    -- FIX: 10 thay vì 10.5, dùng chung cho flying & underground
+local AttackOffset  = 10.5
+local AttackOffset2 = 11.5
 local SearchRadius  = 800
 local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
 local GatherTime    = 0.2   -- gather nhanh hơn
@@ -402,19 +401,11 @@ local EVADE_FLAME_PILLAR = 75
 local EVADE_BOSS_GENERIC = 100
 
 -- Underground noclip (zone 7+8)
--- V10 FIX: UNDERGROUND_DEPTH = 2 (thay vì 10)
--- Lý do: server validate damage bằng GetPartsInPart(hitboxPart).
--- HitboxPart weld vào HRP, extend ~5-8 studs ngang. Nếu character ở mob.Y - 10
--- → hitbox center tại mob.Y - 10, không overlap mob parts (mob.Y ± 3) → damage rejected.
--- Depth = 2 → character tại mob.Y - 2, hitbox spans mob.Y - 3.5 → mob.Y - 0.5
--- → overlap hoàn toàn với mob body → hit registered.
-local UNDERGROUND_DEPTH     = 2              -- studs dưới mob.Y khi tấn công
-local UNDERGROUND_DODGE_ADD = 10             -- thêm khi dodge Enkai (tổng 12 dưới mob)
+-- FIX: dùng mob.Y ± AttackOffset thay vì floorY - depth
+-- → khoảng cách tới mob = AttackOffset (10), giống flying
+local UNDERGROUND_DEPTH     = AttackOffset2  -- = 10, đồng nhất với flying
+local UNDERGROUND_DODGE_ADD = 11             -- thêm khi dodge (tổng 20 dưới mob)
 local UNDERGROUND_LERP_SPEED = 80            -- studs/s smooth descent
-
--- Ground AoE (arrow rain, lightning): chui xuống dưới mob thay vì chạy xa
-local GROUND_AOE_DEPTH = 20   -- studs dưới mob.Y khi né ground AoE
-
 -- Giới hạn tween
 local MAX_DT             = 0.1    -- 100ms cap — an toàn hơn ở FPS thấp
 local MAX_STEP_PER_FRAME = 8      -- giảm từ 10 → server ít kick hơn khi FPS < 5
@@ -425,7 +416,8 @@ local MAX_STEP_PER_FRAME = 8      -- giảm từ 10 → server ít kick hơn khi
 local MAX_STEP_Y_PER_FRAME = 0.7  -- studs/frame, phòng "Y Axis too fast" anticheat
 
 -- Thời gian đứng yên sau khi né dodge xong
-local DODGE_RETURN_WAIT = 4  -- giây
+local DODGE_RETURN_WAIT = 1.5  -- giây
+local DODGE_RETURN_WAIT2 = 4
 
 local Zone5Points = {
     Vector3.new(-1166.94, 442.27, -3332.41),
@@ -1580,10 +1572,10 @@ task.spawn(function()
                             ZoneState          = "DODGING"
                             _currentDodgeIsAoe = false
                             _isDodgeDeep       = true   -- V9: chỉ case này mới đi sâu
-                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 5
+                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 25
                             TargetCFrame = CFrame.new(root.Position.X, deeperY, root.Position.Z)
-                            DodgeTimer   = tick() + DODGE_RETURN_WAIT
-                            print("⬇️ DODGE_DEEP: Enkai underground → sâu 5 studs, đứng yên", DODGE_RETURN_WAIT, "s")
+                            DodgeTimer   = tick() + DODGE_RETURN_WAIT2
+                            print("⬇️ DODGE_DEEP: Enkai underground → sâu 5 studs, đứng yên", DODGE_RETURN_WAIT2, "s")
 
                         else
                             -- ── DODGE ngang: ArrowRain (80 studs), Normal AoE (40), BossSkill ──
@@ -1787,7 +1779,7 @@ task.spawn(function()
     local currentCombo     = 1
     local MAX_COMBO        = 5      -- V7: đúng game combo (5 hit)
     local strikeDelay      = 0.366  -- V7: đúng game attack speed
-    local comboResetDelay  = 0.6
+    local comboResetDelay  = 1
     local _lastFireTime    = 0
 
     while _G.DungeonScriptID == currentScriptID do
@@ -1809,9 +1801,8 @@ task.spawn(function()
                             return
                         end
 
-                        -- V10: gửi cả eRoot (HRP) và Model (Parent) để server validate dễ hơn
-                        -- HitboxScan trả về v_2.Parent (Model) — nếu targets chỉ có HRP
-                        -- mà server tìm theo Model → miss. Gửi cả 2 để cover cả 2 path.
+                        -- V6 FIX: chỉ push eRoot (BasePart), không push thêm m (Model)
+                        -- → tránh server nhận double target, tránh lag/kick
                         local enemiesToHit = {}
                         local root         = char:FindFirstChild("HumanoidRootPart")
                         local primaryCFrame
@@ -1820,10 +1811,7 @@ task.spawn(function()
                             for _, m in ipairs(GetMobsInZone(root.Position)) do
                                 local eRoot = GetRoot(m)
                                 if eRoot and (eRoot.Position - root.Position).Magnitude <= 300 then
-                                    enemiesToHit[#enemiesToHit+1] = eRoot        -- HumanoidRootPart
-                                    if m ~= eRoot then
-                                        enemiesToHit[#enemiesToHit+1] = m        -- Model (Parent)
-                                    end
+                                    enemiesToHit[#enemiesToHit+1] = eRoot  -- chỉ BasePart, không push m
                                     if not primaryCFrame then primaryCFrame = eRoot.CFrame end
                                 end
                             end
@@ -2186,21 +2174,19 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not char or not root or not char.Parent then return end
 
-    -- Fake platform theo chân player
-    -- V10 FIX: tách rõ 2 trường hợp:
-    --   [A] Flying + IsReadyToAttack: nhân vật nghiêng -90° → body nằm ngang
-    --       lowest world Y ≈ HRP.Y → platform tại root.Y - 0.8
-    --   [B] Underground hoặc đang di chuyển: nhân vật đứng thẳng
-    --       feet ≈ HRP.Y - 3.2 → platform tại root.Y - 3.7
-    -- Bug cũ: dùng -0.8 cho cả underground → platform cao hơn feet 2.4 studs
-    -- → server "Distance from Floor" check fail → character bị coi là lơ lửng
+    -- Fake platform theo chân player — V6: Y động theo trạng thái tilt
+    -- Khi IsReadyToAttack (tilted -90°): body nằm ngang, lowest Y ≈ HRP.Y → platform gần hơn
+    -- Khi bình thường (đứng/bay): feet ≈ HRP.Y - 3.2 → platform center ở HRP.Y - 3.7
     if fakePlatform then
         local platformY
-        if IsReadyToAttack and not _isUndergroundMode then
-            -- Flying attack: -90° tilt, body nằm ngang
+        if IsReadyToAttack then
+            -- Tilted -90°: sau khi rotate X, feet trở thành forward/backward
+            -- World Y của body parts ≈ root.Y ± limb_radius (~1 stud)
+            -- Đặt platform sát phía dưới: root.Y - 0.8 (top ≈ root.Y - 0.3)
             platformY = root.Position.Y - 0.8
         else
-            -- Underground attack (đứng thẳng) hoặc đang bay đến target
+            -- Đứng/bay bình thường: feet ≈ root.Y - 3.2
+            -- Đặt platform: center root.Y - 3.7, top = root.Y - 3.2 (đúng mức feet)
             platformY = root.Position.Y - 3.7
         end
         fakePlatform.CFrame = CFrame.new(root.Position.X, platformY, root.Position.Z)
@@ -2252,11 +2238,8 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         local mobY = CurrentTargetRoot.Position.Y
         local mobZ = CurrentTargetRoot.Position.Z
         if undergroundY then
-            -- Underground: dùng undergroundY (= mob.Y - UNDERGROUND_DEPTH = mob.Y - 2)
-            -- KHÔNG cộng thêm AttackOffset → tránh đẩy character xuống sâu hơn
             activeTargetPos = Vector3.new(mobX, undergroundY, mobZ)
         else
-            -- Flying: character ở mob.Y + AttackOffset (trên đầu mob, nghiêng -90° attack)
             activeTargetPos = Vector3.new(mobX, mobY + AttackOffset, mobZ)
         end
     elseif TargetCFrame then
