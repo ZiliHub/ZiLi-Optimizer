@@ -1662,9 +1662,9 @@ task.spawn(function()
                     local boxCenter = zonePart.Position
                     local floorY    = GetZoneFloor(CurrentZoneIndex, boxCenter)
 
-                    -- Zone 7 & 8: đứng dưới lòng đất thay vì bay
-                    -- Zone khác: bay trên đầu mob (floorY + 40 / floorY + 20)
-                    local isUnderground = (CurrentZoneIndex >= 7)
+                    -- Zone 7: đứng dưới lòng đất (underground + noclip)
+                    -- Zone 8 & khác: bay trên đầu mob (floorY + 40 / floorY + 20)
+                    local isUnderground = (CurrentZoneIndex == 7)
                     local waitPos
                     if isUnderground then
                         waitPos = Vector3.new(boxCenter.X, floorY - UNDERGROUND_DEPTH, boxCenter.Z)
@@ -1974,8 +1974,11 @@ local function _startBackupNoclip()
             local char = Player.Character
             if char and IsFarmingReady then
                 if char ~= _noclipCharRef then _rebuildNoclipCache(char) end
-                for _, p in ipairs(_noclipParts) do
-                    if p and p.Parent then p.CanCollide = false end
+                -- Noclip chỉ zone 7 (underground) — zone 8 bay trên đầu, không cần
+                if CurrentZoneIndex == 7 then
+                    for _, p in ipairs(_noclipParts) do
+                        if p and p.Parent then p.CanCollide = false end
+                    end
                 end
             end
             -- V10 FIX: keepalive fakePlatform CanCollide = true
@@ -2024,9 +2027,9 @@ local function HookCharacterDeath(char)
 
     hum.Died:Connect(OnCharacterDied)
 
-    -- V10: Zone 8 damage evasion
-    -- Khi nhận damage ở zone 8, tp sâu thêm 10 studs rồi trở lại
-    -- Dùng bước nhỏ (shift _undergroundCurrentY) → server không flag TP
+    -- V11: Zone 8 damage evasion (above-ground mode)
+    -- Khi nhận damage ở zone 8: teleport bước nhỏ +5 studs lên cao
+    -- Heartbeat lerp tự đưa về target mob sau 0.75s debounce
     local _prevHealth = hum.Health
     hum.HealthChanged:Connect(function(newHealth)
         if not IsFarmingReady or CurrentZoneIndex ~= 8 then
@@ -2037,17 +2040,15 @@ local function HookCharacterDeath(char)
         -- Chỉ react khi thực sự nhận damage (không phải heal)
         if dmg <= 0 or _zone8EvadeDebounce then return end
         _zone8EvadeDebounce = true
-        local savedY = _undergroundCurrentY
-        -- Shift xuống 10 studs
-        if _undergroundCurrentY ~= nil then
-            _undergroundCurrentY = _undergroundCurrentY - 10
+        -- Teleport +5 studs lên cao ngay lập tức
+        local char2 = Player.Character
+        local root2 = char2 and char2:FindFirstChild("HumanoidRootPart")
+        if root2 then
+            root2.CFrame = root2.CFrame + Vector3.new(0, 5, 0)
+            print("⚡ Zone8 damage evasion: +5 studs up")
         end
-        print("⚡ Zone8 damage evasion: -10 studs")
-        task.delay(1.5, function()
-            -- Restore về vị trí cũ (lerp tự xử lý)
-            if _undergroundCurrentY ~= nil and savedY ~= nil then
-                _undergroundCurrentY = savedY
-            end
+        -- Sau 0.75s: nhả debounce, Heartbeat lerp tự quay về mob
+        task.delay(0.75, function()
             _zone8EvadeDebounce = false
         end)
     end)
@@ -2095,15 +2096,17 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
             end
         end
 
-        -- V9: noclip luôn chạy kể cả khi block — không cần NoclipPaused guard
+        -- V11: noclip chỉ zone 7 (underground mode) — zone 8 bay trên đầu không cần noclip
         local now = tick()
         if now - _noclipLastApply >= NOCLIP_APPLY_INTERVAL then
             _noclipLastApply = now
             if char ~= _noclipCharRef then _rebuildNoclipCache(char) end
-            for _, v in ipairs(_noclipParts) do
-                if v and v.Parent then
-                    v.CanCollide = false
-                    v.CastShadow = false
+            if CurrentZoneIndex == 7 then
+                for _, v in ipairs(_noclipParts) do
+                    if v and v.Parent then
+                        v.CanCollide = false
+                        v.CastShadow = false
+                    end
                 end
             end
             -- Dọn ValueBase / Instance stun còn sót lại (không trong BasePart cache)
