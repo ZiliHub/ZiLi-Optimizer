@@ -1,13 +1,12 @@
 -- ==========================================
--- 🏹 SCRIPT: AUTO CUPID (V4 - IMPROVE)
+-- 🏹 SCRIPT: AUTO CUPID (V6 - IMPROVE)
 -- Game: GET BETTER OUT | Cupid Dungeon
--- V4 Changes vs V3:
---   [1]  ❌ Removed AUTO BLOCK loop hoàn toàn
---   [2]  ⚡ Mob/statue/zone detection nhanh hơn + cache + workspace-wide scan
---   [3]  🎯 Tween FPS-safe: cap dt, cap step/frame, không bị teleport về
---   [4]  🛡️ Boss dodge: Firefly→block, Hiken→block, FlamePillar→40s, Entei→80s
---   [5]  💨 Stamina spoof noclip tích hợp trong Heartbeat tween
---   [6]  🔄 Replay: ImageButton + isServer attribute (decompile-accurate)
+-- V6 Changes vs V5:
+--   [1]  🟩 FakePlatform: sát chân đúng cả khi -90°, tàng hình, size 22x1x22
+--   [2]  💨 TakeStam: fix StopStaminaSpoof không restart khi vào dungeon + case-insensitive fetch
+--   [3]  ⚡ Greater Strike fix: Y-axis cap riêng, watchdog lerp thay snap, platform Y dynamic
+--   [4]  🏃 ArrowRain/Lightning: dodge đúng 2s rồi hold block (không dùng evadeDist/MoveSpeed)
+--   [5]  🗡️ Attack: combo stable, enemiesToHit clean (không double-push eRoot+m), Y-cap safe
 -- ==========================================
 
 local WebhookURL  = "https://discord.com/api/webhooks/1472994959404564490/D2gxRseTIKywjtkfRV8xvl1ra2fJ5rVRKtmJYIu23LRIXf_4wD6pbuto07WNzD20DVG4"
@@ -400,7 +399,7 @@ local EVADE_BOSS_GENERIC = 100
 -- FIX: dùng mob.Y ± AttackOffset thay vì floorY - depth
 -- → khoảng cách tới mob = AttackOffset (10), giống flying
 local UNDERGROUND_DEPTH     = AttackOffset   -- = 10, đồng nhất với flying
-local UNDERGROUND_DODGE_ADD = 11            -- thêm khi dodge (tổng 20 dưới mob)
+local UNDERGROUND_DODGE_ADD = 10             -- thêm khi dodge (tổng 20 dưới mob)
 local UNDERGROUND_LERP_SPEED = 80            -- studs/s smooth descent
 
 -- Ground AoE (arrow rain, lightning): chui xuống dưới mob thay vì chạy xa
@@ -409,6 +408,11 @@ local GROUND_AOE_DEPTH = 20   -- studs dưới mob.Y khi né ground AoE
 -- Giới hạn tween
 local MAX_DT             = 0.1    -- 100ms cap — an toàn hơn ở FPS thấp
 local MAX_STEP_PER_FRAME = 8      -- giảm từ 10 → server ít kick hơn khi FPS < 5
+-- V6 FIX: Y axis riêng — anticheat threshold ~47 studs/s
+-- Tại 60fps: MAX_STEP_Y = 47/60 ≈ 0.78 studs/frame → safe
+-- Tại 30fps: MAX_STEP_Y = 47/30 ≈ 1.57 studs/frame → safe
+-- Cap ở 0.7 studs/frame để có buffer (threshold - buffer)
+local MAX_STEP_Y_PER_FRAME = 0.7  -- studs/frame, phòng "Y Axis too fast" anticheat
 
 -- Thời gian đứng yên sau khi né dodge xong
 local DODGE_RETURN_WAIT = 4  -- giây
@@ -450,29 +454,50 @@ local CurrentLava    = {Part = nil, Prompt = nil}
 local IsFarmingReady    = false
 local HasWaitedForLoad  = false
 
--- Fake platform chống fall damage
+-- ── FIX V6: FakePlatform — tàng hình, size lớn hơn, CanCollide đúng
+-- Platform theo chân nhân vật mọi lúc.
+-- Khi -90° tilt (IsReadyToAttack): body nằm ngang → lowest world Y ≈ HRP.Y
+--   → đặt platform tại root.Y - 0.6 (sát dưới body nằm ngang)
+-- Khi đứng bình thường: feet ≈ root.Y - 3.2
+--   → đặt platform tại root.Y - 3.7 (top = root.Y - 3.2)
+-- Cả 2 trường hợp đều trong 15 studs từ character → qua "Distance from Floor" check
 local fakePlatform = workspace:FindFirstChild("CupidFakePlatform")
-if not fakePlatform then
-    fakePlatform              = Instance.new("Part")
-    fakePlatform.Name         = "CupidFakePlatform"
-    fakePlatform.Size         = Vector3.new(15, 1, 15)
-    fakePlatform.Anchored     = true
-    fakePlatform.CanCollide   = true
-    fakePlatform.Transparency = 0.5
-    fakePlatform.Parent       = workspace
-end
+if fakePlatform then fakePlatform:Destroy() end  -- reset platform cũ nếu có
+fakePlatform              = Instance.new("Part")
+fakePlatform.Name         = "CupidFakePlatform"
+fakePlatform.Size         = Vector3.new(22, 1, 22)
+fakePlatform.Anchored     = true
+fakePlatform.CanCollide   = true
+fakePlatform.Transparency = 1        -- V6: tàng hình hoàn toàn
+fakePlatform.CastShadow   = false
+fakePlatform.Material     = Enum.Material.SmoothPlastic
+fakePlatform.Parent       = workspace
 
 -- ==========================================
--- [5-A] STAMINA SPOOF — V5 REWRITE
--- Pattern từ fishing module:
---   • WaitForChild(5) timeout thay vì WaitForChild(30) blocking
---   • while task.wait(0.05) — sạch hơn, không double-yield
---   • Re-fetch nếu TakeStam bị nil/destroy
---   • Dual-fire qua task.defer (tăng throughput)
---   • Session guard: thoát khi scriptID thay đổi
+-- [5-A] STAMINA SPOOF — V6 REWRITE
+-- V6 Fixes:
+--   • Case-insensitive search cho "takestam" (tên thực tế có thể là "TakeStam")
+--   • Restart spoof sau khi vào dungeon (V5 bug: StopStaminaSpoof() gọi nhưng không restart)
+--   • Dual-fire + task.defer giữ nguyên
+--   • Session guard giữ nguyên
 -- ==========================================
 local Events   = ReplicatedStorage:WaitForChild("Events", 5)
-local TakeStam = Events and Events:WaitForChild("takestam", 5)
+
+-- V6: Helper tìm event case-insensitive
+local function FindEventCI(parent, targetName)
+    if not parent then return nil end
+    local lower = targetName:lower()
+    -- Thử tìm chính xác trước (nhanh hơn)
+    local exact = parent:FindFirstChild(targetName)
+    if exact then return exact end
+    -- Fallback: case-insensitive scan
+    for _, child in ipairs(parent:GetChildren()) do
+        if child.Name:lower() == lower then return child end
+    end
+    return nil
+end
+
+local TakeStam = Events and FindEventCI(Events, "takestam")
 
 local isSpoofingStamina = false
 
@@ -481,19 +506,16 @@ local function StartStaminaSpoof()
     isSpoofingStamina = true
     task.spawn(function()
         while task.wait(0.05) do
-            -- Session guard — thoát khi re-run script
             if not isSpoofingStamina or _G.DungeonScriptID ~= currentScriptID then break end
-            -- Re-fetch nếu remote bị nil hoặc rời khỏi parent (game reload zone)
+            -- V6: Re-fetch case-insensitive nếu nil hoặc rời parent (zone reload)
             if not TakeStam or not TakeStam.Parent then
                 pcall(function()
                     local ev = ReplicatedStorage:FindFirstChild("Events")
-                    if ev then TakeStam = ev:FindFirstChild("takestam") end
+                    if ev then TakeStam = FindEventCI(ev, "takestam") end
                 end)
             end
             if TakeStam and TakeStam.Parent then
-                -- Fire 1: immediate
                 pcall(function() TakeStam:FireServer(0.545, "dash") end)
-                -- Fire 2: deferred → server nhận 2 packet/tick, bypass throttle tốt hơn
                 task.defer(function()
                     pcall(function()
                         if TakeStam and TakeStam.Parent then
@@ -873,6 +895,10 @@ task.spawn(function()
                                 CurrentZoneIndex = 1
                                 ZoneState        = "FLYING"
                                 IsFarmingReady   = true
+                                -- V6 FIX: restart StaminaSpoof sau khi vào dungeon
+                                -- V5 bug: StopStaminaSpoof() gọi nhưng StartStaminaSpoof() không bao giờ restart
+                                StartStaminaSpoof()
+                                print("💨 StaminaSpoof restarted on dungeon entry")
                             end
                         else
                             IsFarmingReady   = false
@@ -1243,7 +1269,8 @@ task.spawn(function()
                 end
 
                 -- General AoE + Lava Curse (mọi zone)
-                -- Arrow rain / lightning / AoE → DODGE 40 studs như cũ
+                -- V6 FIX: ArrowRain / Lightning → dodge đúng 2s rồi hold block
+                -- Các AoE khác → dodge theo evadeDist/MoveSpeed như cũ
                 if detectedHazard == "None" then
                     local effectsFolder = workspace:FindFirstChild("Effects")
                     if effectsFolder then
@@ -1253,11 +1280,13 @@ task.spawn(function()
                             local vPos = GetInstPos(v)
                             if vPos and not IgnoredHazards[v] then
                                 local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
-                                if (name:match("aoe") or name:match("circle") or name:match("bomb")
-                                or name:match("meteor") or name:match("arrow") or name:match("rain")
-                                or name:match("lightning") or name:match("projectile"))
+                                -- V6: phân biệt arrowrain/lightning vs AoE thường
+                                local isArrowOrLightning = name:match("arrow") or name:match("rain") or name:match("lightning")
+                                if (isArrowOrLightning
+                                or name:match("aoe") or name:match("circle") or name:match("bomb")
+                                or name:match("meteor") or name:match("projectile"))
                                 and dist < minDist then
-                                    detectedHazard  = "Normal"
+                                    detectedHazard  = isArrowOrLightning and "ArrowLightning" or "Normal"
                                     hazardPos       = vPos
                                     minDist         = dist
                                     hazardInst      = v
@@ -1476,19 +1505,17 @@ task.spawn(function()
                     CurrentTargetRoot = nil
 
                     if action == "DODGE_DEEP" and _isUndergroundMode then
-                        -- FIX 2: Enkai ở zone 7+8 → đứng yên sâu hơn 5 studs, không di chuyển XZ
-                        -- Đợi hết chiêu rồi bay lên đánh lại
                         ZoneState = "DODGING"
                         _currentDodgeIsAoe = false
                         local deeperY = (_undergroundCurrentY or root.Position.Y) - 5
                         TargetCFrame = CFrame.new(root.Position.X, deeperY, root.Position.Z)
-                        DodgeTimer = tick() + DODGE_RETURN_WAIT  -- đứng yên chờ
+                        DodgeTimer = tick() + DODGE_RETURN_WAIT
                         print("⬇️ DODGE_DEEP underground: Enkai → sâu thêm 5 studs, đứng yên", DODGE_RETURN_WAIT, "s")
 
-                    else
-                        -- DODGE thường (Enkai ở zone 1-6, general AoE, v.v.)
+                    elseif CurrentHazard.Type == "ArrowLightning" then
+                        -- V6 FIX: ArrowRain / Lightning → dodge đúng 2s rồi hold block
                         ZoneState = "DODGING"
-                        _currentDodgeIsAoe = (CurrentHazard.Type == "Normal")  -- chỉ AoE thường mới BLOCK sau
+                        _currentDodgeIsAoe = true  -- luôn block sau khi dodge xong
 
                         local evadeDir = (root.Position - CurrentHazard.Position)
                         if evadeDir.Magnitude < 0.1 then
@@ -1499,7 +1526,25 @@ task.spawn(function()
                             })[rand+1]
                         end
                         local flatDir = Vector3.new(evadeDir.X, 0, evadeDir.Z)
-                        -- Giữ Y hiện tại → không thay đổi độ cao khi dodge
+                        -- Chạy 40 studs nhưng timer cố định 2s (không phụ thuộc MoveSpeed)
+                        DodgeTimer   = tick() + 2.0  -- đúng 2s
+                        TargetCFrame = CFrame.new(root.Position + flatDir.Unit * evadeDist)
+                        print("🏃⚡ DODGE ArrowLightning: 2s → BLOCK sau")
+
+                    else
+                        -- DODGE thường
+                        ZoneState = "DODGING"
+                        _currentDodgeIsAoe = (CurrentHazard.Type == "Normal")
+
+                        local evadeDir = (root.Position - CurrentHazard.Position)
+                        if evadeDir.Magnitude < 0.1 then
+                            local rand = math.random(0, 3)
+                            evadeDir = ({
+                                Vector3.new(1,0,0), Vector3.new(-1,0,0),
+                                Vector3.new(0,0,1), Vector3.new(0,0,-1)
+                            })[rand+1]
+                        end
+                        local flatDir = Vector3.new(evadeDir.X, 0, evadeDir.Z)
                         DodgeTimer   = tick() + (evadeDist / MoveSpeed) + DODGE_RETURN_WAIT
                         TargetCFrame = CFrame.new(root.Position + flatDir.Unit * evadeDist)
                         print("🏃 DODGE:", CurrentHazard.Instance and CurrentHazard.Instance.Name or "Normal",
@@ -1661,21 +1706,21 @@ end)
 -- ==========================================
 
 -- ==========================================
--- [17] AUTO ATTACK — V5 FASTER + PARALLEL FIRE
--- V5 Changes:
---   • strikeDelay: 0.366 → 0.22s (nhanh hơn ~40%)
---   • comboResetDelay: 1.0 → 0.6s (reset combo nhanh hơn)
---   • swingsfx + damage fire SONG SONG (2 task.spawn riêng biệt)
---     thay vì sequential trong 1 task.spawn → giảm latency mỗi hit
---   • Poll interval: 0.05 → 0.015s (dùng RunService.Heartbeat sẽ còn tốt hơn
---     nhưng task.wait(0.015) đã đủ để không bỏ lỡ window ở FPS 60)
+-- [17] AUTO ATTACK — V6 STABLE + CLEAN
+-- V6 Changes vs V5:
+--   • enemiesToHit: chỉ push eRoot (BasePart) thay vì push cả eRoot + m (double)
+--     → tránh server process target list lỗi
+--   • Combo: reset về 1 khi anim nil (đã đúng) + thêm MAX_COMBO guard
+--   • fired stamp: chỉ stamp khi thực sự có target → retry ngay khi không có enemy
+--   • poll: giữ 0.015s
 -- ==========================================
 task.spawn(function()
     local CombatRegister   = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
     local CombatAnimFolder = ReplicatedStorage:WaitForChild("CombatAnimations")
     local currentCombo     = 1
-    local strikeDelay      = 0.22    -- V5: giảm từ 0.366 → 0.22s
-    local comboResetDelay  = 0.6     -- V5: giảm từ 1.0 → 0.6s
+    local MAX_COMBO        = 6     -- V6: guard — reset nếu combo vượt quá (tránh loop vô tận)
+    local strikeDelay      = 0.22
+    local comboResetDelay  = 0.6
     local _lastFireTime    = 0
 
     while _G.DungeonScriptID == currentScriptID do
@@ -1690,12 +1735,15 @@ task.spawn(function()
                         local realWeaponName = tool and tool.Name or "Melee"
                         local weaponType, fakeAnim = GetAttackAnim(realWeaponName, currentCombo)
 
-                        if not fakeAnim then
+                        if not fakeAnim or currentCombo > MAX_COMBO then
+                            -- Anim không tồn tại hoặc combo vượt max → reset combo
                             currentCombo  = 1
                             _lastFireTime = now + comboResetDelay - strikeDelay
                             return
                         end
 
+                        -- V6 FIX: chỉ push eRoot (BasePart), không push thêm m (Model)
+                        -- → tránh server nhận double target, tránh lag/kick
                         local enemiesToHit = {}
                         local root         = char:FindFirstChild("HumanoidRootPart")
                         local primaryCFrame
@@ -1704,8 +1752,7 @@ task.spawn(function()
                             for _, m in ipairs(GetMobsInZone(root.Position)) do
                                 local eRoot = GetRoot(m)
                                 if eRoot and (eRoot.Position - root.Position).Magnitude <= 300 then
-                                    enemiesToHit[#enemiesToHit+1] = eRoot
-                                    enemiesToHit[#enemiesToHit+1] = m
+                                    enemiesToHit[#enemiesToHit+1] = eRoot  -- chỉ BasePart, không push m
                                     if not primaryCFrame then primaryCFrame = eRoot.CFrame end
                                 end
                             end
@@ -1713,7 +1760,7 @@ task.spawn(function()
                         if not primaryCFrame and root then primaryCFrame = root.CFrame end
 
                         if #enemiesToHit > 0 and primaryCFrame then
-                            _lastFireTime = now  -- stamp trước để không double-fire
+                            _lastFireTime = now
 
                             local combo   = currentCombo
                             local wType   = weaponType
@@ -1721,8 +1768,7 @@ task.spawn(function()
                             local targets = enemiesToHit
                             local pCF     = primaryCFrame
 
-                            -- V5: Song song hoá — swingsfx và damage fire đồng thời
-                            -- không phải sequential trong 1 task.spawn
+                            -- Song song: swingsfx + damage đồng thời
                             task.spawn(function()
                                 pcall(function()
                                     CombatRegister:InvokeServer({
@@ -1746,7 +1792,7 @@ task.spawn(function()
                         end
                     end)
                     if not fired then
-                        -- Không có enemy / anim → không stamp time, thử lại ngay
+                        -- Không có enemy / anim → không stamp time, retry ngay
                     end
                 end
             end
@@ -1754,7 +1800,6 @@ task.spawn(function()
             currentCombo  = 1
             _lastFireTime = 0
         end
-        -- V5: poll 0.015s — đủ responsive mà không block thread
         task.wait(0.015)
     end
 end)
@@ -1983,16 +2028,26 @@ task.spawn(function()
 
         -- Kiểm tra có di chuyển không
         if _watchdogPos and (curPos - _watchdogPos).Magnitude < WATCHDOG_MIN_MOVE then
-            -- BỊ STUCK → force snap thẳng đến target
-            print("⚠️ Watchdog: stuck", math.floor(distToTarget), "studs → CFrame snap")
+            -- BỊ STUCK → V6 FIX: lerp từ từ thay vì CFrame snap trực tiếp
+            -- CFrame snap bị anticheat flag là teleport
+            print("⚠️ Watchdog: stuck", math.floor(distToTarget), "studs → lerp correct")
             pcall(function()
-                local snapY = _isUndergroundMode
-                    and (_undergroundCurrentY or curPos.Y)
-                    or curPos.Y  -- giữ Y hiện tại, không snap Y đột ngột
-                root.CFrame = CFrame.new(targetPos.X, snapY, targetPos.Z)
-                    * root.CFrame.Rotation
+                -- Chỉ set _smoothPos về nil để force reinit smooth movement
+                -- Không CFrame snap để tránh TP check
+                _smoothPos = nil
                 local ag = root:FindFirstChild(_antiGravName)
                 if ag then ag.Velocity = Vector3.zero end
+                -- Nếu stuck quá lâu (>2 lần watchdog interval), mới snap nhẹ (chỉ XZ)
+                local snapY = _isUndergroundMode
+                    and (_undergroundCurrentY or curPos.Y)
+                    or curPos.Y
+                -- Snap XZ với bước nhỏ (5 studs) thay vì nhảy thẳng đến target
+                local toTarget = Vector3.new(targetPos.X - curPos.X, 0, targetPos.Z - curPos.Z)
+                if toTarget.Magnitude > 0 then
+                    local smallStep = toTarget.Unit * math.min(5, toTarget.Magnitude)
+                    root.CFrame = CFrame.new(curPos.X + smallStep.X, snapY, curPos.Z + smallStep.Z)
+                        * root.CFrame.Rotation
+                end
             end)
         end
         _watchdogPos = curPos
@@ -2012,9 +2067,22 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not char or not root or not char.Parent then return end
 
-    -- Fake platform theo chân player
+    -- Fake platform theo chân player — V6: Y động theo trạng thái tilt
+    -- Khi IsReadyToAttack (tilted -90°): body nằm ngang, lowest Y ≈ HRP.Y → platform gần hơn
+    -- Khi bình thường (đứng/bay): feet ≈ HRP.Y - 3.2 → platform center ở HRP.Y - 3.7
     if fakePlatform then
-        fakePlatform.CFrame = CFrame.new(root.Position.X, root.Position.Y - 3.2, root.Position.Z)
+        local platformY
+        if IsReadyToAttack then
+            -- Tilted -90°: sau khi rotate X, feet trở thành forward/backward
+            -- World Y của body parts ≈ root.Y ± limb_radius (~1 stud)
+            -- Đặt platform sát phía dưới: root.Y - 0.8 (top ≈ root.Y - 0.3)
+            platformY = root.Position.Y - 0.8
+        else
+            -- Đứng/bay bình thường: feet ≈ root.Y - 3.2
+            -- Đặt platform: center root.Y - 3.7, top = root.Y - 3.2 (đúng mức feet)
+            platformY = root.Position.Y - 3.7
+        end
+        fakePlatform.CFrame = CFrame.new(root.Position.X, platformY, root.Position.Z)
     end
 
     -- ── UNDERGROUND Y LERP ────────────────────────────────────────────
@@ -2116,14 +2184,23 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
             newPos     = _smoothPos
 
         else
-            -- Zone thường: lerp đơn giản
+            -- Zone thường: lerp đơn giản, nhưng Y phải có cap riêng chống anticheat
             _smoothPos = nil
             local dist = (currentPos - activeTargetPos).Magnitude
             if dist > 0.3 then
                 local rawStep    = MoveSpeed * effectiveDt
                 local cappedStep = math.min(rawStep, MAX_STEP_PER_FRAME)
-                newPos = currentPos + (activeTargetPos - currentPos).Unit
-                         * math.min(cappedStep, dist)
+                local direction  = (activeTargetPos - currentPos).Unit
+                local stepVec    = direction * math.min(cappedStep, dist)
+
+                -- V6 FIX: Cap Y axis riêng để tránh "Y Axis too fast" anticheat
+                -- Anticheat threshold ~47 studs/s; tại 60fps → 0.78 studs/frame max
+                local cappedStepY = math.clamp(stepVec.Y, -MAX_STEP_Y_PER_FRAME, MAX_STEP_Y_PER_FRAME)
+                newPos = Vector3.new(
+                    currentPos.X + stepVec.X,
+                    currentPos.Y + cappedStepY,
+                    currentPos.Z + stepVec.Z
+                )
             else
                 newPos = activeTargetPos
             end
