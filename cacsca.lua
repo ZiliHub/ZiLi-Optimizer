@@ -383,7 +383,7 @@ end
 -- ==========================================
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
-local MoveSpeed     = 110
+local MoveSpeed     = 90
 local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
 local AttackOffset2 = 10.5   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
@@ -1014,6 +1014,12 @@ local function HideFolderEffects(folder)
     end)
 end
 
+-- V10 FIX LEAK: disconnect map connections từ session cũ trước khi tạo mới
+if _G.CupidMapConns then
+    for _, c in ipairs(_G.CupidMapConns) do pcall(function() c:Disconnect() end) end
+end
+_G.CupidMapConns = {}
+
 local function DoMapOptimize()
     if _mapOptimized then return end
     _mapOptimized = true
@@ -1059,11 +1065,13 @@ local function DoMapOptimize()
         for _, fname in ipairs({"Effects", "Projectiles"}) do
             local f = workspace:FindFirstChild(fname)
             if f then HideFolderEffects(f) end
-            workspace.ChildAdded:Connect(function(child)
+            -- V10 FIX LEAK: lưu connection để disconnect khi re-run
+            local conn = workspace.ChildAdded:Connect(function(child)
                 if child.Name == fname then
                     task.defer(function() HideFolderEffects(child) end)
                 end
             end)
+            table.insert(_G.CupidMapConns, conn)
         end
 
         -- [E] Toàn bộ workspace — tắt shadow + particles + non-collision parts
@@ -1076,20 +1084,18 @@ local function DoMapOptimize()
                         desc.Enabled = false
                     elseif desc:IsA("BasePart") and not desc:IsA("Terrain") then
                         desc.CastShadow = false
-                        -- Ẩn hoàn toàn parts trang trí không có collision
                         if not desc.CanCollide then
                             desc.LocalTransparencyModifier = 1
                         end
                     elseif desc:IsA("Sound") then
-                        -- Tắt hầu hết âm thanh ambient
                         if desc.Parent and not (desc.Parent == Player.Character) then
                             desc.Volume = 0
                         end
                     end
                 end)
             end
-            -- Auto-hide mọi thứ mới spawn vào workspace
-            workspace.DescendantAdded:Connect(function(inst)
+            -- V10 FIX LEAK: lưu connection để disconnect khi re-run
+            local connD = workspace.DescendantAdded:Connect(function(inst)
                 task.defer(function()
                     pcall(function()
                         if inst:IsA("ParticleEmitter") or inst:IsA("Beam")
@@ -1106,6 +1112,7 @@ local function DoMapOptimize()
                     end)
                 end)
             end)
+            table.insert(_G.CupidMapConns, connD)
         end)
 
         print("🗺️ Map Optimized OK")
@@ -1135,10 +1142,6 @@ local BossSkillDefs = {
     {pattern = "enkai",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
     {pattern = "en_kai", action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
     {pattern = "entei",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "flamepillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "flame_pillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "pillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "flame",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
 }
 
 -- Instance tên match những pattern này → bỏ qua hoàn toàn (không log, không react)
@@ -1586,7 +1589,7 @@ task.spawn(function()
                             ZoneState          = "DODGING"
                             _currentDodgeIsAoe = false
                             _isDodgeDeep       = true   -- V9: chỉ case này mới đi sâu
-                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 35
+                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 25
                             TargetCFrame = CFrame.new(root.Position.X, deeperY, root.Position.Z)
                             DodgeTimer   = tick() + DODGE_RETURN_WAIT2
                             print("⬇️ DODGE_DEEP: Enkai underground → sâu 5 studs, đứng yên", DODGE_RETURN_WAIT2, "s")
@@ -1728,16 +1731,28 @@ task.spawn(function()
                             IsReadyToAttack = false; CurrentTargetRoot = nil
                             ZoneState = "VERIFY_CLEAR"; Timer = tick() + 0.8
                         else
-                            -- Target mob gần nhất
-                            local bestMob, bestD = mobs[1], math.huge
+                            -- V10 FIX: Ưu tiên gun user trước (mọi zone), sau đó nearest
+                            -- GetMobsInZone đã sort gun lên đầu cho zone 1-4,
+                            -- nhưng ATTACKING loop cũ bỏ qua sort → luôn chọn nearest
+                            -- Fix: check gun user trước, nếu có thì target gun user gần nhất
+                            --       nếu không có gun user thì target nearest như cũ
+                            local bestMob, bestD = nil, math.huge
+                            local bestGun, bestGunD = nil, math.huge
                             for _, m in ipairs(mobs) do
                                 local mr = GetRoot(m)
                                 if mr then
                                     local d = (mr.Position - root.Position).Magnitude
-                                    if d < bestD then bestD = d; bestMob = m end
+                                    local isGun = m.Name:lower():find("gun", 1, true) ~= nil
+                                    if isGun and d < bestGunD then
+                                        bestGunD = d; bestGun = m
+                                    elseif not isGun and d < bestD then
+                                        bestD = d; bestMob = m
+                                    end
                                 end
                             end
-                            CurrentTargetRoot = GetRoot(bestMob)
+                            -- Gun user ưu tiên tuyệt đối nếu tồn tại
+                            local chosen = bestGun or bestMob
+                            CurrentTargetRoot = GetRoot(chosen)
                             IsReadyToAttack   = true
                         end
 
@@ -1995,13 +2010,42 @@ local function OnCharacterDied()
 end
 
 -- Hook vào character hiện tại
+local _zone8EvadeDebounce = false
 local function HookCharacterDeath(char)
     if not char then return end
     local hum = char:FindFirstChild("Humanoid")
         or char:WaitForChild("Humanoid", 5)
-    if hum then
-        hum.Died:Connect(OnCharacterDied)
-    end
+    if not hum then return end
+
+    hum.Died:Connect(OnCharacterDied)
+
+    -- V10: Zone 8 damage evasion
+    -- Khi nhận damage ở zone 8, tp sâu thêm 10 studs rồi trở lại
+    -- Dùng bước nhỏ (shift _undergroundCurrentY) → server không flag TP
+    local _prevHealth = hum.Health
+    hum.HealthChanged:Connect(function(newHealth)
+        if not IsFarmingReady or CurrentZoneIndex ~= 8 then
+            _prevHealth = newHealth; return
+        end
+        local dmg = _prevHealth - newHealth
+        _prevHealth = newHealth
+        -- Chỉ react khi thực sự nhận damage (không phải heal)
+        if dmg <= 0 or _zone8EvadeDebounce then return end
+        _zone8EvadeDebounce = true
+        local savedY = _undergroundCurrentY
+        -- Shift xuống 10 studs
+        if _undergroundCurrentY ~= nil then
+            _undergroundCurrentY = _undergroundCurrentY - 10
+        end
+        print("⚡ Zone8 damage evasion: -10 studs")
+        task.delay(1.5, function()
+            -- Restore về vị trí cũ (lerp tự xử lý)
+            if _undergroundCurrentY ~= nil and savedY ~= nil then
+                _undergroundCurrentY = savedY
+            end
+            _zone8EvadeDebounce = false
+        end)
+    end)
 end
 
 -- Hook ngay với character đang có
@@ -2093,7 +2137,10 @@ end)
 --      Server nhận dash liên tục → bypass distance/teleport check.
 --      StopStaminaSpoof khi tới nơi.
 -- ==========================================
-local isMovingForStamina = false
+-- V10 FIX FPS: cache yaw để tránh ToOrientation() mỗi Heartbeat frame
+-- ToOrientation() decompose quaternion → đắt khi gọi 60fps liên tục
+-- Chỉ update khi đang di chuyển (not IsReadyToAttack), lưu lại khi flip sang attack
+local _cachedYaw = 0
 -- Cache footstep event 1 lần — tránh FindFirstChild mỗi Heartbeat frame
 local _footstepEvent = ReplicatedStorage:FindFirstChild("Events")
     and ReplicatedStorage.Events:FindFirstChild("footstep") or nil
@@ -2424,27 +2471,16 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
                     root.CFrame = CFrame.new(newPos) * root.CFrame.Rotation
                 end
             else
-                -- Zone thường (bay): giữ nguyên -90 tilt để attack đúng hướng
-                -- V7 FIX: Chỉ lấy yaw hiện tại, giữ nguyên, không tính lại mỗi frame
-                local _, currentYaw, _ = root.CFrame:ToOrientation()
+                -- Zone thường (bay): giữ -90 tilt
+                -- V10 FIX FPS: dùng _cachedYaw thay vì ToOrientation() mỗi frame
+                -- _cachedYaw được update liên tục trong nhánh movement bên dưới
                 root.CFrame = CFrame.new(newPos)
-                    * CFrame.Angles(0, currentYaw, 0)
+                    * CFrame.Angles(0, _cachedYaw, 0)
                     * CFrame.Angles(math.rad(-90), 0, 0)
             end
-            -- V7 FIX: XOÁ root.Velocity và hum:Move hoàn toàn
-            -- root.Velocity = LookVector * WalkSpeed → xung đột BodyVelocity anti-grav → jitter
-            -- hum:Move(0.01, 0, 0.01) → humanoid cố xoay về hướng northeast mỗi frame → spinning
-            -- BodyVelocity đã handle anti-gravity, không cần set velocity thủ công
             root.RotVelocity = Vector3.new(0, 0, 0)
         else
-            -- Đang di chuyển đến target: lerp rotation
-            -- V7 FIX: dùng newPos thay vì currentPos → direction đúng sau khi move
-            -- Dead zone 1.5 studs: tránh flip khi đã gần target
-            -- =======================================================
-            -- THAY THẾ TOÀN BỘ BẰNG ĐOẠN SAU (Bảo vệ triệt để vụ xoay):
             if _G.SkillBlocking then
-                -- Block: giữ nguyên vị trí hoàn toàn, không ép xoay
-                -- BodyVelocity anti-grav vẫn active → char không rơi
                 root.CFrame = CFrame.new(newPos) * root.CFrame.Rotation
                 root.RotVelocity = Vector3.zero
                 pcall(function() root.AssemblyAngularVelocity = Vector3.zero end)
@@ -2459,12 +2495,12 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
                 else
                     root.CFrame = CFrame.new(newPos) * root.CFrame.Rotation
                 end
+                -- V10 FIX FPS: update _cachedYaw trong movement branch (không phải mỗi frame attack)
+                -- ToOrientation chỉ gọi khi đang di chuyển, không phải khi đứng tấn công
+                local _, yaw, _ = root.CFrame:ToOrientation()
+                _cachedYaw = yaw
             end
-
-            -- Triệt tiêu hoàn toàn lực xoay vật lý (va chạm, physics engine)
             root.RotVelocity = Vector3.zero
-            -- V9 FIX: xóa "root.Velocity = ..." cũ — xung đột với BodyVelocity MaxForce=9e9 → jitter
-            -- BodyVelocity đã handle anti-gravity hoàn toàn, không cần set velocity thủ công
         end
     else
         -- Không có target: reset smooth pos + xóa anti-gravity
