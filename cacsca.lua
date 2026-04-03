@@ -1,12 +1,11 @@
 -- ==========================================
--- 🏹 SCRIPT: AUTO CUPID (V6 - IMPROVE)
+-- 🏹 SCRIPT: AUTO CUPID (V7 - IMPROVE)
 -- Game: GET BETTER OUT | Cupid Dungeon
--- V6 Changes vs V5:
---   [1]  🟩 FakePlatform: sát chân đúng cả khi -90°, tàng hình, size 22x1x22
---   [2]  💨 TakeStam: fix StopStaminaSpoof không restart khi vào dungeon + case-insensitive fetch
---   [3]  ⚡ Greater Strike fix: Y-axis cap riêng, watchdog lerp thay snap, platform Y dynamic
---   [4]  🏃 ArrowRain/Lightning: dodge đúng 2s rồi hold block (không dùng evadeDist/MoveSpeed)
---   [5]  🗡️ Attack: combo stable, enemiesToHit clean (không double-push eRoot+m), Y-cap safe
+-- V7 Changes vs V6:
+--   [1]  💨 TakeStam: fire liên tục mọi lúc, không có guard IsFarmingReady, không StopStaminaSpoof
+--   [2]  🛡️ Block fix: pause noclip TRONG block window, block ngắn (0.5s), release trước khi attack
+--   [3]  ⬇️ Descent fix: chỉ cap Y dương (+Y lên), Y âm (xuống) không cap → hạ nhanh mượt
+--   [4]  🗡️ Attack: MAX_COMBO=5, strikeDelay=0.366 (đúng game speed), poll nhanh hơn
 -- ==========================================
 
 local WebhookURL  = "https://discord.com/api/webhooks/1472994959404564490/D2gxRseTIKywjtkfRV8xvl1ra2fJ5rVRKtmJYIu23LRIXf_4wD6pbuto07WNzD20DVG4"
@@ -474,23 +473,20 @@ fakePlatform.Material     = Enum.Material.SmoothPlastic
 fakePlatform.Parent       = workspace
 
 -- ==========================================
--- [5-A] STAMINA SPOOF — V6 REWRITE
--- V6 Fixes:
---   • Case-insensitive search cho "takestam" (tên thực tế có thể là "TakeStam")
---   • Restart spoof sau khi vào dungeon (V5 bug: StopStaminaSpoof() gọi nhưng không restart)
+-- [5-A] STAMINA SPOOF — V7 ALWAYS-ON
+-- V7: Fire liên tục mọi lúc (lobby + dungeon + bất kỳ đâu)
+--   • Không có guard IsFarmingReady → không bao giờ ngừng
+--   • Không gọi StopStaminaSpoof khi vào dungeon nữa
+--   • Case-insensitive fetch giữ nguyên
 --   • Dual-fire + task.defer giữ nguyên
---   • Session guard giữ nguyên
 -- ==========================================
 local Events   = ReplicatedStorage:WaitForChild("Events", 5)
 
--- V6: Helper tìm event case-insensitive
 local function FindEventCI(parent, targetName)
     if not parent then return nil end
     local lower = targetName:lower()
-    -- Thử tìm chính xác trước (nhanh hơn)
     local exact = parent:FindFirstChild(targetName)
     if exact then return exact end
-    -- Fallback: case-insensitive scan
     for _, child in ipairs(parent:GetChildren()) do
         if child.Name:lower() == lower then return child end
     end
@@ -499,56 +495,63 @@ end
 
 local TakeStam = Events and FindEventCI(Events, "takestam")
 
-local isSpoofingStamina = false
-
-local function StartStaminaSpoof()
-    if isSpoofingStamina then return end
-    isSpoofingStamina = true
-    task.spawn(function()
-        while task.wait(0.05) do
-            if not isSpoofingStamina or _G.DungeonScriptID ~= currentScriptID then break end
-            -- V6: Re-fetch case-insensitive nếu nil hoặc rời parent (zone reload)
-            if not TakeStam or not TakeStam.Parent then
-                pcall(function()
-                    local ev = ReplicatedStorage:FindFirstChild("Events")
-                    if ev then TakeStam = FindEventCI(ev, "takestam") end
-                end)
-            end
-            if TakeStam and TakeStam.Parent then
-                pcall(function() TakeStam:FireServer(0.545, "dash") end)
-                task.defer(function()
-                    pcall(function()
-                        if TakeStam and TakeStam.Parent then
-                            TakeStam:FireServer(0.545, "dash")
-                        end
-                    end)
-                end)
-            end
+-- V7: Chạy 1 lần duy nhất, không bao giờ stop, không cần Start/Stop
+task.spawn(function()
+    while _G.DungeonScriptID == currentScriptID do
+        -- Re-fetch nếu bị nil (zone reload)
+        if not TakeStam or not TakeStam.Parent then
+            pcall(function()
+                local ev = ReplicatedStorage:FindFirstChild("Events")
+                if ev then TakeStam = FindEventCI(ev, "takestam") end
+            end)
         end
-        isSpoofingStamina = false
-    end)
-end
+        if TakeStam and TakeStam.Parent then
+            pcall(function() TakeStam:FireServer(0.545, "dash") end)
+            task.defer(function()
+                pcall(function()
+                    if TakeStam and TakeStam.Parent then
+                        TakeStam:FireServer(0.545, "dash")
+                    end
+                end)
+            end)
+        end
+        task.wait(0.05)
+    end
+end)
 
-local function StopStaminaSpoof()
-    isSpoofingStamina = false
-end
-
-StartStaminaSpoof()
+-- Stub: giữ lại để không bị lỗi nếu code cũ gọi
+local function StartStaminaSpoof() end
+local function StopStaminaSpoof() end
 
 -- ==========================================
--- [5-B] SKILL BLOCK TRIGGER (V4 NEW)
--- Thay thế auto block loop.
--- Chỉ kích hoạt khi detect Firefly / Hiken.
--- Giữ F và fire BlockEvent trong `duration` giây rồi tự nhả.
+-- [5-B] SKILL BLOCK TRIGGER — V7 NOCLIP-SAFE
+-- V7 Fix: block + noclip = kick
+--   • Set _G.NoclipPaused = true TRƯỚC khi block → noclip loop dừng force CanCollide=false
+--   • Restore CanCollide = true cho toàn char trước khi gửi block event
+--   • Block ngắn 0.5s thay vì 2.5s (đủ để parry, không bị noclip lâu)
+--   • Release block → _G.NoclipPaused = false → noclip tự resume
 -- ==========================================
 local function TriggerSkillBlock(weaponName, duration)
-    if _G.SkillBlocking then return end  -- Đang block rồi, bỏ qua
-    _G.SkillBlocking = true
-    SkillBlockUntil  = tick() + (duration or 2.5)
+    if _G.SkillBlocking then return end
+    _G.SkillBlocking  = true
+    _G.NoclipPaused   = true   -- V7: báo noclip loop dừng ngay
+    SkillBlockUntil   = tick() + (duration or 0.5)
 
     task.spawn(function()
         pcall(function()
-            local BlockEvent = ReplicatedStorage:WaitForChild("Events", 3):WaitForChild("Block", 3)
+            -- Step 1: Restore CanCollide TRƯỚC khi block
+            -- (nếu giữ noclip trong khi server thấy block state → kick)
+            local char = Player.Character
+            if char then
+                for _, p in ipairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") then pcall(function() p.CanCollide = true end) end
+                end
+            end
+            task.wait(0.02)  -- 1 frame để server nhận trạng thái CanCollide = true
+
+            -- Step 2: Gửi block event
+            local BlockEvent = ReplicatedStorage:WaitForChild("Events", 3)
+                :WaitForChild("Block", 3)
             if BlockEvent:IsA("RemoteFunction") then
                 BlockEvent:InvokeServer(true, weaponName or "Melee", false)
             else
@@ -556,8 +559,10 @@ local function TriggerSkillBlock(weaponName, duration)
             end
             VIM:SendKeyEvent(true, Enum.KeyCode.F, false, game)
 
-            task.wait(duration or 2.5)
+            -- Step 3: Hold block ngắn
+            task.wait(duration or 0.5)
 
+            -- Step 4: Release block TRƯỚC khi noclip resume
             if BlockEvent:IsA("RemoteFunction") then
                 BlockEvent:InvokeServer(false, weaponName or "Melee", false)
             else
@@ -566,8 +571,10 @@ local function TriggerSkillBlock(weaponName, duration)
             VIM:SendKeyEvent(false, Enum.KeyCode.F, false, game)
         end)
         _G.SkillBlocking = false
+        _G.NoclipPaused  = false  -- V7: noclip resume sau khi block đã release
+        print("🛡️ Block release xong → noclip resume")
     end)
-    print("🛡️ TriggerSkillBlock:", weaponName, "→", duration, "s")
+    print("🛡️ TriggerSkillBlock:", weaponName, "→", duration or 0.5, "s (noclip paused)")
 end
 
 -- ==========================================
@@ -1556,19 +1563,34 @@ task.spawn(function()
                     IsReadyToAttack   = false
                     CurrentTargetRoot = nil
                     if tick() > DodgeTimer then
-                        ZoneState          = PreviousZoneState or "ATTACKING"
                         CurrentHazard.Type = "None"
-                        -- FIX 1: general AoE → BLOCK sau khi dodge xong
+                        -- V7: ArrowLightning / AoE → block ngắn 0.5s, noclip paused trong block
+                        -- Sau khi block release xong mới set ZoneState → attack
                         if _currentDodgeIsAoe then
                             _currentDodgeIsAoe = false
                             local char2 = Player.Character
                             local wpn2  = char2 and char2:FindFirstChildOfClass("Tool")
-                            TriggerSkillBlock(wpn2 and wpn2.Name or "Melee", 2.5)
-                            print("🛡️ BLOCK sau AoE dodge")
+                            TriggerSkillBlock(wpn2 and wpn2.Name or "Melee", 0.5)
+                            -- ZoneState quay lại SAU KHI block release (0.5s + 0.02s overhead)
+                            -- Dùng timer nhỏ thay vì task.wait trong main loop
+                            DodgeTimer = tick() + 0.6  -- đợi block xong rồi mới attack
+                            print("🛡️ BLOCK 0.5s → sẽ attack sau 0.6s")
+                        else
+                            ZoneState = PreviousZoneState or "ATTACKING"
+                            print("✅ DODGE xong → quay lại:", ZoneState)
                         end
-                        print("✅ DODGE xong → quay lại:", ZoneState)
+                    elseif _currentDodgeIsAoe and _G.SkillBlocking == false and ZoneState == "DODGING"
+                    and tick() > DodgeTimer then
+                        -- Block đã release → resume
+                        ZoneState = PreviousZoneState or "ATTACKING"
+                        print("✅ Block release xong → attack")
                     else
                         return
+                    end
+                    -- Kiểm tra thêm: nếu DodgeTimer đã qua và không còn block → resume
+                    if ZoneState == "DODGING" and tick() > DodgeTimer and not _G.SkillBlocking then
+                        ZoneState = PreviousZoneState or "ATTACKING"
+                        print("✅ Resume attack sau block")
                     end
                 end
 
@@ -1706,20 +1728,19 @@ end)
 -- ==========================================
 
 -- ==========================================
--- [17] AUTO ATTACK — V6 STABLE + CLEAN
--- V6 Changes vs V5:
---   • enemiesToHit: chỉ push eRoot (BasePart) thay vì push cả eRoot + m (double)
---     → tránh server process target list lỗi
---   • Combo: reset về 1 khi anim nil (đã đúng) + thêm MAX_COMBO guard
---   • fired stamp: chỉ stamp khi thực sự có target → retry ngay khi không có enemy
---   • poll: giữ 0.015s
+-- [17] AUTO ATTACK — V7 CORRECT SPEED + COMBO
+-- V7 Changes vs V6:
+--   • MAX_COMBO = 5 (đúng game combo count)
+--   • strikeDelay = 0.366s (đúng game attack speed, V5 dùng 0.22 quá nhanh)
+--   • comboResetDelay = 0.6s giữ nguyên
+--   • Không double-push target list (giữ từ V6)
 -- ==========================================
 task.spawn(function()
     local CombatRegister   = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
     local CombatAnimFolder = ReplicatedStorage:WaitForChild("CombatAnimations")
     local currentCombo     = 1
-    local MAX_COMBO        = 6     -- V6: guard — reset nếu combo vượt quá (tránh loop vô tận)
-    local strikeDelay      = 0.22
+    local MAX_COMBO        = 5      -- V7: đúng game combo (5 hit)
+    local strikeDelay      = 0.366  -- V7: đúng game attack speed
     local comboResetDelay  = 0.6
     local _lastFireTime    = 0
 
@@ -1871,11 +1892,14 @@ local function _startBackupNoclip()
     local myGen = _backupNoclipGen
     task.spawn(function()
         while _G.AutoDungeon and _G.DungeonScriptID == currentScriptID and myGen == _backupNoclipGen do
-            local char = Player.Character
-            if char and IsFarmingReady then
-                if char ~= _noclipCharRef then _rebuildNoclipCache(char) end
-                for _, p in ipairs(_noclipParts) do
-                    if p and p.Parent then p.CanCollide = false end
+            -- V7: dừng noclip trong khi block (block + noclip = kick)
+            if not _G.NoclipPaused then
+                local char = Player.Character
+                if char and IsFarmingReady then
+                    if char ~= _noclipCharRef then _rebuildNoclipCache(char) end
+                    for _, p in ipairs(_noclipParts) do
+                        if p and p.Parent then p.CanCollide = false end
+                    end
                 end
             end
             task.wait(0.05)
@@ -1920,8 +1944,9 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
         end
 
         -- Noclip: dùng cache, rebuild chỉ khi char đổi
+        -- V7: skip noclip khi đang block (_G.NoclipPaused) để tránh block+noclip=kick
         local now = tick()
-        if now - _noclipLastApply >= NOCLIP_APPLY_INTERVAL then
+        if not _G.NoclipPaused and now - _noclipLastApply >= NOCLIP_APPLY_INTERVAL then
             _noclipLastApply = now
             if char ~= _noclipCharRef then _rebuildNoclipCache(char) end
             for _, v in ipairs(_noclipParts) do
@@ -2193,9 +2218,14 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
                 local direction  = (activeTargetPos - currentPos).Unit
                 local stepVec    = direction * math.min(cappedStep, dist)
 
-                -- V6 FIX: Cap Y axis riêng để tránh "Y Axis too fast" anticheat
-                -- Anticheat threshold ~47 studs/s; tại 60fps → 0.78 studs/frame max
-                local cappedStepY = math.clamp(stepVec.Y, -MAX_STEP_Y_PER_FRAME, MAX_STEP_Y_PER_FRAME)
+                -- V7 FIX: Chỉ cap Y DƯƠNG (đi lên) — anticheat chỉ flag "+Y Axis too fast"
+                -- Y âm (hạ xuống) không cần cap → hạ nhanh mượt, không giật
+                local cappedStepY
+                if stepVec.Y > 0 then
+                    cappedStepY = math.min(stepVec.Y, MAX_STEP_Y_PER_FRAME)
+                else
+                    cappedStepY = stepVec.Y  -- xuống: tự do
+                end
                 newPos = Vector3.new(
                     currentPos.X + stepVec.X,
                     currentPos.Y + cappedStepY,
