@@ -2074,6 +2074,18 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
     local hum  = char and char:FindFirstChild("Humanoid")
     if not char or not char.Parent then return end
 
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") and part.CanCollide then
+            part.CanCollide = false
+        end
+    end
+    
+    -- Giữ cứng bệ đỡ tàng hình (chống lọt map)
+    local fakePlatform = workspace:FindFirstChild("CupidFakePlatform")
+    if fakePlatform then
+        fakePlatform.CanCollide = true
+    end
+
     pcall(function()
         _G.canuse  = true
         _G.midM1   = false
