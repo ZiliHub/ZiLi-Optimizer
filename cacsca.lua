@@ -1491,7 +1491,13 @@ task.spawn(function()
                     end
                     return
                 else
-                    if ZoneState == "ABSORBING_CURSE" then ZoneState = PreviousZoneState or "FLYING" end
+                    if ZoneState == "ABSORBING_CURSE" then
+                        -- V7 FIX: Reset smoothPos khi thoát ABSORBING_CURSE ở zone 7
+                        -- Nhân vật đang ở mặt đất → cần reinit underground smooth descent
+                        _smoothPos = nil
+                        _undergroundCurrentY = nil  -- force re-lerp xuống underground
+                        ZoneState = PreviousZoneState or "FLYING"
+                    end
                 end
 
                 -- ── SKILL_BLOCKING đã được xử lý background trong TriggerSkillBlock
@@ -1852,11 +1858,16 @@ task.spawn(function()
                     if root and root.Anchored then root.Anchored = false end
                     if root then
                         for _, v in pairs(root:GetChildren()) do
+                            -- V7 FIX: bảo vệ CVFD_AntiGravity — KHÔNG destroy
+                            -- V5/V6 bug: destroy ALL BodyVelocity mỗi 0.1s → anti-grav bị xóa → character rơi/xoay
+                            if v.Name == _antiGravName then continue end
                             if v:IsA("BodyVelocity") or v:IsA("BodyForce") or v:IsA("BodyPosition")
                             or v:IsA("LinearVelocity") or v:IsA("VectorForce") or v:IsA("AlignPosition") then
                                 v:Destroy()
                             end
                         end
+                        -- Reset RotVelocity liên tục để tránh spin sau block
+                        root.RotVelocity = Vector3.zero
                     end
                 end
             end)
@@ -1911,9 +1922,49 @@ end
 _startBackupNoclip()
 
 -- Restart backup loop khi character respawn
-Player.CharacterAdded:Connect(function()
-    _noclipCharRef = nil  -- force rebuild
+-- V7 FIX: game 1 mạng → khi Humanoid.Died, dừng toàn bộ automation ngay
+local function OnCharacterDied()
+    print("💀 Character died → dừng toàn bộ automation")
+    _G.AutoDungeon       = false
+    IsFarmingReady       = false
+    IsReadyToAttack      = false
+    _G.SkillBlocking     = false
+    _G.NoclipPaused      = false
+    _G.IsProcessingFruit = false
+    CurrentTargetRoot    = nil
+    TargetCFrame         = nil
+    ZoneState            = "FLYING"
+    -- Cleanup platform
+    if fakePlatform and fakePlatform.Parent then
+        fakePlatform.CFrame = CFrame.new(0, -9999, 0)
+    end
+    -- Xóa anti-grav ngay
+    local char = Player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then _removeAntiGrav(root) end
+end
+
+-- Hook vào character hiện tại
+local function HookCharacterDeath(char)
+    if not char then return end
+    local hum = char:FindFirstChild("Humanoid")
+        or char:WaitForChild("Humanoid", 5)
+    if hum then
+        hum.Died:Connect(OnCharacterDied)
+    end
+end
+
+-- Hook ngay với character đang có
+HookCharacterDeath(Player.Character)
+
+Player.CharacterAdded:Connect(function(newChar)
+    _noclipCharRef = nil  -- force rebuild noclip cache
     _startBackupNoclip()
+    -- Hook death cho character mới
+    HookCharacterDeath(newChar)
+    -- V7: Game 1 mạng → CharacterAdded nghĩa là respawn sau chết
+    -- KHÔNG tự động restart dungeon — người dùng phải chủ động re-run script
+    -- (AutoDungeon đã = false từ OnCharacterDied)
 end)
 
 _G.CupidStepped = RunService.Stepped:Connect(function()
@@ -2114,8 +2165,10 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
 
     -- ── UNDERGROUND Y LERP ────────────────────────────────────────────
     -- Zone 7+8: Y target = mob.Y - UNDERGROUND_DEPTH (hoặc sâu hơn khi dodging Enkai)
+    -- V7 FIX: KHÔNG tính undergroundY khi ABSORBING_CURSE → cho phép lên nhặt lava curse
     local undergroundY = nil
-    if _isUndergroundMode then
+    local _skipUnderground = (ZoneState == "ABSORBING_CURSE")
+    if _isUndergroundMode and not _skipUnderground then
         local refY = nil
         if CurrentTargetRoot and CurrentTargetRoot.Parent then
             refY = CurrentTargetRoot.Position.Y
@@ -2133,7 +2186,6 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
             end
             local yDiff   = targetUnderY - _undergroundCurrentY
             local maxStep = UNDERGROUND_LERP_SPEED * math.min(dt, MAX_DT)
-            -- Exponential approach: nhanh khi xa, chậm khi gần → cực mượt
             local expStep = math.abs(yDiff) * (1 - math.exp(-10 * math.min(dt, MAX_DT)))
             local step    = math.min(math.max(expStep, 0.01), maxStep)
             _undergroundCurrentY = math.abs(yDiff) <= 0.05
@@ -2142,10 +2194,11 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
             undergroundY = _undergroundCurrentY
         end
     else
-        if _undergroundCurrentY ~= nil then
+        if _undergroundCurrentY ~= nil and not _isUndergroundMode then
             _undergroundCurrentY = nil
-            _smoothPos = nil  -- reset smooth pos khi thoát underground
+            _smoothPos = nil
         end
+        -- Khi ABSORBING_CURSE: giữ _undergroundCurrentY nhưng không dùng làm target Y
     end
 
     -- ── TARGET POSITION ───────────────────────────────────────────────
@@ -2160,7 +2213,12 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
             activeTargetPos = Vector3.new(mobX, mobY + AttackOffset, mobZ)
         end
     elseif TargetCFrame then
-        if undergroundY and ZoneState ~= "DODGING" then
+        -- V7 FIX Bug1: ABSORBING_CURSE và DODGING (ArrowLightning) → dùng TargetCFrame.Position thật
+        -- không override Y về undergroundY để:
+        --   [1] Lava curse: nhân vật lên mặt đất nhặt curse
+        --   [2] ArrowLightning dodge: chỉ né ngang, Y giữ nguyên
+        local bypassUnderY = (ZoneState == "DODGING") or (ZoneState == "ABSORBING_CURSE")
+        if undergroundY and not bypassUnderY then
             local tp = TargetCFrame.Position
             activeTargetPos = Vector3.new(tp.X, undergroundY, tp.Z)
         else
@@ -2206,8 +2264,21 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
                    - Vector3.new(_smoothPos.X, 0, _smoothPos.Z)).Unit * xzStep
                 or Vector3.new(activeTargetPos.X, 0, activeTargetPos.Z)
 
-            -- Y: đã xử lý bởi undergroundY lerp ở trên — dùng trực tiếp
-            _smoothPos = Vector3.new(newXZ.X, undergroundY or _smoothPos.Y, newXZ.Z)
+            -- Y: V7 FIX Bug2 — khi DODGING (ArrowLightning) chỉ né ngang, Y = activeTargetPos.Y
+            -- không force về undergroundY → tránh nhân vật đi lên/xuống khi dodge
+            -- Tương tự ABSORBING_CURSE: lên mặt đất nhặt lava
+            local useY
+            if ZoneState == "DODGING" or ZoneState == "ABSORBING_CURSE" then
+                -- Lerp Y về activeTargetPos.Y (giữ nguyên Y hoặc đến lava Y)
+                local targetY  = activeTargetPos.Y
+                local currentY = _smoothPos.Y
+                local yDiff    = targetY - currentY
+                local yStep    = math.min(math.abs(yDiff), UNDERGROUND_LERP_SPEED * math.min(dt, MAX_DT))
+                useY = math.abs(yDiff) <= 0.1 and targetY or (currentY + math.sign(yDiff) * yStep)
+            else
+                useY = undergroundY or _smoothPos.Y
+            end
+            _smoothPos = Vector3.new(newXZ.X, useY, newXZ.Z)
             newPos     = _smoothPos
 
         else
