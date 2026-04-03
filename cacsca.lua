@@ -1839,7 +1839,9 @@ task.spawn(function()
                     if hum then
                         hum.PlatformStand = false
                         hum.Sit           = false
-                        hum.AutoRotate    = true
+                        -- V7 FIX: AutoRotate = false khi đang farm
+                        -- AutoRotate = true → humanoid tự xoay về hướng velocity → conflict với CFrame manual → spinning
+                        hum.AutoRotate    = not IsFarmingReady
                         local state = hum:GetState()
                         if state == Enum.HumanoidStateType.Ragdoll
                         or state == Enum.HumanoidStateType.FallingDown
@@ -2239,12 +2241,12 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         -- ── ROTATION ─────────────────────────────────────────────────
         if IsReadyToAttack then
             if _isUndergroundMode then
-                -- Zone 7+8 underground: đứng thẳng, mặt hướng mob theo XZ
+                -- Zone 7+8 underground: mặt hướng mob theo XZ
                 if CurrentTargetRoot and CurrentTargetRoot.Parent then
                     local flat = Vector3.new(
                         CurrentTargetRoot.Position.X - newPos.X, 0,
                         CurrentTargetRoot.Position.Z - newPos.Z)
-                    if flat.Magnitude > 0.1 then
+                    if flat.Magnitude > 0.5 then
                         root.CFrame = CFrame.new(newPos, newPos + flat.Unit)
                     else
                         root.CFrame = CFrame.new(newPos) * root.CFrame.Rotation
@@ -2254,38 +2256,34 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
                 end
             else
                 -- Zone thường (bay): giữ nguyên -90 tilt để attack đúng hướng
+                -- V7 FIX: Chỉ lấy yaw hiện tại, giữ nguyên, không tính lại mỗi frame
                 local _, currentYaw, _ = root.CFrame:ToOrientation()
                 root.CFrame = CFrame.new(newPos)
                     * CFrame.Angles(0, currentYaw, 0)
                     * CFrame.Angles(math.rad(-90), 0, 0)
             end
+            -- V7 FIX: XOÁ root.Velocity và hum:Move hoàn toàn
+            -- root.Velocity = LookVector * WalkSpeed → xung đột BodyVelocity anti-grav → jitter
+            -- hum:Move(0.01, 0, 0.01) → humanoid cố xoay về hướng northeast mỗi frame → spinning
+            -- BodyVelocity đã handle anti-gravity, không cần set velocity thủ công
+            root.RotVelocity = Vector3.new(0, 0, 0)
         else
+            -- Đang di chuyển đến target: lerp rotation
+            -- V7 FIX: dùng newPos thay vì currentPos → direction đúng sau khi move
+            -- Dead zone 1.5 studs: tránh flip khi đã gần target
             local flatDir = Vector3.new(
-                activeTargetPos.X - currentPos.X, 0,
-                activeTargetPos.Z - currentPos.Z)
-            if flatDir.Magnitude > 0.01 then
-                -- Zone 7+8: lerp rotation chậm hơn để không xoay giật
+                activeTargetPos.X - newPos.X, 0,
+                activeTargetPos.Z - newPos.Z)
+            if flatDir.Magnitude > 1.5 then
                 local rotSpeed   = _isUndergroundMode and 8 or 12
                 local lerpFactor = 1 - math.exp(-rotSpeed * effectiveDt)
                 local targetRot  = CFrame.lookAt(newPos, newPos + flatDir.Unit)
                 local smoothRot  = root.CFrame:Lerp(targetRot, lerpFactor).Rotation
                 root.CFrame = CFrame.new(newPos) * smoothRot
             else
+                -- Đã đến gần target: chỉ update position, giữ nguyên rotation
                 root.CFrame = CFrame.new(newPos) * root.CFrame.Rotation
             end
-        end
-
-        if IsReadyToAttack and ZoneState ~= "ABSORBING_CURSE" then
-            if hum then
-                root.Velocity = Vector3.new(
-                    root.CFrame.LookVector.X * hum.WalkSpeed, 0,
-                    root.CFrame.LookVector.Z * hum.WalkSpeed)
-            end
-            root.RotVelocity = Vector3.new(0, 0, 0)
-            pcall(function()
-                if hum then hum:Move(Vector3.new(0.01, 0, 0.01), false) end
-                if _footstepEvent then _footstepEvent:FireServer() end
-            end)
         end
     else
         -- Không có target: reset smooth pos + xóa anti-gravity
