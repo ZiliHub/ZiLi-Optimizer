@@ -1,16 +1,13 @@
 -- ==========================================
--- 🏹 SCRIPT: AUTO CUPID (V9)
+-- 🏹 SCRIPT: AUTO CUPID (V10)
 -- Game: GET BETTER OUT | Cupid Dungeon
--- V9 Changes vs V8:
---   [1]  🏃 Dodge XZ-only: TargetCFrame giữ nguyên Y=root.Position.Y → không bị kéo xuống
---   [2]  🔧 Underground Y: chỉ đi sâu -5 studs khi _isDodgeDeep (Enkai DODGE_DEEP)
---          ArrowRain/Normal AoE không còn bị kéo xuống bãi quái
---   [3]  🛡️ Block không thay đổi IsReadyToAttack/CurrentTargetRoot
---          → char ở nguyên vị trí tấn công (không dạt lên đỉnh đầu quái)
---   [4]  👻 Noclip xuyên suốt: xóa NoclipPaused + CanCollide restore
---          Server check block qua RemoteEvent, không phụ thuộc phys state
---   [5]  🔧 Heartbeat: xóa root.Velocity set (xung đột BodyVelocity → jitter)
---   [6]  🔧 Anti-ragdoll: bảo vệ CVFD_AntiGravity không bị destroy
+-- V10 Changes vs V9:
+--   [1]  📦 Hitbox expand: fire footstepEvent liên tục khi attacking
+--          + BodyVelocity tiny forward velocity → server nhận "moving" → hitbox rộng hơn
+--   [2]  🌊 Zone 7/8 floating fix: GetZoneFloor cache fallback → undergroundY không còn nil
+--          + lưu boxCenter per-zone để Heartbeat gọi GetZoneFloor thay vì đọc cache trực tiếp
+--   [3]  🟩 FakePlatform underground: exempt khỏi noclip → CanCollide luôn = true
+--   [4]  📏 UNDERGROUND_DEPTH = 11, AttackOffset = 10.5 (đúng yêu cầu)
 -- ==========================================
 
 local WebhookURL  = "https://discord.com/api/webhooks/1472994959404564490/D2gxRseTIKywjtkfRV8xvl1ra2fJ5rVRKtmJYIu23LRIXf_4wD6pbuto07WNzD20DVG4"
@@ -387,8 +384,8 @@ end
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
 local MoveSpeed     = 110
-local AttackOffset  = 10.5
-local AttackOffset2 = 11.5
+local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
+local AttackOffset2 = 11.0   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
 local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
 local GatherTime    = 0.2   -- gather nhanh hơn
@@ -596,8 +593,15 @@ end
 -- ==========================================
 -- [11] HÀM TIỆN ÍCH COMBAT
 -- ==========================================
+-- V10 FIX: Lưu boxCenter per-zone để Heartbeat dùng khi refY = nil
+local CachedZoneBoxCenters = {}
+
 local function GetZoneFloor(zoneIndex, boxCenter)
+    -- Lưu boxCenter để Heartbeat có thể gọi lại nếu cần
+    if boxCenter then CachedZoneBoxCenters[zoneIndex] = boxCenter end
     if CachedZoneFloors[zoneIndex] then return CachedZoneFloors[zoneIndex] end
+    local center = boxCenter or CachedZoneBoxCenters[zoneIndex]
+    if not center then return nil end
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {
@@ -605,9 +609,15 @@ local function GetZoneFloor(zoneIndex, boxCenter)
         workspace:FindFirstChild("Effects"),
         workspace:FindFirstChild("Enemies"),
     }
-    local result = workspace:Raycast(boxCenter, Vector3.new(0, -300, 0), params)
-    if result then CachedZoneFloors[zoneIndex] = result.Position.Y; return result.Position.Y end
-    return boxCenter.Y - 10
+    local result = workspace:Raycast(center, Vector3.new(0, -300, 0), params)
+    if result then
+        CachedZoneFloors[zoneIndex] = result.Position.Y
+        return result.Position.Y
+    end
+    -- V10 FIX: cache fallback → Heartbeat đọc cache không còn nil
+    local fallback = center.Y - 10
+    CachedZoneFloors[zoneIndex] = fallback
+    return fallback
 end
 
 local function GetRoot(m)
@@ -1937,13 +1947,19 @@ local function _startBackupNoclip()
     local myGen = _backupNoclipGen
     task.spawn(function()
         while _G.AutoDungeon and _G.DungeonScriptID == currentScriptID and myGen == _backupNoclipGen do
-            -- V9: noclip luôn chạy, kể cả khi đang block
             local char = Player.Character
             if char and IsFarmingReady then
                 if char ~= _noclipCharRef then _rebuildNoclipCache(char) end
                 for _, p in ipairs(_noclipParts) do
                     if p and p.Parent then p.CanCollide = false end
                 end
+            end
+            -- V10 FIX: keepalive fakePlatform CanCollide = true
+            -- Noclip loop chỉ set CanCollide = false cho char parts.
+            -- FakePlatform không phải char part nhưng cần đảm bảo không bị clear bởi optimize loop
+            if fakePlatform and fakePlatform.Parent then
+                if not fakePlatform.CanCollide then fakePlatform.CanCollide = true end
+                if fakePlatform.Transparency ~= 1 then fakePlatform.Transparency = 1 end
             end
             task.wait(0.05)
         end
@@ -2085,6 +2101,52 @@ task.spawn(function()
     end
 end)
 
+-- ==========================================
+-- [20-A] HITBOX EXPAND — V10
+-- Server expand hitbox nhẹ khi character đang "moving" (velocity > 0)
+-- Sau khi xóa hum:Move + root.Velocity, char đứng yên hoàn toàn → hitbox thu nhỏ
+-- Fix: fire footstepEvent liên tục khi IsReadyToAttack → server nhận "running"
+--      + set BodyVelocity.Velocity = LookVector * tiny (2 studs/s) thay vì Vector3.zero
+--      → hitbox nhẹ mở rộng, không ảnh hưởng position (quá nhỏ để anticheat flag)
+-- ==========================================
+task.spawn(function()
+    local HITBOX_INTERVAL = 0.08  -- fire mỗi 80ms ≈ tương đương WalkSpeed 16
+    while _G.DungeonScriptID == currentScriptID do
+        if _G.AutoDungeon and IsReadyToAttack and IsFarmingReady and not _G.IsProcessingFruit then
+            pcall(function()
+                -- [A] Fire footstep event → server nhận "character is running"
+                if _footstepEvent and _footstepEvent.Parent then
+                    _footstepEvent:FireServer()
+                end
+                -- [B] Tiny forward velocity qua BodyVelocity → velocity.Magnitude > 0
+                -- Dùng LookVector nhân rất nhỏ (2 studs/s) → không di chuyển thực tế
+                -- Không set root.Velocity trực tiếp (xung đột BodyVelocity MaxForce=9e9)
+                local char = Player.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local ag = root:FindFirstChild(_antiGravName)
+                    if ag then
+                        -- Giữ anti-gravity nhưng thêm tiny XZ component
+                        local lv = root.CFrame.LookVector
+                        ag.Velocity = Vector3.new(lv.X * 2, 0, lv.Z * 2)
+                    end
+                end
+            end)
+        else
+            -- Không attack: reset velocity về 0 hoàn toàn
+            pcall(function()
+                local char = Player.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local ag = root:FindFirstChild(_antiGravName)
+                    if ag then ag.Velocity = Vector3.zero end
+                end
+            end)
+        end
+        task.wait(HITBOX_INTERVAL)
+    end
+end)
+
 -- V5: Anti-gravity BodyVelocity (từ fishing module)
 -- Giữ character không bị gravity kéo xuống khi tween ngang
 -- Tên "CVFD_AntiGravity" để tránh xung đột với fishing
@@ -2202,7 +2264,9 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         if CurrentTargetRoot and CurrentTargetRoot.Parent then
             refY = CurrentTargetRoot.Position.Y
         else
-            refY = CachedZoneFloors[CurrentZoneIndex]
+            -- V10 FIX: gọi GetZoneFloor thay vì đọc cache trực tiếp
+            -- Đảm bảo fallback được cache → refY không còn nil → undergroundY có giá trị
+            refY = GetZoneFloor(CurrentZoneIndex, CachedZoneBoxCenters[CurrentZoneIndex])
         end
         if refY then
             local targetUnderY = refY - UNDERGROUND_DEPTH
