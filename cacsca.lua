@@ -1,11 +1,18 @@
 -- ==========================================
--- 🏹 SCRIPT: AUTO CUPID (V7 - IMPROVE)
+-- 🏹 SCRIPT: AUTO CUPID (V8 - IMPROVE)
 -- Game: GET BETTER OUT | Cupid Dungeon
--- V7 Changes vs V6:
---   [1]  💨 TakeStam: fire liên tục mọi lúc, không có guard IsFarmingReady, không StopStaminaSpoof
---   [2]  🛡️ Block fix: pause noclip TRONG block window, block ngắn (0.5s), release trước khi attack
---   [3]  ⬇️ Descent fix: chỉ cap Y dương (+Y lên), Y âm (xuống) không cap → hạ nhanh mượt
---   [4]  🗡️ Attack: MAX_COMBO=5, strikeDelay=0.366 (đúng game speed), poll nhanh hơn
+-- V8 Changes vs V7:
+--   [1]  🔄 Block spin fix: park fakePlatform trước khi restore CanCollide
+--          → không còn bounce collision → không sinh RotVelocity
+--   [2]  🔄 Block spin fix: spam RotVelocity=0 + AssemblyAngularVelocity=0
+--          5× trong 0.15s ngay sau khi nhả block key
+--   [3]  🔄 Block spin fix: reset RotVelocity mỗi frame TRONG block window
+--          (Heartbeat SkillBlocking branch) để không accumulate
+--   [4]  ⚡ ArrowRain: dodge xa 80 studs, KHÔNG block sau (đúng theo yêu cầu)
+--   [5]  ⚡ Lightning: đứng tại chỗ hold block 1.5s, KHÔNG dodge
+--          → thêm branch action=="BLOCK" trong DODGE TRIGGER
+--   [6]  🧹 Xóa dead code branch "ArrowLightning" (type này không bao giờ được set)
+--   [7]  🧹 DODGING state machine: đơn giản hóa, xóa elseif không bao giờ trigger
 -- ==========================================
 
 local WebhookURL  = "https://discord.com/api/webhooks/1472994959404564490/D2gxRseTIKywjtkfRV8xvl1ra2fJ5rVRKtmJYIu23LRIXf_4wD6pbuto07WNzD20DVG4"
@@ -534,22 +541,35 @@ local function StopStaminaSpoof() end
 local function TriggerSkillBlock(weaponName, duration)
     if _G.SkillBlocking then return end
     _G.SkillBlocking  = true
-    _G.NoclipPaused   = true   -- V7: báo noclip loop dừng ngay
+    _G.NoclipPaused   = true   -- báo noclip loop dừng ngay
     SkillBlockUntil   = tick() + (duration or 0.5)
 
     task.spawn(function()
         pcall(function()
-            -- Step 1: Restore CanCollide TRƯỚC khi block
-            -- (nếu giữ noclip trong khi server thấy block state → kick)
+            -- ── Step 1: Park fakePlatform TRƯỚC khi restore CanCollide ──────
+            -- Root cause spin: fakePlatform.CanCollide=true + character parts CanCollide=true
+            -- → character chạm platform ngay bên dưới → impulse → RotVelocity spike → spin
+            -- Fix: đẩy platform ra xa trong suốt block window, bring back sau khi release
+            if fakePlatform and fakePlatform.Parent then
+                fakePlatform.CFrame = CFrame.new(0, -9999, 0)
+            end
+
+            -- ── Step 2: Restore CanCollide (cần cho server block check) ─────
             local char = Player.Character
+            local charRoot = char and char:FindFirstChild("HumanoidRootPart")
             if char then
                 for _, p in ipairs(char:GetDescendants()) do
                     if p:IsA("BasePart") then pcall(function() p.CanCollide = true end) end
                 end
             end
-            task.wait(0.02)  -- 1 frame để server nhận trạng thái CanCollide = true
+            -- Zero bất kỳ RotVelocity có sẵn TRƯỚC khi block
+            if charRoot then
+                charRoot.RotVelocity = Vector3.zero
+                pcall(function() charRoot.AssemblyAngularVelocity = Vector3.zero end)
+            end
+            task.wait(0.02)
 
-            -- Step 2: Gửi block event
+            -- ── Step 3: Gửi block event + VIM key ───────────────────────────
             local BlockEvent = ReplicatedStorage:WaitForChild("Events", 3)
                 :WaitForChild("Block", 3)
             if BlockEvent:IsA("RemoteFunction") then
@@ -559,22 +579,36 @@ local function TriggerSkillBlock(weaponName, duration)
             end
             VIM:SendKeyEvent(true, Enum.KeyCode.F, false, game)
 
-            -- Step 3: Hold block ngắn
+            -- ── Step 4: Hold block ───────────────────────────────────────────
             task.wait(duration or 0.5)
 
-            -- Step 4: Release block TRƯỚC khi noclip resume
+            -- ── Step 5: Release block ────────────────────────────────────────
             if BlockEvent:IsA("RemoteFunction") then
                 BlockEvent:InvokeServer(false, weaponName or "Melee", false)
             else
                 BlockEvent:FireServer(false, weaponName or "Melee", false)
             end
             VIM:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+
+            -- ── Step 6: Dập tắt spin ngay sau khi nhả block ─────────────────
+            -- VIM F release → game exit block anim → có thể spike RotVelocity
+            -- Spam reset 5× trong 0.15s để chắc chắn không còn angular velocity
+            local r = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+            for i = 1, 5 do
+                if r and r.Parent then
+                    r.RotVelocity = Vector3.zero
+                    pcall(function() r.AssemblyAngularVelocity = Vector3.zero end)
+                end
+                task.wait(0.03)
+            end
         end)
+
+        -- ── Step 7: Resume noclip SAU KHI spin đã clear ─────────────────────
         _G.SkillBlocking = false
-        _G.NoclipPaused  = false  -- V7: noclip resume sau khi block đã release
-        print("🛡️ Block release xong → noclip resume")
+        _G.NoclipPaused  = false
+        print("🛡️ Block release xong → spin cleared → noclip resume")
     end)
-    print("🛡️ TriggerSkillBlock:", weaponName, "→", duration or 0.5, "s (noclip paused)")
+    print("🛡️ TriggerSkillBlock:", weaponName, "→", duration or 0.5, "s")
 end
 
 -- ==========================================
@@ -1288,16 +1322,34 @@ task.spawn(function()
                             if vPos and not IgnoredHazards[v] then
                                 local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
                                 -- V6: phân biệt arrowrain/lightning vs AoE thường
-                                local isArrowOrLightning = name:match("arrow") or name:match("rain") or name:match("lightning")
-                                if (isArrowOrLightning
-                                or name:match("aoe") or name:match("circle") or name:match("bomb")
-                                or name:match("meteor") or name:match("projectile"))
-                                and dist < minDist then
-                                    detectedHazard  = isArrowOrLightning and "ArrowLightning" or "Normal"
-                                    hazardPos       = vPos
-                                    minDist         = dist
-                                    hazardInst      = v
-                                    hazardAction    = "DODGE"
+                                -- TÌM VÀ XÓA ĐOẠN GỘP CHUNG isArrowOrLightning CŨ.
+                                -- THAY BẰNG KHỐI PHÂN TÁCH RÕ RÀNG NÀY:
+
+                                local isArrow = name:match("arrow") or name:match("rain")
+                                local isLightning = name:match("lightning")
+
+                                if isArrow and dist < minDist then
+                                    detectedHazard = "ArrowRain"
+                                    hazardPos = vPos
+                                    minDist = dist
+                                    hazardInst = v
+                                    hazardAction = "DODGE"
+                                    hazardEvadeDist = 80 -- Tăng khoảng cách né ra thật xa
+                                    
+                                elseif isLightning and dist < minDist then
+                                    detectedHazard = "Lightning"
+                                    hazardPos = vPos
+                                    minDist = dist
+                                    hazardInst = v
+                                    hazardAction = "BLOCK" -- Đứng tại chỗ, không dodge
+                                    hazardEvadeDist = 0    -- Không cần di chuyển
+                                    
+                                elseif (name:match("aoe") or name:match("circle") or name:match("bomb") or name:match("meteor") or name:match("projectile")) and dist < minDist then
+                                    detectedHazard = "Normal"
+                                    hazardPos = vPos
+                                    minDist = dist
+                                    hazardInst = v
+                                    hazardAction = "DODGE"
                                     hazardEvadeDist = 40
                                 end
                                 if name:match("lava") and name:match("curse") and dist < 1500 then
@@ -1517,7 +1569,16 @@ task.spawn(function()
                     IsReadyToAttack   = false
                     CurrentTargetRoot = nil
 
-                    if action == "DODGE_DEEP" and _isUndergroundMode then
+                    if action == "BLOCK" then
+                        -- ── Lightning: đứng tại chỗ, hold block ngay, KHÔNG dodge ──
+                        -- Không đổi ZoneState → attack loop tiếp tục sau khi block xong
+                        local char2 = Player.Character
+                        local wpn2  = char2 and char2:FindFirstChildOfClass("Tool")
+                        TriggerSkillBlock(wpn2 and wpn2.Name or "Melee", 1.5)
+                        print("🛡️⚡ Lightning BLOCK: đứng tại chỗ, hold 1.5s")
+
+                    elseif action == "DODGE_DEEP" and _isUndergroundMode then
+                        -- ── Enkai underground: sâu thêm 5 studs ─────────────────────
                         ZoneState = "DODGING"
                         _currentDodgeIsAoe = false
                         local deeperY = (_undergroundCurrentY or root.Position.Y) - 5
@@ -1525,28 +1586,11 @@ task.spawn(function()
                         DodgeTimer = tick() + DODGE_RETURN_WAIT
                         print("⬇️ DODGE_DEEP underground: Enkai → sâu thêm 5 studs, đứng yên", DODGE_RETURN_WAIT, "s")
 
-                    elseif CurrentHazard.Type == "ArrowLightning" then
-                        -- V6 FIX: ArrowRain / Lightning → dodge đúng 2s rồi hold block
-                        ZoneState = "DODGING"
-                        _currentDodgeIsAoe = true  -- luôn block sau khi dodge xong
-
-                        local evadeDir = (root.Position - CurrentHazard.Position)
-                        if evadeDir.Magnitude < 0.1 then
-                            local rand = math.random(0, 3)
-                            evadeDir = ({
-                                Vector3.new(1,0,0), Vector3.new(-1,0,0),
-                                Vector3.new(0,0,1), Vector3.new(0,0,-1)
-                            })[rand+1]
-                        end
-                        local flatDir = Vector3.new(evadeDir.X, 0, evadeDir.Z)
-                        -- Chạy 40 studs nhưng timer cố định 2s (không phụ thuộc MoveSpeed)
-                        DodgeTimer   = tick() + 2.0  -- đúng 2s
-                        TargetCFrame = CFrame.new(root.Position + flatDir.Unit * evadeDist)
-                        print("🏃⚡ DODGE ArrowLightning: 2s → BLOCK sau")
-
                     else
-                        -- DODGE thường
+                        -- ── DODGE thường: ArrowRain (80 studs), Normal AoE (40), BossSkill ──
                         ZoneState = "DODGING"
+                        -- ArrowRain type = "ArrowRain" → (type == "Normal") = false → không block sau
+                        -- Normal AoE type = "Normal" → block sau
                         _currentDodgeIsAoe = (CurrentHazard.Type == "Normal")
 
                         local evadeDir = (root.Position - CurrentHazard.Position)
@@ -1570,33 +1614,25 @@ task.spawn(function()
                     CurrentTargetRoot = nil
                     if tick() > DodgeTimer then
                         CurrentHazard.Type = "None"
-                        -- V7: ArrowLightning / AoE → block ngắn 0.5s, noclip paused trong block
-                        -- Sau khi block release xong mới set ZoneState → attack
                         if _currentDodgeIsAoe then
+                            -- Normal AoE → trigger block ngắn 0.5s sau khi dodge xong
                             _currentDodgeIsAoe = false
                             local char2 = Player.Character
                             local wpn2  = char2 and char2:FindFirstChildOfClass("Tool")
                             TriggerSkillBlock(wpn2 and wpn2.Name or "Melee", 0.5)
-                            -- ZoneState quay lại SAU KHI block release (0.5s + 0.02s overhead)
-                            -- Dùng timer nhỏ thay vì task.wait trong main loop
-                            DodgeTimer = tick() + 0.6  -- đợi block xong rồi mới attack
-                            print("🛡️ BLOCK 0.5s → sẽ attack sau 0.6s")
+                            -- Đợi block duration + overhead rồi mới resume attack
+                            DodgeTimer = tick() + 0.7
+                            print("🛡️ BLOCK 0.5s sau AoE dodge → resume sau 0.7s")
+                        elseif _G.SkillBlocking then
+                            -- Block đang chạy (từ lần trước): chờ thêm
+                            DodgeTimer = tick() + 0.1
                         else
+                            -- Không block hoặc block đã xong → resume attack
                             ZoneState = PreviousZoneState or "ATTACKING"
                             print("✅ DODGE xong → quay lại:", ZoneState)
                         end
-                    elseif _currentDodgeIsAoe and _G.SkillBlocking == false and ZoneState == "DODGING"
-                    and tick() > DodgeTimer then
-                        -- Block đã release → resume
-                        ZoneState = PreviousZoneState or "ATTACKING"
-                        print("✅ Block release xong → attack")
                     else
                         return
-                    end
-                    -- Kiểm tra thêm: nếu DodgeTimer đã qua và không còn block → resume
-                    if ZoneState == "DODGING" and tick() > DodgeTimer and not _G.SkillBlocking then
-                        ZoneState = PreviousZoneState or "ATTACKING"
-                        print("✅ Resume attack sau block")
                     end
                 end
 
@@ -1847,7 +1883,7 @@ task.spawn(function()
                         hum.Sit           = false
                         -- V7 FIX: AutoRotate = false khi đang farm
                         -- AutoRotate = true → humanoid tự xoay về hướng velocity → conflict với CFrame manual → spinning
-                        hum.AutoRotate    = not IsFarmingReady
+                        hum.AutoRotate = false
                         local state = hum:GetState()
                         if state == Enum.HumanoidStateType.Ragdoll
                         or state == Enum.HumanoidStateType.FallingDown
@@ -2213,10 +2249,10 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
             activeTargetPos = Vector3.new(mobX, mobY + AttackOffset, mobZ)
         end
     elseif TargetCFrame then
-        -- V7 FIX Bug1: ABSORBING_CURSE và DODGING (ArrowLightning) → dùng TargetCFrame.Position thật
+        -- V7 FIX Bug1: ABSORBING_CURSE và DODGING → dùng TargetCFrame.Position thật
         -- không override Y về undergroundY để:
         --   [1] Lava curse: nhân vật lên mặt đất nhặt curse
-        --   [2] ArrowLightning dodge: chỉ né ngang, Y giữ nguyên
+        --   [2] ArrowRain/Lightning dodge: chỉ né ngang, Y giữ nguyên
         local bypassUnderY = (ZoneState == "DODGING") or (ZoneState == "ABSORBING_CURSE")
         if undergroundY and not bypassUnderY then
             local tp = TargetCFrame.Position
@@ -2264,7 +2300,7 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
                    - Vector3.new(_smoothPos.X, 0, _smoothPos.Z)).Unit * xzStep
                 or Vector3.new(activeTargetPos.X, 0, activeTargetPos.Z)
 
-            -- Y: V7 FIX Bug2 — khi DODGING (ArrowLightning) chỉ né ngang, Y = activeTargetPos.Y
+            -- Y: V8 FIX — khi DODGING (ArrowRain dodge) chỉ né ngang, Y = activeTargetPos.Y
             -- không force về undergroundY → tránh nhân vật đi lên/xuống khi dodge
             -- Tương tự ABSORBING_CURSE: lên mặt đất nhặt lava
             local useY
@@ -2342,19 +2378,32 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
             -- Đang di chuyển đến target: lerp rotation
             -- V7 FIX: dùng newPos thay vì currentPos → direction đúng sau khi move
             -- Dead zone 1.5 studs: tránh flip khi đã gần target
-            local flatDir = Vector3.new(
-                activeTargetPos.X - newPos.X, 0,
-                activeTargetPos.Z - newPos.Z)
-            if flatDir.Magnitude > 1.5 then
-                local rotSpeed   = _isUndergroundMode and 8 or 12
-                local lerpFactor = 1 - math.exp(-rotSpeed * effectiveDt)
-                local targetRot  = CFrame.lookAt(newPos, newPos + flatDir.Unit)
-                local smoothRot  = root.CFrame:Lerp(targetRot, lerpFactor).Rotation
-                root.CFrame = CFrame.new(newPos) * smoothRot
-            else
-                -- Đã đến gần target: chỉ update position, giữ nguyên rotation
+            -- =======================================================
+            -- THAY THẾ TOÀN BỘ BẰNG ĐOẠN SAU (Bảo vệ triệt để vụ xoay):
+            if _G.SkillBlocking then
+                -- Nếu đang block: chỉ update vị trí, KHÔNG ép xoay để tránh lỗi vật lý
                 root.CFrame = CFrame.new(newPos) * root.CFrame.Rotation
+                -- V8 FIX: reset RotVelocity mỗi frame TRONG block window
+                -- Tránh angular velocity accumulate trong lúc block (gây spin sau release)
+                root.RotVelocity = Vector3.zero
+                pcall(function() root.AssemblyAngularVelocity = Vector3.zero end)
+            else
+                local flatDir = Vector3.new(activeTargetPos.X - newPos.X, 0, activeTargetPos.Z - newPos.Z)
+                if flatDir.Magnitude > 1.5 then
+                    local rotSpeed   = _isUndergroundMode and 8 or 12
+                    local lerpFactor = 1 - math.exp(-rotSpeed * effectiveDt)
+                    local targetRot  = CFrame.lookAt(newPos, newPos + flatDir.Unit)
+                    local smoothRot  = root.CFrame:Lerp(targetRot, lerpFactor).Rotation
+                    root.CFrame = CFrame.new(newPos) * smoothRot
+                else
+                    root.CFrame = CFrame.new(newPos) * root.CFrame.Rotation
+                end
             end
+
+            -- BẮT BUỘC THÊM DÒNG NÀY Ở DƯỚI CÙNG CỦA BLOCK LỆNH MOVE:
+            -- Triệt tiêu hoàn toàn lực xoay vật lý rác sinh ra do va chạm
+            root.RotVelocity = Vector3.new(0, 0, 0)
+            root.Velocity = Vector3.new(0, root.Velocity.Y, 0) -- Chỉ giữ nguyên Y để không rớt
         end
     else
         -- Không có target: reset smooth pos + xóa anti-gravity
