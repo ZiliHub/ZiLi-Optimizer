@@ -402,13 +402,9 @@ local EVADE_BOSS_GENERIC = 100
 -- Underground noclip (zone 7+8)
 -- FIX: dùng mob.Y ± AttackOffset thay vì floorY - depth
 -- → khoảng cách tới mob = AttackOffset (10), giống flying
-local UNDERGROUND_DEPTH     = AttackOffset   -- = 10, đồng nhất với flying
-local UNDERGROUND_DODGE_ADD = 10             -- thêm khi dodge (tổng 20 dưới mob)
+local UNDERGROUND_DEPTH     = AttackOffset + 1.5   -- = 10, đồng nhất với flying
+local UNDERGROUND_DODGE_ADD = 11             -- thêm khi dodge (tổng 20 dưới mob)
 local UNDERGROUND_LERP_SPEED = 80            -- studs/s smooth descent
-
--- Ground AoE (arrow rain, lightning): chui xuống dưới mob thay vì chạy xa
-local GROUND_AOE_DEPTH = 20   -- studs dưới mob.Y khi né ground AoE
-
 -- Giới hạn tween
 local MAX_DT             = 0.1    -- 100ms cap — an toàn hơn ở FPS thấp
 local MAX_STEP_PER_FRAME = 8      -- giảm từ 10 → server ít kick hơn khi FPS < 5
@@ -419,7 +415,8 @@ local MAX_STEP_PER_FRAME = 8      -- giảm từ 10 → server ít kick hơn khi
 local MAX_STEP_Y_PER_FRAME = 0.7  -- studs/frame, phòng "Y Axis too fast" anticheat
 
 -- Thời gian đứng yên sau khi né dodge xong
-local DODGE_RETURN_WAIT = 4  -- giây
+local DODGE_RETURN_WAIT = 1.5  -- giây
+local DODGE_RETURN_WAIT2 = 4
 
 local Zone5Points = {
     Vector3.new(-1166.94, 442.27, -3332.41),
@@ -1574,10 +1571,10 @@ task.spawn(function()
                             ZoneState          = "DODGING"
                             _currentDodgeIsAoe = false
                             _isDodgeDeep       = true   -- V9: chỉ case này mới đi sâu
-                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 5
+                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 25
                             TargetCFrame = CFrame.new(root.Position.X, deeperY, root.Position.Z)
-                            DodgeTimer   = tick() + DODGE_RETURN_WAIT
-                            print("⬇️ DODGE_DEEP: Enkai underground → sâu 5 studs, đứng yên", DODGE_RETURN_WAIT, "s")
+                            DodgeTimer   = tick() + DODGE_RETURN_WAIT2
+                            print("⬇️ DODGE_DEEP: Enkai underground → sâu 5 studs, đứng yên", DODGE_RETURN_WAIT2, "s")
 
                         else
                             -- ── DODGE ngang: ArrowRain (80 studs), Normal AoE (40), BossSkill ──
@@ -1781,7 +1778,7 @@ task.spawn(function()
     local currentCombo     = 1
     local MAX_COMBO        = 5      -- V7: đúng game combo (5 hit)
     local strikeDelay      = 0.366  -- V7: đúng game attack speed
-    local comboResetDelay  = 0.6
+    local comboResetDelay  = 1
     local _lastFireTime    = 0
 
     while _G.DungeonScriptID == currentScriptID do
