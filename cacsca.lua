@@ -383,7 +383,7 @@ end
 -- ==========================================
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
-local MoveSpeed     = 110
+local MoveSpeed     = 100
 local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
 local AttackOffset2 = 10.5   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
