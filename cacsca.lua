@@ -383,9 +383,9 @@ end
 -- ==========================================
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
-local MoveSpeed     = 90
+local MoveSpeed     = 110
 local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
-local AttackOffset2 = 10.5   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
+local AttackOffset2 = 11.0   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
 local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
 local GatherTime    = 0.2   -- gather nhanh hơn
@@ -1142,11 +1142,6 @@ local BossSkillDefs = {
     {pattern = "enkai",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
     {pattern = "en_kai", action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
     {pattern = "entei",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "flame pillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "flame_pillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "flamepillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "pillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "flame",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
 }
 
 -- Instance tên match những pattern này → bỏ qua hoàn toàn (không log, không react)
@@ -1594,7 +1589,7 @@ task.spawn(function()
                             ZoneState          = "DODGING"
                             _currentDodgeIsAoe = false
                             _isDodgeDeep       = true   -- V9: chỉ case này mới đi sâu
-                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 35
+                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 25
                             TargetCFrame = CFrame.new(root.Position.X, deeperY, root.Position.Z)
                             DodgeTimer   = tick() + DODGE_RETURN_WAIT2
                             print("⬇️ DODGE_DEEP: Enkai underground → sâu 5 studs, đứng yên", DODGE_RETURN_WAIT2, "s")
@@ -1662,9 +1657,9 @@ task.spawn(function()
                     local boxCenter = zonePart.Position
                     local floorY    = GetZoneFloor(CurrentZoneIndex, boxCenter)
 
-                    -- Zone 7: đứng dưới lòng đất (underground + noclip)
-                    -- Zone 8 & khác: bay trên đầu mob (floorY + 40 / floorY + 20)
-                    local isUnderground = (CurrentZoneIndex == 7)
+                    -- Zone 7 & 8: đứng dưới lòng đất thay vì bay
+                    -- Zone khác: bay trên đầu mob (floorY + 40 / floorY + 20)
+                    local isUnderground = (CurrentZoneIndex >= 7)
                     local waitPos
                     if isUnderground then
                         waitPos = Vector3.new(boxCenter.X, floorY - UNDERGROUND_DEPTH, boxCenter.Z)
@@ -1970,20 +1965,17 @@ local function _startBackupNoclip()
     _backupNoclipGen = _backupNoclipGen + 1
     local myGen = _backupNoclipGen
     task.spawn(function()
-        while _G.AutoDungeon and _G.DungeonScriptID == currentScriptID and myGen == _backupNoclipGen do
+        while _G.DungeonScriptID == currentScriptID and myGen == _backupNoclipGen do
+            -- V11 FIX: noclip xuyên suốt — bỏ guard IsFarmingReady và AutoDungeon
+            -- Noclip phải chạy mọi lúc kể cả khi load/die/replay
             local char = Player.Character
-            if char and IsFarmingReady then
+            if char then
                 if char ~= _noclipCharRef then _rebuildNoclipCache(char) end
-                -- Noclip chỉ zone 7 (underground) — zone 8 bay trên đầu, không cần
-                if CurrentZoneIndex == 7 then
-                    for _, p in ipairs(_noclipParts) do
-                        if p and p.Parent then p.CanCollide = false end
-                    end
+                for _, p in ipairs(_noclipParts) do
+                    if p and p.Parent then p.CanCollide = false end
                 end
             end
-            -- V10 FIX: keepalive fakePlatform CanCollide = true
-            -- Noclip loop chỉ set CanCollide = false cho char parts.
-            -- FakePlatform không phải char part nhưng cần đảm bảo không bị clear bởi optimize loop
+            -- Keepalive fakePlatform CanCollide = true
             if fakePlatform and fakePlatform.Parent then
                 if not fakePlatform.CanCollide then fakePlatform.CanCollide = true end
                 if fakePlatform.Transparency ~= 1 then fakePlatform.Transparency = 1 end
@@ -2019,6 +2011,7 @@ end
 
 -- Hook vào character hiện tại
 local _zone8EvadeDebounce = false
+local _zone8EvadeLocked   = false  -- lock underground lerp trong khi evading
 local function HookCharacterDeath(char)
     if not char then return end
     local hum = char:FindFirstChild("Humanoid")
@@ -2027,9 +2020,8 @@ local function HookCharacterDeath(char)
 
     hum.Died:Connect(OnCharacterDied)
 
-    -- V11: Zone 8 damage evasion (above-ground mode)
-    -- Khi nhận damage ở zone 8: teleport bước nhỏ +5 studs lên cao
-    -- Heartbeat lerp tự đưa về target mob sau 0.75s debounce
+    -- V11: Zone 8 damage evasion — lên +10 studs ngay lập tức, hold 1.5s, trở lại
+    -- V10 bug: đi xuống -10 (sai hướng) + lerp kéo về target counter evasion
     local _prevHealth = hum.Health
     hum.HealthChanged:Connect(function(newHealth)
         if not IsFarmingReady or CurrentZoneIndex ~= 8 then
@@ -2037,18 +2029,23 @@ local function HookCharacterDeath(char)
         end
         local dmg = _prevHealth - newHealth
         _prevHealth = newHealth
-        -- Chỉ react khi thực sự nhận damage (không phải heal)
         if dmg <= 0 or _zone8EvadeDebounce then return end
         _zone8EvadeDebounce = true
-        -- Teleport +5 studs lên cao ngay lập tức
-        local char2 = Player.Character
-        local root2 = char2 and char2:FindFirstChild("HumanoidRootPart")
-        if root2 then
-            root2.CFrame = root2.CFrame + Vector3.new(0, 5, 0)
-            print("⚡ Zone8 damage evasion: +5 studs up")
+        _zone8EvadeLocked   = true
+
+        -- Snap ngay lên +10 studs (bypass lerp hoàn toàn)
+        local savedY = _undergroundCurrentY
+        if _undergroundCurrentY ~= nil then
+            _undergroundCurrentY = _undergroundCurrentY + 10  -- V11 FIX: lên (+10), không xuống
+            -- Force _smoothPos Y ngay để không bị lerp kéo về
+            if _smoothPos then _smoothPos = Vector3.new(_smoothPos.X, _undergroundCurrentY, _smoothPos.Z) end
         end
-        -- Sau 0.75s: nhả debounce, Heartbeat lerp tự quay về mob
-        task.delay(0.75, function()
+        print("⚡ Zone8 evasion: +10 studs UP, locked 1.5s")
+
+        task.delay(1.5, function()
+            -- Restore về vị trí tấn công bình thường (lerp tự xử lý)
+            if savedY ~= nil then _undergroundCurrentY = savedY end
+            _zone8EvadeLocked   = false
             _zone8EvadeDebounce = false
         end)
     end)
@@ -2074,24 +2071,6 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
     local hum  = char and char:FindFirstChild("Humanoid")
     if not char or not char.Parent then return end
 
-    -- =======================================
-    -- BẠN COPY VÀ CHÈN THÊM ĐOẠN NOCLIP NÀY VÀO ĐÂY:
-    -- Xuyên tường/quái cho nhân vật
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") and part.CanCollide then
-            part.CanCollide = false
-        end
-    end
-    
-    -- Giữ cứng bệ đỡ tàng hình (chống lọt map)
-    local fakePlatform = workspace:FindFirstChild("CupidFakePlatform")
-    if fakePlatform then
-        fakePlatform.CanCollide = true
-    end
-    -- =======================================
-
-    -- ... (Bên dưới này là các code cũ của bạn, HÃY GIỮ NGUYÊN) ...
-
     pcall(function()
         _G.canuse  = true
         _G.midM1   = false
@@ -2114,17 +2093,15 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
             end
         end
 
-        -- V11: noclip chỉ zone 7 (underground mode) — zone 8 bay trên đầu không cần noclip
+        -- V9: noclip luôn chạy kể cả khi block — không cần NoclipPaused guard
         local now = tick()
         if now - _noclipLastApply >= NOCLIP_APPLY_INTERVAL then
             _noclipLastApply = now
             if char ~= _noclipCharRef then _rebuildNoclipCache(char) end
-            if CurrentZoneIndex == 7 then
-                for _, v in ipairs(_noclipParts) do
-                    if v and v.Parent then
-                        v.CanCollide = false
-                        v.CastShadow = false
-                    end
+            for _, v in ipairs(_noclipParts) do
+                if v and v.Parent then
+                    v.CanCollide = false
+                    v.CastShadow = false
                 end
             end
             -- Dọn ValueBase / Instance stun còn sót lại (không trong BasePart cache)
@@ -2339,29 +2316,32 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     if _isUndergroundMode and not _skipUnderground then
         local refY = nil
         if CurrentTargetRoot and CurrentTargetRoot.Parent then
-            refY = CurrentTargetRoot.Position.Y
+            -- V11 FIX AttackOffset: dùng min(mob.Y, floorY) để tránh boss floating gây char lơ lửng
+            local mobY   = CurrentTargetRoot.Position.Y
+            local floorY = GetZoneFloor(CurrentZoneIndex, CachedZoneBoxCenters[CurrentZoneIndex])
+            refY = floorY and math.min(mobY, floorY) or mobY
         else
-            -- V10 FIX: gọi GetZoneFloor thay vì đọc cache trực tiếp
-            -- Đảm bảo fallback được cache → refY không còn nil → undergroundY có giá trị
             refY = GetZoneFloor(CurrentZoneIndex, CachedZoneBoxCenters[CurrentZoneIndex])
         end
         if refY then
             local targetUnderY = refY - UNDERGROUND_DEPTH
-            -- V9 FIX: chỉ đi sâu thêm 5 studs khi _isDodgeDeep (Enkai DODGE_DEEP)
-            -- KHÔNG áp dụng cho ArrowRain hay Normal AoE dodge → tránh bị kéo xuống bãi quái
             if _isDodgeDeep then
                 targetUnderY = targetUnderY - 5
             end
             if _undergroundCurrentY == nil then
                 _undergroundCurrentY = root.Position.Y
             end
-            local yDiff   = targetUnderY - _undergroundCurrentY
-            local maxStep = UNDERGROUND_LERP_SPEED * math.min(dt, MAX_DT)
-            local expStep = math.abs(yDiff) * (1 - math.exp(-10 * math.min(dt, MAX_DT)))
-            local step    = math.min(math.max(expStep, 0.01), maxStep)
-            _undergroundCurrentY = math.abs(yDiff) <= 0.05
-                and targetUnderY
-                or (_undergroundCurrentY + math.sign(yDiff) * step)
+            -- V11 FIX: Nếu đang evade (zone8EvadeLocked) → KHÔNG lerp về targetUnderY
+            -- Giữ nguyên _undergroundCurrentY đã được set bởi evasion handler
+            if not _zone8EvadeLocked then
+                local yDiff   = targetUnderY - _undergroundCurrentY
+                local maxStep = UNDERGROUND_LERP_SPEED * math.min(dt, MAX_DT)
+                local expStep = math.abs(yDiff) * (1 - math.exp(-10 * math.min(dt, MAX_DT)))
+                local step    = math.min(math.max(expStep, 0.01), maxStep)
+                _undergroundCurrentY = math.abs(yDiff) <= 0.05
+                    and targetUnderY
+                    or (_undergroundCurrentY + math.sign(yDiff) * step)
+            end
             undergroundY = _undergroundCurrentY
         end
     else
@@ -2404,43 +2384,27 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         -- V5: Đảm bảo anti-gravity BodyVelocity tồn tại khi đang di chuyển
         local ag = _ensureAntiGrav(root)
 
-        -- ── FIX 3: SMOOTH MOVEMENT ZONE 7+8 ────────────────────────────
-        -- Zone 1-6: lerp đơn giản, nhanh
-        -- Zone 7+8: exponential smoothing riêng cho XZ và Y
-        --   → không jitter, không snap, cực mượt dù FPS thấp
+        -- ── MOVEMENT — V11: SMALL-STEP SNAP (không lerp từ từ) ────────────
+        -- V10 dùng exponential smoothing → tiếp cận chậm, jitter khi gần
+        -- V11: snap trực tiếp MAX_STEP_PER_FRAME mỗi frame → nhanh, ổn định
+        -- Server không flag vì bước nhỏ (≤8 studs/frame)
         local newPos
         if _isUndergroundMode then
-            -- Init smooth pos nếu chưa có
             if _smoothPos == nil then _smoothPos = currentPos end
 
-            -- XZ: exponential approach với acceleration cap
-            local targetXZ  = Vector3.new(activeTargetPos.X, _smoothPos.Y, activeTargetPos.Z)
-            local xzDist    = (Vector3.new(_smoothPos.X, 0, _smoothPos.Z)
-                             - Vector3.new(activeTargetPos.X, 0, activeTargetPos.Z)).Magnitude
-            -- Tốc độ XZ: smooth curve — nhanh khi xa (>5 studs), chậm dần khi gần
-            local xzSpeed
-            if xzDist > 20 then
-                xzSpeed = MoveSpeed
-            elseif xzDist > 5 then
-                -- Ramp down: tránh overshoot khi đến gần
-                xzSpeed = MoveSpeed * (0.3 + 0.7 * (xzDist / 20))
-            else
-                -- Cực gần: creepcrawl để không jitter
-                xzSpeed = MoveSpeed * 0.3
-            end
-            local xzStep    = math.min(xzSpeed * effectiveDt, MAX_STEP_PER_FRAME, xzDist)
-            local newXZ     = xzDist > 0.05
+            -- XZ: snap bước nhỏ trực tiếp
+            local xzDist = (Vector3.new(_smoothPos.X, 0, _smoothPos.Z)
+                         - Vector3.new(activeTargetPos.X, 0, activeTargetPos.Z)).Magnitude
+            local xzStep = math.min(MoveSpeed * effectiveDt, MAX_STEP_PER_FRAME, xzDist)
+            local newXZ  = xzDist > 0.05
                 and Vector3.new(_smoothPos.X, 0, _smoothPos.Z)
                    + (Vector3.new(activeTargetPos.X, 0, activeTargetPos.Z)
                    - Vector3.new(_smoothPos.X, 0, _smoothPos.Z)).Unit * xzStep
                 or Vector3.new(activeTargetPos.X, 0, activeTargetPos.Z)
 
-            -- Y: V8 FIX — khi DODGING (ArrowRain dodge) chỉ né ngang, Y = activeTargetPos.Y
-            -- không force về undergroundY → tránh nhân vật đi lên/xuống khi dodge
-            -- Tương tự ABSORBING_CURSE: lên mặt đất nhặt lava
+            -- Y: khi DODGING/ABSORBING_CURSE lerp về activeTargetPos.Y, còn lại dùng undergroundY
             local useY
             if ZoneState == "DODGING" or ZoneState == "ABSORBING_CURSE" then
-                -- Lerp Y về activeTargetPos.Y (giữ nguyên Y hoặc đến lava Y)
                 local targetY  = activeTargetPos.Y
                 local currentY = _smoothPos.Y
                 local yDiff    = targetY - currentY
@@ -2453,28 +2417,21 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
             newPos     = _smoothPos
 
         else
-            -- Zone thường: lerp đơn giản, nhưng Y phải có cap riêng chống anticheat
+            -- Zone thường: snap bước nhỏ, cap Y+ chống anticheat
             _smoothPos = nil
             local dist = (currentPos - activeTargetPos).Magnitude
-            if dist > 0.3 then
-                local rawStep    = MoveSpeed * effectiveDt
-                local cappedStep = math.min(rawStep, MAX_STEP_PER_FRAME)
-                local direction  = (activeTargetPos - currentPos).Unit
-                local stepVec    = direction * math.min(cappedStep, dist)
-
-                -- V7 FIX: Chỉ cap Y DƯƠNG (đi lên) — anticheat chỉ flag "+Y Axis too fast"
-                -- Y âm (hạ xuống) không cần cap → hạ nhanh mượt, không giật
-                local cappedStepY
-                if stepVec.Y > 0 then
-                    cappedStepY = math.min(stepVec.Y, MAX_STEP_Y_PER_FRAME)
-                else
-                    cappedStepY = stepVec.Y  -- xuống: tự do
-                end
+            if dist > 0.1 then
+                local step      = math.min(MoveSpeed * effectiveDt, MAX_STEP_PER_FRAME, dist)
+                local direction = (activeTargetPos - currentPos).Unit
+                local stepVec   = direction * step
+                -- Chỉ cap Y dương (lên) — anticheat flag +Y axis
+                local cappedStepY = stepVec.Y > 0
+                    and math.min(stepVec.Y, MAX_STEP_Y_PER_FRAME)
+                    or stepVec.Y
                 newPos = Vector3.new(
                     currentPos.X + stepVec.X,
                     currentPos.Y + cappedStepY,
-                    currentPos.Z + stepVec.Z
-                )
+                    currentPos.Z + stepVec.Z)
             else
                 newPos = activeTargetPos
             end
