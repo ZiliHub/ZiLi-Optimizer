@@ -385,7 +385,7 @@ end
 -- ==========================================
 local MoveSpeed     = 110
 local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
-local AttackOffset2 = 10   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
+local AttackOffset2 = 9   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
 local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
 local GatherTime    = 0.2   -- gather nhanh hơn
@@ -393,7 +393,7 @@ local DangerRadius  = 45
 local EvadeDistance = 60
 
 -- Khoảng cách né skill boss
-local EVADE_ENTEI        = 130
+local EVADE_ENTEI        = 150
 local EVADE_FLAME_PILLAR = 75
 local EVADE_BOSS_GENERIC = 100
 
@@ -401,7 +401,6 @@ local EVADE_BOSS_GENERIC = 100
 -- FIX: dùng mob.Y ± AttackOffset thay vì floorY - depth
 -- → khoảng cách tới mob = AttackOffset (10), giống flying
 local UNDERGROUND_DEPTH     = AttackOffset2  -- = 10, đồng nhất với flying
-local UNDERGROUND_DODGE_ADD = 11             -- thêm khi dodge (tổng 20 dưới mob)
 local UNDERGROUND_LERP_SPEED = 80            -- studs/s smooth descent
 -- Giới hạn tween
 local MAX_DT             = 0.1    -- 100ms cap — an toàn hơn ở FPS thấp
@@ -1592,7 +1591,7 @@ task.spawn(function()
                             ZoneState          = "DODGING"
                             _currentDodgeIsAoe = false
                             _isDodgeDeep       = true   -- V9: chỉ case này mới đi sâu
-                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 35
+                            local deeperY = (_undergroundCurrentY or root.Position.Y) - 55
                             TargetCFrame = CFrame.new(root.Position.X, deeperY, root.Position.Z)
                             DodgeTimer   = tick() + DODGE_RETURN_WAIT2
                             print("⬇️ DODGE_DEEP: Enkai underground → sâu 5 studs, đứng yên", DODGE_RETURN_WAIT2, "s")
