@@ -383,7 +383,7 @@ end
 -- ==========================================
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
-local MoveSpeed     = 110
+local MoveSpeed     = 90
 local AttackOffset  = 10.2   -- khoảng cách trên đầu quái (zone 1-6)
 local AttackOffset2 = 10.2   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
@@ -1863,7 +1863,7 @@ task.spawn(function()
     local CombatAnimFolder = ReplicatedStorage:WaitForChild("CombatAnimations")
     local currentCombo     = 1
     local MAX_COMBO        = 5      -- V7: đúng game combo (5 hit)
-    local strikeDelay      = 0.366  -- V7: đúng game attack speed
+    local strikeDelay      = 0.4  -- V7: đúng game attack speed
     local comboResetDelay  = 1
     local _lastFireTime    = 0
 
