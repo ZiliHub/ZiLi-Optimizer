@@ -385,7 +385,7 @@ end
 -- ==========================================
 local MoveSpeed     = 110
 local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
-local AttackOffset2 = 9   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
+local AttackOffset2 = 8   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
 local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
 local GatherTime    = 0.2   -- gather nhanh hơn
