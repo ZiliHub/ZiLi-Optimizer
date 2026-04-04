@@ -385,7 +385,7 @@ end
 -- ==========================================
 local MoveSpeed     = 110
 local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
-local AttackOffset2 = 8   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
+local AttackOffset2 = 10.5   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
 local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
 local GatherTime    = 0.2   -- gather nhanh hơn
@@ -393,7 +393,7 @@ local DangerRadius  = 45
 local EvadeDistance = 60
 
 -- Khoảng cách né skill boss
-local EVADE_ENTEI        = 150
+local EVADE_ENTEI        = 130
 local EVADE_FLAME_PILLAR = 75
 local EVADE_BOSS_GENERIC = 100
 
@@ -401,6 +401,7 @@ local EVADE_BOSS_GENERIC = 100
 -- FIX: dùng mob.Y ± AttackOffset thay vì floorY - depth
 -- → khoảng cách tới mob = AttackOffset (10), giống flying
 local UNDERGROUND_DEPTH     = AttackOffset2  -- = 10, đồng nhất với flying
+local UNDERGROUND_DODGE_ADD = 11             -- thêm khi dodge (tổng 20 dưới mob)
 local UNDERGROUND_LERP_SPEED = 80            -- studs/s smooth descent
 -- Giới hạn tween
 local MAX_DT             = 0.1    -- 100ms cap — an toàn hơn ở FPS thấp
@@ -1024,14 +1025,16 @@ local function DoMapOptimize()
     _mapOptimized = true
     task.spawn(function()
 
-        -- [A] Lighting
+        -- [A] Lighting — tắt toàn bộ effect, giảm quality
         pcall(function()
             local L = game:GetService("Lighting")
-            L.GlobalShadows = false
-            L.FogEnd        = 9e9
-            L.Brightness    = 2
-            L.ClockTime     = 14
-            L.Ambient       = Color3.fromRGB(178, 178, 178)
+            L.GlobalShadows    = false
+            L.FogEnd           = 9e9
+            L.Brightness       = 2
+            L.ClockTime        = 14
+            L.Ambient          = Color3.fromRGB(178, 178, 178)
+            L.EnvironmentDiffuseScale  = 0
+            L.EnvironmentSpecularScale = 0
             for _, v in ipairs(L:GetDescendants()) do
                 if v:IsA("BlurEffect") or v:IsA("DepthOfFieldEffect")
                 or v:IsA("SunRaysEffect") or v:IsA("BloomEffect")
@@ -1043,28 +1046,44 @@ local function DoMapOptimize()
             end
         end)
 
-        -- [B] Render quality — thử cả 2 cách phổ biến nhất trong executors
+        -- [B] Render quality — thử TẤT CẢ các API executor có thể hỗ trợ
         pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-        pcall(function() UserSettings():GetService("UserGameSettings").SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1 end)
+        pcall(function()
+            UserSettings():GetService("UserGameSettings").SavedQualityLevel
+                = Enum.SavedQualitySetting.QualityLevel1
+        end)
+        -- Executor-specific: setfflag / setsetting
+        pcall(function() setfflag("DFIntDebugFRMQualityLevelOverride", "1") end)
+        pcall(function() setsetting("Graphics Quality", 1) end)
+        -- Camera clip distance giảm → ít object render
+        pcall(function()
+            local cam = workspace.CurrentCamera
+            if cam then cam.MaxAxisFieldOfView = 70 end
+        end)
+        -- Tắt StreamingEnabled constraint (nếu script có quyền)
+        pcall(function() workspace.StreamingEnabled = false end)
+        -- Shadow distance cực thấp
+        pcall(function()
+            workspace:FindFirstChildOfClass("Terrain") -- luôn tồn tại
+        end)
 
         -- [C] Terrain
         pcall(function()
             local t = workspace:FindFirstChildOfClass("Terrain")
             if t then
-                t.Decoration       = false
-                t.WaterWaveSize    = 0
-                t.WaterWaveSpeed   = 0
-                t.WaterReflectance = 0
+                t.Decoration        = false
+                t.WaterWaveSize     = 0
+                t.WaterWaveSpeed    = 0
+                t.WaterReflectance  = 0
                 t.WaterTransparency = 1
-                t.CastShadow       = false
+                t.CastShadow        = false
             end
         end)
 
-        -- [D] Effects & Projectiles — ẩn visual, giữ BasePart để detect
+        -- [D] Effects & Projectiles
         for _, fname in ipairs({"Effects", "Projectiles"}) do
             local f = workspace:FindFirstChild(fname)
             if f then HideFolderEffects(f) end
-            -- V10 FIX LEAK: lưu connection để disconnect khi re-run
             local conn = workspace.ChildAdded:Connect(function(child)
                 if child.Name == fname then
                     task.defer(function() HideFolderEffects(child) end)
@@ -1073,27 +1092,39 @@ local function DoMapOptimize()
             table.insert(_G.CupidMapConns, conn)
         end
 
-        -- [E] Toàn bộ workspace — tắt shadow + particles + non-collision parts
+        -- [E] Workspace scan — tắt shadow/particle/trang trí
+        -- V12: chạy trong coroutine chunked để không spike 1 frame
         task.spawn(function()
-            for _, desc in ipairs(workspace:GetDescendants()) do
-                pcall(function()
-                    if desc:IsA("ParticleEmitter") or desc:IsA("Beam")
-                    or desc:IsA("Trail") or desc:IsA("Fire")
-                    or desc:IsA("Smoke") or desc:IsA("Sparkles") then
-                        desc.Enabled = false
-                    elseif desc:IsA("BasePart") and not desc:IsA("Terrain") then
-                        desc.CastShadow = false
-                        if not desc.CanCollide then
-                            desc.LocalTransparencyModifier = 1
+            local descs = workspace:GetDescendants()
+            local CHUNK  = 200  -- xử lý 200 object/frame, tránh lag spike
+            for i = 1, #descs, CHUNK do
+                for j = i, math.min(i + CHUNK - 1, #descs) do
+                    local desc = descs[j]
+                    pcall(function()
+                        if desc:IsA("ParticleEmitter") or desc:IsA("Beam")
+                        or desc:IsA("Trail") or desc:IsA("Fire")
+                        or desc:IsA("Smoke") or desc:IsA("Sparkles") then
+                            desc.Enabled = false
+                        elseif desc:IsA("BasePart") and not desc:IsA("Terrain") then
+                            desc.CastShadow = false
+                            -- Trang trí không có collision → ẩn
+                            if not desc.CanCollide then
+                                desc.LocalTransparencyModifier = 1
+                            end
+                        elseif desc:IsA("Sound") then
+                            if desc.Parent and not (desc.Parent == Player.Character) then
+                                desc.Volume = 0
+                            end
+                        elseif desc:IsA("SpecialMesh") or desc:IsA("SelectionBox") then
+                            -- Giảm mesh quality
+                            pcall(function() desc.LODFactor = 0 end)
                         end
-                    elseif desc:IsA("Sound") then
-                        if desc.Parent and not (desc.Parent == Player.Character) then
-                            desc.Volume = 0
-                        end
-                    end
-                end)
+                    end)
+                end
+                task.wait()  -- yield 1 frame sau mỗi chunk → không freeze
             end
-            -- V10 FIX LEAK: lưu connection để disconnect khi re-run
+
+            -- Auto-hide descendant mới spawn
             local connD = workspace.DescendantAdded:Connect(function(inst)
                 task.defer(function()
                     pcall(function()
@@ -1112,9 +1143,8 @@ local function DoMapOptimize()
                 end)
             end)
             table.insert(_G.CupidMapConns, connD)
+            print("🗺️ Map Optimized OK (chunked scan done)")
         end)
-
-        print("🗺️ Map Optimized OK")
     end)
 end
 
@@ -1141,9 +1171,6 @@ local BossSkillDefs = {
     {pattern = "enkai",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
     {pattern = "en_kai", action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
     {pattern = "entei",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "flame pillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-    {pattern = "flame_pillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
-     {pattern = "flamepillar",  action = "DODGE_DEEP", evadeDist = EVADE_ENTEI, priority = 1, noRadius = true},
 }
 
 -- Instance tên match những pattern này → bỏ qua hoàn toàn (không log, không react)
@@ -2318,10 +2345,10 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     if _isUndergroundMode and not _skipUnderground then
         local refY = nil
         if CurrentTargetRoot and CurrentTargetRoot.Parent then
-            -- V11 FIX AttackOffset: dùng min(mob.Y, floorY) để tránh boss floating gây char lơ lửng
-            local mobY   = CurrentTargetRoot.Position.Y
-            local floorY = GetZoneFloor(CurrentZoneIndex, CachedZoneBoxCenters[CurrentZoneIndex])
-            refY = floorY and math.min(mobY, floorY) or mobY
+            -- V12 FIX: dùng mob.Y trực tiếp — char luôn cách mob đúng UNDERGROUND_DEPTH
+            -- V11 bug: min(mob.Y, floorY) → floorY thường RẤT thấp (sàn thực bên dưới zone)
+            --          → char xuống quá sâu, đổi UNDERGROUND_DEPTH cũng không thấy thay đổi
+            refY = CurrentTargetRoot.Position.Y
         else
             refY = GetZoneFloor(CurrentZoneIndex, CachedZoneBoxCenters[CurrentZoneIndex])
         end
