@@ -384,8 +384,8 @@ end
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
 local MoveSpeed     = 90
-local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
-local AttackOffset2 = 10.5   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
+local AttackOffset  = 10.2   -- khoảng cách trên đầu quái (zone 1-6)
+local AttackOffset2 = 10.2   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
 local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
 local GatherTime    = 0.2   -- gather nhanh hơn
@@ -1865,8 +1865,8 @@ task.spawn(function()
     local CombatRegister   = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
     local CombatAnimFolder = ReplicatedStorage:WaitForChild("CombatAnimations")
     local currentCombo     = 1
-    local MAX_COMBO        = 4      -- V14: skip combo 5 (finisher gây knockback mob → mất target)
-    local strikeDelay      = 0.46
+    local MAX_COMBO        = 5      -- V7: đúng game combo (5 hit)
+    local strikeDelay      = 0.4  -- V7: đúng game attack speed
     local comboResetDelay  = 1
     local _lastFireTime    = 0
 
@@ -2095,7 +2095,7 @@ local function HookCharacterDeath(char)
         -- Snap ngay lên +10 studs (bypass lerp hoàn toàn)
         local savedY = _undergroundCurrentY
         if _undergroundCurrentY ~= nil then
-            _undergroundCurrentY = _undergroundCurrentY - 10  -- V11 FIX: lên (+10), không xuống
+            _undergroundCurrentY = _undergroundCurrentY - 20  -- V11 FIX: lên (+10), không xuống
             -- Force _smoothPos Y ngay để không bị lerp kéo về
             if _smoothPos then _smoothPos = Vector3.new(_smoothPos.X, _undergroundCurrentY, _smoothPos.Z) end
         end
@@ -2112,27 +2112,6 @@ end
 
 -- Hook ngay với character đang có
 HookCharacterDeath(Player.Character)
-
--- V14 FIX anti-stun: hook StunFolder.ChildAdded để destroy stun ngay khi spawn
--- Stepped loop xóa mỗi ~16ms, nhưng stun có thể cancel attack trong 1 frame đó
--- Hook này destroy ngay lập tức khi object được thêm vào StunFolder
-local function HookStunFolder(sf)
-    if not sf then return end
-    sf.ChildAdded:Connect(function(v)
-        pcall(function() v:Destroy() end)
-    end)
-    -- Xóa luôn những gì đang có
-    for _, v in ipairs(sf:GetChildren()) do pcall(function() v:Destroy() end) end
-end
-
--- Hook StunFolder hiện tại nếu có
-HookStunFolder(Player:FindFirstChild("StunFolder"))
--- Hook khi StunFolder được tạo ra (spawn muộn)
-Player.ChildAdded:Connect(function(child)
-    if child.Name == "StunFolder" then
-        HookStunFolder(child)
-    end
-end)
 
 Player.CharacterAdded:Connect(function(newChar)
     _noclipCharRef = nil  -- force rebuild noclip cache
@@ -2160,7 +2139,9 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
         _G.zombie  = false
         if not _G.SkillBlocking then _G.blocking = false end
 
-        -- V13: Xóa StunFolder
+        if hum and hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+
+        -- V13: Xóa StunFolder của player (tên theo Player.Name)
         -- game:GetService("Players").ZZygmaa.StunFolder → đổi tên theo player
         pcall(function()
             local sf = Player:FindFirstChild("StunFolder")
@@ -2171,19 +2152,18 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
             end
         end)
 
-        -- Attributes anti-stun — V14: thêm patterns hitlag/cooldown/attackcd
+        -- Attributes anti-stun
         for attr in pairs(char:GetAttributes()) do
             if type(attr) == "string" then
                 local a = attr:lower()
                 if a:match("stun") or a:match("busy") or a:match("freeze")
-                or a:match("knock") or a:match("ragdoll") or a:match("zombie") or a:match("down")
-                or a:match("hitlag") or a:match("attackcd") or a:match("cooldown") or a:match("canuse") then
+                or a:match("knock") or a:match("ragdoll") or a:match("zombie") or a:match("down") then
                     char:SetAttribute(attr, nil)
                 end
             end
         end
-        -- V14: restore WalkSpeed nếu bị set về 0 do stun
-        if hum and hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+
+        -- V9: noclip luôn chạy kể cả khi block — không cần NoclipPaused guard
         local now = tick()
         if now - _noclipLastApply >= NOCLIP_APPLY_INTERVAL then
             _noclipLastApply = now
@@ -2263,16 +2243,16 @@ task.spawn(function()
                     _footstepEvent:FireServer()
                 end
                 -- [B] Tiny forward velocity qua BodyVelocity → velocity.Magnitude > 0
-                -- V14 FIX: khi IsReadyToAttack, char tilted -90° → root.CFrame.LookVector trỏ xuống đất
-                --          lv.X và lv.Z gần 0 → velocity = ~0 → hitbox không expand
-                -- Fix: dùng _cachedYaw để tính hướng ngang đúng bất kể tilt
+                -- Dùng LookVector nhân rất nhỏ (2 studs/s) → không di chuyển thực tế
+                -- Không set root.Velocity trực tiếp (xung đột BodyVelocity MaxForce=9e9)
                 local char = Player.Character
                 local root = char and char:FindFirstChild("HumanoidRootPart")
                 if root then
                     local ag = root:FindFirstChild(_antiGravName)
                     if ag then
-                        local horzLook = CFrame.Angles(0, _cachedYaw, 0).LookVector
-                        ag.Velocity = Vector3.new(horzLook.X * 2, 0, horzLook.Z * 2)
+                        -- Giữ anti-gravity nhưng thêm tiny XZ component
+                        local lv = root.CFrame.LookVector
+                        ag.Velocity = Vector3.new(lv.X * 2, 0, lv.Z * 2)
                     end
                 end
             end)
@@ -2367,13 +2347,6 @@ task.spawn(function()
     end
 end)
 
--- V14: FPS guard — nếu FPS drop / freeze, dừng movement 1 frame
--- dt > FPS_FREEZE_THRESHOLD nghĩa là frame đó mất >= 200ms (FPS < 5)
--- → skip movement hoàn toàn, đợi frame sau
-local FPS_FREEZE_THRESHOLD = 0.2   -- 200ms = dưới 5fps → coi là freeze
-local _freezeRecoverFrames  = 0    -- đếm frame cần recover sau freeze
-local FREEZE_RECOVER_COUNT  = 2    -- đợi thêm N frame sau khi unfreeze
-
 _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     if not _G.AutoDungeon then return end
     if not IsFarmingReady then
@@ -2381,16 +2354,6 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         return
     end
     if _G.IsProcessingFruit then return end
-
-    -- V14 FIX: phát hiện freeze/FPS drop → đứng yên, đợi recover
-    if dt >= FPS_FREEZE_THRESHOLD then
-        _freezeRecoverFrames = FREEZE_RECOVER_COUNT  -- set counter recover
-        return  -- bỏ qua toàn bộ movement frame này
-    end
-    if _freezeRecoverFrames > 0 then
-        _freezeRecoverFrames = _freezeRecoverFrames - 1
-        return  -- đợi thêm N frame để physics ổn định sau freeze
-    end
 
     local char = Player.Character
     local hum  = char and char:FindFirstChild("Humanoid")
