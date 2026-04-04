@@ -383,7 +383,7 @@ end
 -- ==========================================
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
-local MoveSpeed     = 110
+local MoveSpeed     = 90
 local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
 local AttackOffset2 = 10.5   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
@@ -2065,7 +2065,7 @@ local function HookCharacterDeath(char)
         -- Snap ngay lên +10 studs (bypass lerp hoàn toàn)
         local savedY = _undergroundCurrentY
         if _undergroundCurrentY ~= nil then
-            _undergroundCurrentY = _undergroundCurrentY + 10  -- V11 FIX: lên (+10), không xuống
+            _undergroundCurrentY = _undergroundCurrentY - 10  -- V11 FIX: lên (+10), không xuống
             -- Force _smoothPos Y ngay để không bị lerp kéo về
             if _smoothPos then _smoothPos = Vector3.new(_smoothPos.X, _undergroundCurrentY, _smoothPos.Z) end
         end
