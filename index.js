@@ -4696,65 +4696,62 @@ function ServerModule.Join(code, hubArg, seaArg)
                         task.wait(0.6)
                         pcall(function() remote:FireServer(hubArg) end)
                         pcall(function() chooseTypeUI.Enabled = false end)
+
+                        -- Sea selection AFTER hub is fired — dialog appears now
+                        if seaArg then
+                            local wantText = (seaArg == "Sea 2") and "Second Sea" or "First Sea"
+                            local wantPartial = (seaArg == "Sea 2") and "second" or "first"
+
+                            local function tryClick(btn)
+                                pcall(function() firebutton(btn) end)
+                                pcall(function() btn:activate() end)
+                                pcall(function()
+                                    local vim = game:GetService("VirtualInputManager")
+                                    local abs = btn.AbsolutePosition
+                                    local sz  = btn.AbsoluteSize
+                                    vim:SendMouseButtonEvent(math.floor(abs.X+sz.X/2), math.floor(abs.Y+sz.Y/2), 0, true,  game, 1)
+                                    task.wait(0.05)
+                                    vim:SendMouseButtonEvent(math.floor(abs.X+sz.X/2), math.floor(abs.Y+sz.Y/2), 0, false, game, 1)
+                                end)
+                            end
+
+                            local function matchesSea(btn)
+                                local nm = btn.Name or ""
+                                local tx = (btn:IsA("TextButton") and btn.Text) or ""
+                                if nm == wantText or tx == wantText then return true end
+                                return nm:lower():find(wantPartial,1,true) ~= nil
+                                    or tx:lower():find(wantPartial,1,true) ~= nil
+                            end
+
+                            local function searchRoot(root)
+                                for _, desc in ipairs(root:GetDescendants()) do
+                                    if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and matchesSea(desc) then
+                                        tryClick(desc)
+                                        return true
+                                    end
+                                end
+                                return false
+                            end
+
+                            -- Poll up to 25s; sea dialog appears shortly after hub fire
+                            task.spawn(function()
+                                local deadline = tick() + 25
+                                local clicked  = false
+                                task.wait(0.4)
+                                while not clicked and tick() < deadline do
+                                    local pg2 = Player_L:FindFirstChild("PlayerGui")
+                                    if pg2 and searchRoot(pg2) then clicked = true; break end
+                                    pcall(function()
+                                        if searchRoot(game:GetService("CoreGui")) then clicked = true end
+                                    end)
+                                    if not clicked then task.wait(0.3) end
+                                end
+                            end)
+                        end
                     end
                 end
             end
 
-            -- Sea selection — only for Regular (hubArg == true)
-            if hubArg == true and seaArg then
-                task.spawn(function()
-                    local wantText = (seaArg == "Sea 2") and "Second Sea" or "First Sea"
-
-                    -- Try clicking a button whose Text or Name exactly matches wantText.
-                    -- Also accepts partial: "Second" / "First" anywhere in Text.
-                    local function tryClick(btn)
-                        pcall(function() firebutton(btn) end)
-                        pcall(function() btn:activate() end)
-                        pcall(function()
-                            local vim = game:GetService("VirtualInputManager")
-                            local abs = btn.AbsolutePosition
-                            local sz  = btn.AbsoluteSize
-                            vim:SendMouseButtonEvent(math.floor(abs.X+sz.X/2), math.floor(abs.Y+sz.Y/2), 0, true,  game, 1)
-                            task.wait(0.05)
-                            vim:SendMouseButtonEvent(math.floor(abs.X+sz.X/2), math.floor(abs.Y+sz.Y/2), 0, false, game, 1)
-                        end)
-                    end
-
-                    local function matchesSea(btn)
-                        local nm = btn.Name or ""
-                        local tx = (btn:IsA("TextButton") and btn.Text) or ""
-                        -- Exact match first
-                        if nm == wantText or tx == wantText then return true end
-                        -- Partial: "First" or "Second" anywhere (case-insensitive)
-                        local want = (seaArg == "Sea 2") and "second" or "first"
-                        return nm:lower():find(want,1,true) ~= nil
-                            or tx:lower():find(want,1,true) ~= nil
-                    end
-
-                    local function searchRoot(root)
-                        for _, desc in ipairs(root:GetDescendants()) do
-                            if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and matchesSea(desc) then
-                                tryClick(desc)
-                                return true
-                            end
-                        end
-                        return false
-                    end
-
-                    -- Poll every 0.3s for up to 30s
-                    local deadline = tick() + 30
-                    local clicked  = false
-                    task.wait(0.5)
-                    while not clicked and tick() < deadline do
-                        local pg = Player_L:FindFirstChild("PlayerGui")
-                        if pg and searchRoot(pg) then clicked = true; break end
-                        pcall(function()
-                            if searchRoot(game:GetService("CoreGui")) then clicked = true end
-                        end)
-                        if not clicked then task.wait(0.3) end
-                    end
-                end)
-            end
         end)
     end
 end
@@ -6378,16 +6375,7 @@ if IS_LOBBY then
         end
     end, GOLD2)
 
-    -- ── PRIVATE SERVER ────────────────────────────────────────────────
-    getgenv().PSCode       = ""
-    getgenv().SelectedHub  = "Regular"
-    getgenv().SelectedSea  = "Sea 1"
-
-    local HubArgs = {["Regular"]=true,["Trade Hub"]="tradeHub",["Universe Hub"]="universeHub",["Fish Hub"]="fishHub"}
-    local HubButtons = {}
-    local UpdateUIState  -- forward decl
-
-    -- ── PS page layout ────────────────────────────────────────────────
+    -- Private Server page is built separately below (PrivateServerPage)
     PageLayout(PrivateServerPage, 14, 10)
 
     -- ══ SHARED state ═══════════════════════════════════════════════════════
@@ -9658,3 +9646,4 @@ local function RunExecutorDiagnostics()
 end
 
 task.spawn(RunExecutorDiagnostics)
+
