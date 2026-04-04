@@ -383,9 +383,9 @@ end
 -- ==========================================
 -- [10] COMBAT CONFIG & STATE
 -- ==========================================
-local MoveSpeed     = 90
-local AttackOffset  = 10.5   -- khoảng cách trên đầu quái (zone 1-6)
-local AttackOffset2 = 10.5   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
+local MoveSpeed     = 110
+local AttackOffset  = 10.2   -- khoảng cách trên đầu quái (zone 1-6)
+local AttackOffset2 = 10.2   -- khoảng cách dưới lòng đất (zone 7+8)  ← V10: đổi 11.5→11
 local SearchRadius  = 800
 local WaitSpawnTime = 6     -- giảm: chờ spawn tối đa 6s
 local GatherTime    = 0.2   -- gather nhanh hơn
@@ -1096,48 +1096,69 @@ local function DoMapOptimize()
         -- V12: chạy trong coroutine chunked để không spike 1 frame
         task.spawn(function()
             local descs = workspace:GetDescendants()
-            local CHUNK  = 200  -- xử lý 200 object/frame, tránh lag spike
+            local CHUNK  = 200
             for i = 1, #descs, CHUNK do
                 for j = i, math.min(i + CHUNK - 1, #descs) do
                     local desc = descs[j]
+                    -- Skip character parts
+                    if Player.Character and desc:IsDescendantOf(Player.Character) then continue end
                     pcall(function()
                         if desc:IsA("ParticleEmitter") or desc:IsA("Beam")
                         or desc:IsA("Trail") or desc:IsA("Fire")
                         or desc:IsA("Smoke") or desc:IsA("Sparkles") then
                             desc.Enabled = false
+
                         elseif desc:IsA("BasePart") and not desc:IsA("Terrain") then
                             desc.CastShadow = false
-                            -- Trang trí không có collision → ẩn
+                            -- V13: tất cả BasePart map → SmoothPlastic (loại bỏ texture render)
+                            -- + tắt reflection/specular
+                            desc.Material     = Enum.Material.SmoothPlastic
+                            desc.Reflectance  = 0
                             if not desc.CanCollide then
                                 desc.LocalTransparencyModifier = 1
                             end
+
+                        elseif desc:IsA("Decal") or desc:IsA("Texture") then
+                            -- V13: ẩn tất cả decal/texture trên map → giảm draw call
+                            desc.Transparency = 1
+
+                        elseif desc:IsA("BillboardGui") or desc:IsA("SurfaceGui") then
+                            -- V13: tắt GUI trên map (health bar mob, tên npc...)
+                            -- Chỉ tắt nếu không phải của char
+                            desc.Enabled = false
+
                         elseif desc:IsA("Sound") then
                             if desc.Parent and not (desc.Parent == Player.Character) then
                                 desc.Volume = 0
                             end
-                        elseif desc:IsA("SpecialMesh") or desc:IsA("SelectionBox") then
-                            -- Giảm mesh quality
+
+                        elseif desc:IsA("SpecialMesh") then
                             pcall(function() desc.LODFactor = 0 end)
                         end
                     end)
                 end
-                task.wait()  -- yield 1 frame sau mỗi chunk → không freeze
+                task.wait()
             end
 
-            -- Auto-hide descendant mới spawn
             local connD = workspace.DescendantAdded:Connect(function(inst)
+                if Player.Character and inst:IsDescendantOf(Player.Character) then return end
                 task.defer(function()
                     pcall(function()
                         if inst:IsA("ParticleEmitter") or inst:IsA("Beam")
                         or inst:IsA("Trail") or inst:IsA("Fire")
                         or inst:IsA("Smoke") or inst:IsA("Sparkles") then
                             inst.Enabled = false
-                        elseif inst:IsA("BasePart") and not inst:IsA("Terrain")
-                        and not (Player.Character and inst:IsDescendantOf(Player.Character)) then
-                            inst.CastShadow = false
+                        elseif inst:IsA("BasePart") and not inst:IsA("Terrain") then
+                            inst.CastShadow  = false
+                            inst.Material    = Enum.Material.SmoothPlastic
+                            inst.Reflectance = 0
                             if not inst.CanCollide then
                                 inst.LocalTransparencyModifier = 1
                             end
+                        elseif inst:IsA("Decal") or inst:IsA("Texture") then
+                            inst.Transparency = 1
+                        elseif inst:IsA("BillboardGui") or inst:IsA("SurfaceGui") then
+                            inst.Enabled = false
                         end
                     end)
                 end)
@@ -1338,48 +1359,53 @@ task.spawn(function()
                 end
 
                 -- General AoE + Lava Curse (mọi zone)
-                -- V6 FIX: ArrowRain / Lightning → dodge đúng 2s rồi hold block
-                -- Các AoE khác → dodge theo evadeDist/MoveSpeed như cũ
                 if detectedHazard == "None" then
                     local effectsFolder = workspace:FindFirstChild("Effects")
                     if effectsFolder then
                         local minDist = DangerRadius
-                        for _, v in ipairs(effectsFolder:GetChildren()) do
+                        -- V13 FIX: GetDescendants thay vì GetChildren → bắt lightning/arrow nested
+                        for _, v in ipairs(effectsFolder:GetDescendants()) do
+                            if not v:IsA("BasePart") and not v:IsA("Model") then continue end
                             local name = v.Name:lower()
                             local vPos = GetInstPos(v)
                             if vPos and not IgnoredHazards[v] then
                                 local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
-                                -- V6: phân biệt arrowrain/lightning vs AoE thường
-                                -- TÌM VÀ XÓA ĐOẠN GỘP CHUNG isArrowOrLightning CŨ.
-                                -- THAY BẰNG KHỐI PHÂN TÁCH RÕ RÀNG NÀY:
 
-                                local isArrow = name:match("arrow") or name:match("rain")
+                                local isArrow     = name:match("arrow") or name:match("rain")
                                 local isLightning = name:match("lightning")
 
                                 if isArrow and dist < minDist then
-                                    detectedHazard = "ArrowRain"
-                                    hazardPos = vPos
-                                    minDist = dist
-                                    hazardInst = v
-                                    hazardAction = "DODGE"
-                                    hazardEvadeDist = 80 -- Tăng khoảng cách né ra thật xa
-                                    
+                                    detectedHazard  = "ArrowRain"
+                                    hazardPos       = vPos
+                                    minDist         = dist
+                                    hazardInst      = v
+                                    hazardAction    = "DODGE"
+                                    hazardEvadeDist = 80
+
                                 elseif isLightning and dist < minDist then
-                                    detectedHazard = "Lightning"
-                                    hazardPos = vPos
-                                    minDist = dist
-                                    hazardInst = v
-                                    hazardAction = "BLOCK" -- Đứng tại chỗ, không dodge
-                                    hazardEvadeDist = 0    -- Không cần di chuyển
-                                    
-                                elseif (name:match("aoe") or name:match("circle") or name:match("bomb") or name:match("meteor") or name:match("projectile")) and dist < minDist then
-                                    detectedHazard = "Normal"
-                                    hazardPos = vPos
-                                    minDist = dist
-                                    hazardInst = v
-                                    hazardAction = "DODGE"
+                                    -- V13 FIX: zone 8 lightning → skip hoàn toàn (không block, không dodge)
+                                    -- Boss zone 8 lightning quá dày, block + noclip = kick, dodge = lộn xộn
+                                    if CurrentZoneIndex == 8 then
+                                        -- Ignore lightning ở zone 8
+                                    else
+                                        detectedHazard  = "Lightning"
+                                        hazardPos       = vPos
+                                        minDist         = dist
+                                        hazardInst      = v
+                                        hazardAction    = "BLOCK"
+                                        hazardEvadeDist = 0
+                                    end
+
+                                elseif (name:match("aoe") or name:match("circle") or name:match("bomb")
+                                    or name:match("meteor") or name:match("projectile")) and dist < minDist then
+                                    detectedHazard  = "Normal"
+                                    hazardPos       = vPos
+                                    minDist         = dist
+                                    hazardInst      = v
+                                    hazardAction    = "DODGE"
                                     hazardEvadeDist = 40
                                 end
+
                                 if name:match("lava") and name:match("curse") and dist < 1500 then
                                     local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
                                     local part   = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
@@ -1402,8 +1428,9 @@ task.spawn(function()
                 CurrentLava.Prompt      = foundLavaPrompt
             end)
         end
-        -- Boss zone quét 0.02s, zone 5-6 quét 0.04s, bình thường 0.06s
+        -- V13: zone 8 scan 0.01s (nhạy nhất), zone 7 0.02s, zone 5-6 0.04s, thường 0.06s
         local scanInterval = IsFarmingReady and (
+            CurrentZoneIndex >= 8 and 0.01 or
             CurrentZoneIndex >= 7 and 0.02 or
             CurrentZoneIndex >= 5 and 0.04 or 0.06
         ) or 0.1
@@ -2065,7 +2092,7 @@ local function HookCharacterDeath(char)
         -- Snap ngay lên +10 studs (bypass lerp hoàn toàn)
         local savedY = _undergroundCurrentY
         if _undergroundCurrentY ~= nil then
-            _undergroundCurrentY = _undergroundCurrentY - 10  -- V11 FIX: lên (+10), không xuống
+            _undergroundCurrentY = _undergroundCurrentY - 20  -- V11 FIX: lên (+10), không xuống
             -- Force _smoothPos Y ngay để không bị lerp kéo về
             if _smoothPos then _smoothPos = Vector3.new(_smoothPos.X, _undergroundCurrentY, _smoothPos.Z) end
         end
@@ -2110,6 +2137,17 @@ _G.CupidStepped = RunService.Stepped:Connect(function()
         if not _G.SkillBlocking then _G.blocking = false end
 
         if hum and hum.WalkSpeed < 16 then hum.WalkSpeed = 16 end
+
+        -- V13: Xóa StunFolder của player (tên theo Player.Name)
+        -- game:GetService("Players").ZZygmaa.StunFolder → đổi tên theo player
+        pcall(function()
+            local sf = Player:FindFirstChild("StunFolder")
+            if sf then
+                for _, v in ipairs(sf:GetChildren()) do
+                    pcall(function() v:Destroy() end)
+                end
+            end
+        end)
 
         -- Attributes anti-stun
         for attr in pairs(char:GetAttributes()) do
