@@ -407,9 +407,6 @@ local Timer             = 0
 local DodgeTimer        = 0
 local CachedZoneFloors  = {}
 
-local _currentDodgeIsAoe = false
-local _smoothPos         = nil  -- XZ smooth pos for underground lerp
-
 local IgnoredHazards = setmetatable({}, {__mode = "k"})
 local CurrentHazard  = {Type = "None", Position = nil, Instance = nil, MinDist = DangerRadius, Action = "DODGE"}
 local CurrentLava    = {Part = nil, Prompt = nil}
@@ -1097,29 +1094,36 @@ DoMapOptimize()
 -- Và auto re-hide khi có effect mới spawn (DescendantAdded đã connect trong HideFolderEffects)
 
 -- ==========================================
--- [14] HAZARD SCANNER (EVENT-DRIVEN QUEUE)
+-- [14] HAZARD SCANNER
 -- ==========================================
 
--- Priority: lower = more important
-local BossSkillDefs = {
-    -- Enkai/Entei (Mera wide AoE) — dodge 130 studs sideways
-    {pattern = "enkai",        action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "en_kai",       action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    {pattern = "entei",        action = "DODGE", evadeDist = EVADE_ENTEI,        priority = 1, noRadius = true},
-    -- Flame Pillar — dodge 75 studs sideways
-    {pattern = "flame_pillar", action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 1, noRadius = true},
-    {pattern = "flamepillar",  action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 1, noRadius = true},
-    {pattern = "flame pillar", action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 1, noRadius = true},
-    {pattern = "eruption",     action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2, noRadius = true},
-    {pattern = "pillar",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2, noRadius = true},
-    {pattern = "column",       action = "DODGE", evadeDist = EVADE_FLAME_PILLAR, priority = 2, noRadius = true},
-    -- Hiken (fire fist) — block in place
-    {pattern = "hiken",        action = "BLOCK", evadeDist = 0, priority = 2, noRadius = true},
-    {pattern = "hi_ken",       action = "BLOCK", evadeDist = 0, priority = 2, noRadius = true},
-    {pattern = "fire_fist",    action = "BLOCK", evadeDist = 0, priority = 2, noRadius = true},
-    {pattern = "firefist",     action = "BLOCK", evadeDist = 0, priority = 2, noRadius = true},
-    {pattern = "fireball",     action = "BLOCK", evadeDist = 0, priority = 3, noRadius = true},
-    {pattern = "mera_special", action = "BLOCK", evadeDist = 0, priority = 3, noRadius = true},
+-- Queue-based only for Enkai/Entei (wide area, one-shot spawn events)
+local EnkaiDefs = {
+    {pattern = "enkai",  evadeDist = EVADE_ENTEI, priority = 1},
+    {pattern = "en_kai", evadeDist = EVADE_ENTEI, priority = 1},
+    {pattern = "entei",  evadeDist = EVADE_ENTEI, priority = 1},
+}
+
+-- Active poll patterns — checked every scan tick against ALL workspace descendants
+-- These spawn persistently and need re-detection each tick
+local ActiveSkillDefs = {
+    -- Flame Pillar: dodge 75 studs sideways
+    {pattern = "flame_pillar",  action = "DODGE", evadeDist = EVADE_FLAME_PILLAR},
+    {pattern = "flamepillar",   action = "DODGE", evadeDist = EVADE_FLAME_PILLAR},
+    {pattern = "flame pillar",  action = "DODGE", evadeDist = EVADE_FLAME_PILLAR},
+    {pattern = "flamepilla",    action = "DODGE", evadeDist = EVADE_FLAME_PILLAR}, -- truncated name guard
+    {pattern = "eruption",      action = "DODGE", evadeDist = EVADE_FLAME_PILLAR},
+    {pattern = "firepillar",    action = "DODGE", evadeDist = EVADE_FLAME_PILLAR},
+    {pattern = "pillar_dmg",    action = "DODGE", evadeDist = EVADE_FLAME_PILLAR},
+    -- Hiken: block in place
+    {pattern = "hiken",         action = "BLOCK", evadeDist = 0},
+    {pattern = "hi_ken",        action = "BLOCK", evadeDist = 0},
+    {pattern = "fire_fist",     action = "BLOCK", evadeDist = 0},
+    {pattern = "firefist",      action = "BLOCK", evadeDist = 0},
+    {pattern = "hiken_dmg",     action = "BLOCK", evadeDist = 0},
+    -- Firefly: block in place (active Effects scan below also catches this)
+    {pattern = "firefly",       action = "BLOCK", evadeDist = 0},
+    {pattern = "fire_fly",      action = "BLOCK", evadeDist = 0},
 }
 
 local IGNORE_NAME_PATTERNS = {
@@ -1128,7 +1132,7 @@ local IGNORE_NAME_PATTERNS = {
     "decal", "highlight", "selection", "tag", "gui",
 }
 
-local BOSS_PROX_RADIUS = 180
+local ACTIVE_POLL_RADIUS = 200  -- scan within 200 studs for active skills
 
 local function GetInstPos(inst)
     if not inst then return nil end
@@ -1149,74 +1153,95 @@ local function GetInstPos(inst)
     return pos
 end
 
--- ==========================================
--- Queue-based: workspace.DescendantAdded đẩy instance vào queue
--- Scan loop chỉ drain queue → không tốn CPU scan lại toàn workspace
--- ==========================================
+-- Queue for Enkai/Entei only
 local _newInstQueue = {}
 local _checkedInsts = setmetatable({}, {__mode = "k"})
 
--- Connect một lần duy nhất
 local _descAddedConn
 _descAddedConn = workspace.DescendantAdded:Connect(function(inst)
     if _G.DungeonScriptID ~= currentScriptID then
         _descAddedConn:Disconnect(); return
     end
-    -- Chỉ quan tâm BasePart và Model (có vị trí)
     if inst:IsA("BasePart") or inst:IsA("Model") then
         _newInstQueue[#_newInstQueue + 1] = inst
     end
 end)
 
--- Drain queue and check for hazards — only processes newly spawned instances
-local function DrainQueueScan(playerPos)
+-- Drain queue for Enkai/Entei detection
+local function DrainEnkaiScan(playerPos)
     if #_newInstQueue == 0 then return nil, nil, nil end
-
-    -- Grab current queue and reset for next tick
     local queue = _newInstQueue
     _newInstQueue = {}
-
     local bestDef, bestInst, bestPos
-
     local char = Player.Character
     for _, v in ipairs(queue) do
-        -- Skip if already checked, gone from workspace, or belongs to character
         if _checkedInsts[v] then continue end
         if not v:IsDescendantOf(workspace) then continue end
         if char and v:IsDescendantOf(char) then continue end
         _checkedInsts[v] = true
-
-        -- Ignore noise patterns
         local n = v.Name:lower()
         local skip = false
         for _, pat in ipairs(IGNORE_NAME_PATTERNS) do
             if n:find(pat, 1, true) then skip = true; break end
         end
         if skip then continue end
-
         local vPos = GetInstPos(v)
         if not vPos then continue end
-
-        local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
-
-        for _, def in ipairs(BossSkillDefs) do
-            local inRadius = def.noRadius or (dist <= BOSS_PROX_RADIUS)
-            if inRadius and (not bestDef or def.priority < bestDef.priority) and n:match(def.pattern) then
-                bestDef  = def
-                bestInst = v
-                bestPos  = vPos
+        for _, def in ipairs(EnkaiDefs) do
+            if n:match(def.pattern) then
+                if not bestDef or def.priority < (bestDef.priority or 99) then
+                    bestDef = def; bestInst = v; bestPos = vPos
+                end
             end
         end
     end
-
     return bestDef, bestInst, bestPos
+end
+
+-- Active poll scan: checks workspace descendants each tick for persistent boss skills
+-- No _checkedInsts — runs fresh every tick so skills are always detected while present
+local function ActiveSkillScan(playerPos)
+    local bestAction, bestEvadeDist, bestInst, bestPos
+    local char = Player.Character
+    -- Only scan when in boss zones
+    if CurrentZoneIndex < 5 then return nil, nil, nil, nil end
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if not v:IsDescendantOf(workspace) then continue end
+        if char and v:IsDescendantOf(char) then continue end
+        if not (v:IsA("BasePart") or v:IsA("Model")) then continue end
+        if IgnoredHazards[v] then continue end
+        local n = v.Name:lower()
+        local skip = false
+        for _, pat in ipairs(IGNORE_NAME_PATTERNS) do
+            if n:find(pat, 1, true) then skip = true; break end
+        end
+        if skip then continue end
+        local vPos = GetInstPos(v)
+        if not vPos then continue end
+        local dist = (Vector3.new(vPos.X, playerPos.Y, vPos.Z) - Vector3.new(playerPos.X, playerPos.Y, playerPos.Z)).Magnitude
+        if dist > ACTIVE_POLL_RADIUS then continue end
+        for _, def in ipairs(ActiveSkillDefs) do
+            if n:match(def.pattern) then
+                -- Prefer BLOCK over DODGE on tie; first match wins per priority
+                if not bestAction then
+                    bestAction = def.action
+                    bestEvadeDist = def.evadeDist
+                    bestInst = v
+                    bestPos  = vPos
+                end
+                break
+            end
+        end
+        if bestAction then break end  -- take first found, stop scanning
+    end
+    return bestAction, bestEvadeDist, bestInst, bestPos
 end
 
 task.spawn(function()
     while _G.DungeonScriptID == currentScriptID do
         if _G.AutoDungeon and IsFarmingReady then
             pcall(function()
-                -- Dọn hazard hết hạn
+                -- Clean up expired ignores
                 for obj, expireTime in pairs(IgnoredHazards) do
                     if tick() > expireTime or not obj:IsDescendantOf(workspace) then
                         IgnoredHazards[obj] = nil
@@ -1227,79 +1252,59 @@ task.spawn(function()
                 local root = char and char:FindFirstChild("HumanoidRootPart")
                 if not root then return end
 
-                local playerPos       = root.Position
-                local detectedHazard  = "None"
-                local hazardPos       = nil
-                local hazardInst      = nil
-                local hazardAction    = "DODGE"
+                local playerPos      = root.Position
+                local detectedHazard = "None"
+                local hazardPos      = nil
+                local hazardInst     = nil
+                local hazardAction   = "DODGE"
                 local hazardEvadeDist = EvadeDistance
-                local foundLavaPart   = nil
-                local foundLavaPrompt = nil
+                local foundLavaPart  = nil
+                local foundLavaPrompt= nil
 
-                -- Boss skill scan (zone >= 5) — event-driven queue
+                -- ── ENKAI/ENTEI: queue-based (zone >= 5 only) ─────────────────
                 if CurrentZoneIndex >= 5 then
-                    local def, inst, pos = DrainQueueScan(playerPos)
+                    local def, inst, pos = DrainEnkaiScan(playerPos)
                     if def and inst then
-                        detectedHazard  = "BossSkill"
-                        hazardAction    = def.action
-                        hazardEvadeDist = def.evadeDist
-                        hazardInst      = inst
-                        if def.action == "DODGE" and pos then
-                            hazardPos = pos
-                        else
-                            hazardPos = playerPos
-                        end
+                        detectedHazard   = "Enkai"
+                        hazardAction     = "DODGE"
+                        hazardEvadeDist  = def.evadeDist
+                        hazardInst       = inst
+                        hazardPos        = pos or playerPos
                     end
                 end
 
-                -- General AoE + Firefly + Lava Curse (all zones)
+                -- ── ACTIVE SKILL POLL: Hiken / FlamePillar / Firefly ──────────
+                -- Runs every tick, no _checkedInsts — always detects persistent skills
                 if detectedHazard == "None" then
+                    local action, evadeDist, inst, pos = ActiveSkillScan(playerPos)
+                    if action and inst then
+                        detectedHazard  = action == "BLOCK" and "ActiveBlock" or "ActiveDodge"
+                        hazardAction    = action
+                        hazardEvadeDist = evadeDist
+                        hazardInst      = inst
+                        hazardPos       = pos or playerPos
+                    end
+                end
+
+                -- ── LAVA CURSE: all zones ─────────────────────────────────────
+                if CurrentZoneIndex >= 5 then
                     local effectsFolder = workspace:FindFirstChild("Effects")
                     if effectsFolder then
-                        local minDist = DangerRadius
                         for _, v in ipairs(effectsFolder:GetDescendants()) do
                             if not v:IsA("BasePart") and not v:IsA("Model") then continue end
                             local name = v.Name:lower()
-                            local vPos = GetInstPos(v)
-                            if vPos and not IgnoredHazards[v] then
-                                local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
-
-                                local isArrow     = name:match("arrow") or name:match("rain")
-                                local isFirefly   = name:match("firefly") or name:match("fire_fly")
-
-                                if isFirefly and dist < minDist then
-                                    -- Firefly: block in place, resume attacking immediately after
-                                    detectedHazard  = "Firefly"
-                                    hazardPos       = vPos
-                                    minDist         = dist
-                                    hazardInst      = v
-                                    hazardAction    = "BLOCK"
-                                    hazardEvadeDist = 0
-
-                                elseif isArrow and dist < minDist then
-                                    detectedHazard  = "ArrowRain"
-                                    hazardPos       = vPos
-                                    minDist         = dist
-                                    hazardInst      = v
-                                    hazardAction    = "DODGE"
-                                    hazardEvadeDist = 80
-
-                                elseif (name:match("aoe") or name:match("circle") or name:match("bomb")
-                                    or name:match("meteor") or name:match("projectile")) and dist < minDist then
-                                    detectedHazard  = "Normal"
-                                    hazardPos       = vPos
-                                    minDist         = dist
-                                    hazardInst      = v
-                                    hazardAction    = "DODGE"
-                                    hazardEvadeDist = 40
-                                end
-
-                                if name:match("lava") and name:match("curse") and dist < 1500 then
-                                    local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
-                                    local part   = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
-                                    if part and prompt and prompt.Enabled then
-                                        foundLavaPart   = part
-                                        foundLavaPrompt = prompt
+                            if name:match("lava") and name:match("curse") then
+                                local vPos = GetInstPos(v)
+                                if vPos then
+                                    local dist = (Vector3.new(vPos.X, playerPos.Y, vPos.Z)
+                                               - Vector3.new(playerPos.X, playerPos.Y, playerPos.Z)).Magnitude
+                                    if dist < 1500 then
+                                        local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
+                                        local part   = v:IsA("BasePart") and v or v:FindFirstChildWhichIsA("BasePart", true)
+                                        if part and prompt and prompt.Enabled then
+                                            foundLavaPart   = part
+                                            foundLavaPrompt = prompt
+                                        end
                                     end
                                 end
                             end
@@ -1316,11 +1321,10 @@ task.spawn(function()
                 CurrentLava.Prompt      = foundLavaPrompt
             end)
         end
-        -- V13: zone 8 scan 0.01s (nhạy nhất), zone 7 0.02s, zone 5-6 0.04s, thường 0.06s
         local scanInterval = IsFarmingReady and (
             CurrentZoneIndex >= 8 and 0.01 or
             CurrentZoneIndex >= 7 and 0.02 or
-            CurrentZoneIndex >= 5 and 0.04 or 0.06
+            CurrentZoneIndex >= 5 and 0.04 or 0.1
         ) or 0.1
         task.wait(scanInterval)
     end
@@ -1328,46 +1332,47 @@ end)
 
 -- ==========================================
 -- [14-B] MERA ULTRA WATCHER
--- Hooks Leo's meraUltMax attribute.
--- When set: dodge 100 studs sideways immediately.
--- When nil: resume combat.
+-- meraUltMax active  → dodge 100 studs sideways, hold minimum 2.5s
+-- meraUltMax → nil   → resume combat after hold expires
 -- ==========================================
+local _meraUltHoldUntil = 0  -- tick() timestamp when hold expires
+
 local function HookLeoAttributes(leoModel)
     leoModel.AttributeChanged:Connect(function(attr)
         if attr ~= "meraUltMax" then return end
         local val = leoModel:GetAttribute("meraUltMax")
         if val ~= nil then
-            -- Mera Ult active — pick a right-vector sidestep of 100 studs
-            _meraUltDodging = true
+            -- Mera Ult activated — snap sideways 100 studs, lock for minimum 2.5s
+            _meraUltDodging  = true
+            _meraUltHoldUntil = tick() + 2.5
             local char = Player.Character
             local root  = char and char:FindFirstChild("HumanoidRootPart")
             if root then
-                local right       = root.CFrame.RightVector
-                local dodgeTarget = Vector3.new(
+                local right = root.CFrame.RightVector
+                TargetCFrame      = CFrame.new(Vector3.new(
                     root.Position.X + right.X * 100,
                     root.Position.Y,
                     root.Position.Z + right.Z * 100
-                )
-                TargetCFrame      = CFrame.new(dodgeTarget)
+                ))
                 IsReadyToAttack   = false
                 CurrentTargetRoot = nil
             end
         else
-            -- Mera Ult ended — let state machine resume
-            _meraUltDodging = false
-            TargetCFrame    = nil
+            -- Attribute cleared — release only after minimum hold time
+            task.delay(math.max(0, _meraUltHoldUntil - tick()), function()
+                _meraUltDodging = false
+                TargetCFrame    = nil
+            end)
         end
     end)
 end
 
--- Scan existing Leo models on script start
 for _, obj in ipairs(workspace:GetDescendants()) do
     if obj.Name == "Leo" and obj:IsA("Model") and obj:FindFirstChild("Humanoid") then
         HookLeoAttributes(obj)
     end
 end
 
--- Watch for Leo respawn during a run
 local _leoWatchConn
 _leoWatchConn = workspace.DescendantAdded:Connect(function(obj)
     if _G.DungeonScriptID ~= currentScriptID then
@@ -1375,9 +1380,7 @@ _leoWatchConn = workspace.DescendantAdded:Connect(function(obj)
     end
     if obj.Name == "Leo" and obj:IsA("Model") then
         task.wait(0.5)
-        if obj:FindFirstChild("Humanoid") then
-            HookLeoAttributes(obj)
-        end
+        if obj:FindFirstChild("Humanoid") then HookLeoAttributes(obj) end
     end
 end)
 -- ==========================================
@@ -1580,8 +1583,7 @@ task.spawn(function()
                         IsReadyToAttack   = false
                         CurrentTargetRoot = nil
 
-                        ZoneState          = "DODGING"
-                        _currentDodgeIsAoe = (CurrentHazard.Type == "Normal")
+                        ZoneState = "DODGING"
 
                         local evadeDir = (root.Position - CurrentHazard.Position)
                         if evadeDir.Magnitude < 0.1 then
@@ -1607,13 +1609,8 @@ task.spawn(function()
                     CurrentTargetRoot = nil
                     if tick() > DodgeTimer then
                         CurrentHazard.Type = "None"
-                        if _currentDodgeIsAoe then
-                            _currentDodgeIsAoe = false
-                            local char2 = Player.Character
-                            local wpn2  = char2 and char2:FindFirstChildOfClass("Tool")
-                            TriggerSkillBlock(wpn2 and wpn2.Name or "Melee", 0.5)
-                            DodgeTimer = tick() + 0.7
-                        elseif _G.SkillBlocking then
+                        if _G.SkillBlocking then
+                            -- Wait for block to fully release before resuming
                             DodgeTimer = tick() + 0.1
                         else
                             ZoneState = PreviousZoneState or "ATTACKING"
@@ -1760,8 +1757,8 @@ task.spawn(function()
     local CombatRegister   = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
     local currentCombo     = 1
     local MAX_COMBO        = 5      -- V7: đúng game combo (5 hit)
-    local strikeDelay      = 0.36  -- V7: đúng game attack speed
-    local comboResetDelay  = 1.5
+    local strikeDelay      = 0.4  -- V7: đúng game attack speed
+    local comboResetDelay  = 1.2
     local _lastFireTime    = 0
 
     while _G.DungeonScriptID == currentScriptID do
@@ -2136,48 +2133,7 @@ local function _removeAntiGrav(root)
     if ag then ag:Destroy() end
 end
 
--- V5: Watchdog — phát hiện character bị stuck, force CFrame snap
--- Chạy 1 loop duy nhất, check mỗi 3s
-local _watchdogPos      = nil
-local WATCHDOG_INTERVAL = 3
-local WATCHDOG_MIN_MOVE = 3
 
-task.spawn(function()
-    while _G.DungeonScriptID == currentScriptID do
-        task.wait(WATCHDOG_INTERVAL)
-        if not _G.AutoDungeon or not IsFarmingReady or _G.IsProcessingFruit then
-            _watchdogPos = nil; continue
-        end
-        local char = Player.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        local activeTarget = CurrentTargetRoot or (TargetCFrame and TargetCFrame.Position)
-        if not root or not activeTarget then _watchdogPos = nil; continue end
-
-        local targetPos = type(activeTarget) == "userdata" and activeTarget.Position or activeTarget
-        local curPos    = root.Position
-        local distToTarget = (curPos - targetPos).Magnitude
-
-        -- Hướng tới target rồi thì không cần snap
-        if distToTarget < 8 then _watchdogPos = nil; continue end
-
-        -- Kiểm tra có di chuyển không
-        if _watchdogPos and (curPos - _watchdogPos).Magnitude < WATCHDOG_MIN_MOVE then
-            pcall(function()
-                _smoothPos = nil
-                local ag = root:FindFirstChild(_antiGravName)
-                if ag then ag.Velocity = Vector3.zero end
-                local snapY    = curPos.Y
-                local toTarget = Vector3.new(targetPos.X - curPos.X, 0, targetPos.Z - curPos.Z)
-                if toTarget.Magnitude > 0 then
-                    local smallStep = toTarget.Unit * math.min(5, toTarget.Magnitude)
-                    root.CFrame = CFrame.new(curPos.X + smallStep.X, snapY, curPos.Z + smallStep.Z)
-                        * root.CFrame.Rotation
-                end
-            end)
-        end
-        _watchdogPos = curPos
-    end
-end)
 
 _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     if not _G.AutoDungeon then return end
@@ -2211,16 +2167,23 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     end
 
     -- ── TARGET POSITION ─────────────────────────────────────────────────
-    -- All zones: position above mob head by AttackOffset.
-    -- For TargetCFrame-only states (FLYING, DODGING, ABSORBING_CURSE etc.),
-    -- use the exact CFrame position (no Y override).
+    -- Position above mob head by AttackOffset.
+    -- For zones where the mob is underground (zone 7/8), clamp to at least
+    -- floorY + AttackOffset so the character stays above the visible ground.
     local activeTargetPos = nil
     if CurrentTargetRoot and CurrentTargetRoot.Parent then
-        activeTargetPos = Vector3.new(
-            CurrentTargetRoot.Position.X,
-            CurrentTargetRoot.Position.Y + AttackOffset,
-            CurrentTargetRoot.Position.Z
-        )
+        local mobX  = CurrentTargetRoot.Position.X
+        local mobY  = CurrentTargetRoot.Position.Y
+        local mobZ  = CurrentTargetRoot.Position.Z
+        local floorY = GetZoneFloor(CurrentZoneIndex, CachedZoneBoxCenters[CurrentZoneIndex])
+        local targetY
+        if floorY then
+            -- Never go underground: clamp so character is at least AttackOffset above floor
+            targetY = math.max(mobY + AttackOffset, floorY + AttackOffset)
+        else
+            targetY = mobY + AttackOffset
+        end
+        activeTargetPos = Vector3.new(mobX, targetY, mobZ)
     elseif TargetCFrame then
         activeTargetPos = TargetCFrame.Position
     end
