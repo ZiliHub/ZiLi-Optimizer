@@ -4730,9 +4730,8 @@ local function _SHOW_CRASH(errMsg)
     end)
 end
 
+-- SafeSpawn: khong override task (Arceus va nhieu executor block readonly)
 local _rawSpawn = task.spawn
-
--- Wrapper riêng, KHÔNG đụng vào task table
 local function SafeSpawn(fn, ...)
     local a = {...}
     return _rawSpawn(function()
@@ -5052,6 +5051,7 @@ local TweenService= game:GetService("TweenService")
 local Players     = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
+local CoreGui     = game:GetService("CoreGui")
 
 -- =====================================================================
 -- SCREEN GUI
@@ -5061,7 +5061,6 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = HttpService:GenerateGUID(false)
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-local CoreGui = game:GetService("CoreGui") 
 if gethui then
     ScreenGui.Parent = gethui()
 elseif syn and syn.protect_gui then
@@ -5878,14 +5877,11 @@ UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseB
 -- =====================================================================
 -- MAIN FRAME
 -- =====================================================================
-local MainFrame = NEW("CanvasGroup", {
-    Size = UDim2.new(0, 720, 0, 520), 
-    Position = UDim2.new(0.5, -360, 0.5, -260), -- Luôn nhớ dấu phẩy ở đây
-    -- CHECKPOINT("MAIN FRAME — building frame") 
-    BackgroundColor3 = BG1, 
-    BorderSizePixel = 0, 
-    ClipsDescendants = true,
-    GroupTransparency = 1
+local MainFrame = NEW("CanvasGroup",{
+    Size=UDim2.new(0,720,0,520), Position=UDim2.new(0.5,-360,0.5,-260),
+CHECKPOINT("MAIN FRAME — building frame")
+    BackgroundColor3=BG1, BorderSizePixel=0, ClipsDescendants=true,
+    GroupTransparency=1
 }, ScreenGui)
 CORNER(14, MainFrame)
 STROKE(GOLD, 1.8, 0.06, MainFrame)
@@ -8428,12 +8424,10 @@ local fmH = 80
 local fmCard = MakeCard(FishingPage, fmH, 1)
 CardHeader(fmCard, "fish", "FISHING + MERCHANT FARM", ORANGE)
 
-FishMasterBar = NEW("Frame", {
-    Size = UDim2.new(0, 3, 1, 0), 
-    Position = UDim2.new(0, 0, 0, 0), -- Đảm bảo có dấu phẩy ở đây
-    -- CHECKPOINT("FISHING PAGE — building fishing tab") 
-    BackgroundColor3 = GOLD, 
-    BorderSizePixel = 0
+FishMasterBar = NEW("Frame",{
+    Size=UDim2.new(0,3,1,0), Position=UDim2.new(0,0,0,0),
+CHECKPOINT("FISHING PAGE — building fishing tab")
+    BackgroundColor3=GOLD, BorderSizePixel=0
 }, fmCard)
 CORNER(2, FishMasterBar)
 
@@ -9570,17 +9564,12 @@ local function CreateStatRow(statName, layoutOrder)
     local row = MakeCard(StatsPage, 52, layoutOrder)
 
     -- stat name
--- CHECKPOINT("STATS PAGE — building stats tab") 
-NEW("TextLabel", {
-    Text = statName, 
-    Size = UDim2.new(0.52, 0, 1, 0), 
-    Position = UDim2.new(0, 14, 0, 0), -- Thêm dấu phẩy ở đây
-    BackgroundTransparency = 1, 
-    TextColor3 = TEXT1,
-    Font = Enum.Font.GothamBold, 
-    TextSize = 14, 
-    TextXAlignment = Enum.TextXAlignment.Left
-}, row)
+    NEW("TextLabel",{
+        Text=statName, Size=UDim2.new(0.52,0,1,0), Position=UDim2.new(0,14,0,0),
+CHECKPOINT("STATS PAGE — building stats tab")
+        BackgroundTransparency=1, TextColor3=TEXT1,
+        Font=Enum.Font.GothamBold, TextSize=14, TextXAlignment=Enum.TextXAlignment.Left
+    }, row)
 
     -- auto add button
     local addBtn=NEW("TextButton",{
@@ -10099,7 +10088,7 @@ local function RunExecutorDiagnostics()
     end)
 end
 
-task.spawn(RunExecutorDiagnostics)
+SafeSpawn(RunExecutorDiagnostics)
 
 -- Báo loading screen rằng script đã load xong
 _G._ZiliLoadReady = true
