@@ -456,7 +456,7 @@ local function CheckAndEquipWeapon()
     if not bp then return currentTool end
     local sword = nil
     for _, t in pairs(bp:GetChildren()) do
-        if t:IsA("Tool") and (t.Name:lower():match("sword") or t.Name:lower():match("blade") or t.Name:lower():match("axe") t.Name:lower():match("katana")) then 
+        if t:IsA("Tool") and (t.Name:lower():match("sword") or t.Name:lower():match("blade") or t.Name:lower():match("axe") or t.Name:lower():match("katana")) then 
             sword = t
             break 
         end
