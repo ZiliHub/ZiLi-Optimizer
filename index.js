@@ -4615,13 +4615,19 @@ end
 -- =====================================================================
 -- CRASH REPORTER & CHECKPOINT SYSTEM
 -- =====================================================================
+
+-- Safe wrappers cho cac ham co the nil tren Arceus X
+local _clock  = type(os) == "table" and type(os.clock)  == "function" and os.clock  or tick
+local _date   = type(os) == "table" and type(os.date)   == "function" and os.date   or function() return tostring(math.floor(tick())) end
+local _traceback = type(debug) == "table" and type(debug.traceback) == "function" and debug.traceback or function(e) return tostring(e) end
+
 local _CK_LOG      = {}
 local _CK_CURRENT  = "Startup"
 local _CK_REPORTED = false
 
 local function CHECKPOINT(name)
     _CK_CURRENT = name
-    table.insert(_CK_LOG, string.format("[%.2f] %s", os.clock(), name))
+    table.insert(_CK_LOG, string.format("[%.2f] %s", _clock(), name))
     print("[ZILI CK] " .. name)
 end
 
@@ -4629,7 +4635,7 @@ local function _SHOW_CRASH(errMsg)
     if _CK_REPORTED then return end
     _CK_REPORTED = true
     local logText = "=== ZILI HUB CRASH REPORT ===\n"
-        .. "Time    : " .. os.date("%H:%M:%S") .. "\n"
+        .. "Time    : " .. _date("%H:%M:%S") .. "\n"
         .. "Section : " .. tostring(_CK_CURRENT) .. "\n"
         .. "Error   : " .. tostring(errMsg) .. "\n\n"
         .. "=== CHECKPOINTS PASSED ===\n"
@@ -4735,13 +4741,14 @@ local _rawSpawn = task.spawn
 local function SafeSpawn(fn, ...)
     local a = {...}
     return _rawSpawn(function()
-        local ok, err = xpcall(fn, debug.traceback, table.unpack(a))
+        local ok, err = xpcall(fn, _traceback, table.unpack(a))
         if not ok then _SHOW_CRASH("[async] "..tostring(err)) end
     end)
 end
 
 CHECKPOINT("Debug system ready")
 
+local _mainOk, _mainErr = xpcall(function()
 
 -- =====================================================================
 -- PLACE DETECTION  (phải chạy TRƯỚC tất cả require)
@@ -5877,16 +5884,11 @@ UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseB
 -- =====================================================================
 -- MAIN FRAME
 -- =====================================================================
-local MainFrame = NEW("CanvasGroup", {
-    Size = UDim2.new(0, 720, 0, 520), 
-    Position = UDim2.new(0.5, -360, 0.5, -260), -- Đảm bảo có dấu phẩy ở đây
-    
-    -- CHECKPOINT("MAIN FRAME — building frame") <--- Thêm dấu gạch ngang ở đây
-    
-    BackgroundColor3 = BG1, 
-    BorderSizePixel = 0, 
-    ClipsDescendants = true,
-    GroupTransparency = 1
+local MainFrame = NEW("CanvasGroup",{
+    Size=UDim2.new(0,720,0,520), Position=UDim2.new(0.5,-360,0.5,-260),
+CHECKPOINT("MAIN FRAME — building frame")
+    BackgroundColor3=BG1, BorderSizePixel=0, ClipsDescendants=true,
+    GroupTransparency=1
 }, ScreenGui)
 CORNER(14, MainFrame)
 STROKE(GOLD, 1.8, 0.06, MainFrame)
@@ -8429,15 +8431,11 @@ local fmH = 80
 local fmCard = MakeCard(FishingPage, fmH, 1)
 CardHeader(fmCard, "fish", "FISHING + MERCHANT FARM", ORANGE)
 
+FishMasterBar = NEW("Frame",{
+    Size=UDim2.new(0,3,1,0), Position=UDim2.new(0,0,0,0),
 CHECKPOINT("FISHING PAGE — building fishing tab")
-
-FishMasterBar = NEW("Frame", {
-    Size = UDim2.new(0,3,1,0), 
-    Position = UDim2.new(0,0,0,0), -- Đã thêm dấu phẩy
-    BackgroundColor3 = GOLD, 
-    BorderSizePixel = 0
+    BackgroundColor3=GOLD, BorderSizePixel=0
 }, fmCard)
-
 CORNER(2, FishMasterBar)
 
 -- main label
@@ -9573,20 +9571,12 @@ local function CreateStatRow(statName, layoutOrder)
     local row = MakeCard(StatsPage, 52, layoutOrder)
 
     -- stat name
--- stat name
-NEW("TextLabel",{
-    Text=statName, 
-    Size=UDim2.new(0.52,0,1,0), 
-    Position=UDim2.new(0,14,0,0), -- Phải có dấu phẩy ở đây
-    
-    -- CHECKPOINT("STATS PAGE — building stats tab") <--- Thêm dấu -- ở đây là xong!
-    
-    BackgroundTransparency=1, 
-    TextColor3=TEXT1,
-    Font=Enum.Font.GothamBold, 
-    TextSize=14, 
-    TextXAlignment=Enum.TextXAlignment.Left
-}, row)
+    NEW("TextLabel",{
+        Text=statName, Size=UDim2.new(0.52,0,1,0), Position=UDim2.new(0,14,0,0),
+CHECKPOINT("STATS PAGE — building stats tab")
+        BackgroundTransparency=1, TextColor3=TEXT1,
+        Font=Enum.Font.GothamBold, TextSize=14, TextXAlignment=Enum.TextXAlignment.Left
+    }, row)
 
     -- auto add button
     local addBtn=NEW("TextButton",{
@@ -10109,3 +10099,9 @@ SafeSpawn(RunExecutorDiagnostics)
 
 -- Báo loading screen rằng script đã load xong
 _G._ZiliLoadReady = true
+
+end, _traceback)
+
+if not _mainOk then
+    _SHOW_CRASH(_mainErr)
+end
