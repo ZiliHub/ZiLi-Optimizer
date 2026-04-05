@@ -1028,8 +1028,23 @@ __modules["Farm/AutoFarmLevel"] = function()
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Player = Players.LocalPlayer
 
-    local QuestFunc = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("NPCInteractions"):WaitForChild("QuestFunctions"))
-    local TweenToIsland = require("Island/TWEEN TO ISLAND")
+    -- ✅ Fix cho cả buso.txt và lvl_farm.txt
+    local QuestFunc = nil
+    pcall(function()
+        local m = ReplicatedStorage:WaitForChild("Modules", 5)
+        local n = m and m:WaitForChild("NPCInteractions", 5)
+        local q = n and n:WaitForChild("QuestFunctions", 5)
+        if q then QuestFunc = require(q) end
+    end)
+    -- ✅ Thêm vào lvl_farm.txt
+    local TweenToIsland = nil
+    pcall(function()
+        TweenToIsland = require("Island/TWEEN TO ISLAND")
+    end)
+    -- Fallback nếu require thất bại
+    if not TweenToIsland then
+        TweenToIsland = { IsTeleporting = false, Start = function() end, Stop = function() end }
+    end
 
     _G.LureFarm = false
 
@@ -1726,7 +1741,17 @@ __modules["Farm/AutoGetBuso"] = function()
     local CurrentBackpack = nil
     local AttackHandler = nil
 
-    local QuestFunc = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("NPCInteractions"):WaitForChild("QuestFunctions"))
+    -- ✅ Có timeout + pcall, không treo nữa
+local QuestFunc = nil
+pcall(function()
+    local mods = ReplicatedStorage:WaitForChild("Modules", 5)
+    if not mods then return end
+    local npc = mods:WaitForChild("NPCInteractions", 5)
+    if not npc then return end
+    local qf = npc:WaitForChild("QuestFunctions", 5)
+    if not qf then return end
+    QuestFunc = require(qf)
+end)
 
     _G.BusoFarm = false
 
