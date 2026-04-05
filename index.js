@@ -4627,8 +4627,15 @@ local _CK_REPORTED = false
 
 local function CHECKPOINT(name)
     _CK_CURRENT = name
-    table.insert(_CK_LOG, string.format("[%.2f] %s", _clock(), name))
+    local entry = string.format("[%.2f] %s", _clock(), name)
+    table.insert(_CK_LOG, entry)
     print("[ZILI CK] " .. name)
+    -- Ghi file ngay lap tuc de hard crash cung co log
+    pcall(function()
+        if writefile then
+            writefile("zili_checkpoint.txt", table.concat(_CK_LOG, "\n"))
+        end
+    end)
 end
 
 local function _SHOW_CRASH(errMsg)
@@ -4772,17 +4779,28 @@ local Bypass, Esp, TweenSys, IslandData
 local AutoFarmLevel, AutoGetBuso, AutoGeppoFunc, AutoFishMerchantModule, AutoStats
 
 if not IS_LOBBY then
+    CHECKPOINT("REQUIRES — loading BYPASS")
     pcall(function() Bypass        = require("BYPASS ANTICHEAT") end)
+    CHECKPOINT("REQUIRES — loading Esp")
     pcall(function() Esp           = require("Island/Esp") end)
+    CHECKPOINT("REQUIRES — loading TweenSys")
     pcall(function() TweenSys      = require("Island/TWEEN TO ISLAND") end)
+    CHECKPOINT("REQUIRES — loading IslandData")
     pcall(function() IslandData    = require("Island/IslandData") end)
+    CHECKPOINT("REQUIRES — loading AutoFarmLevel")
     pcall(function() AutoFarmLevel = require("Farm/AutoFarmLevel") end)
+    CHECKPOINT("REQUIRES — loading AutoGetBuso")
     pcall(function() AutoGetBuso   = require("Farm/AutoGetBuso") end)
+    CHECKPOINT("REQUIRES — loading AutoGeppo")
     pcall(function() AutoGeppoFunc = require("Farm/AutoGeppo") end)
+    CHECKPOINT("REQUIRES — loading AutoFishMerchant")
     pcall(function() AutoFishMerchantModule = require("Farm/AutoFishMerchant") end)
+    CHECKPOINT("REQUIRES — loading AutoStats")
     pcall(function() AutoStats     = require("Stats/addStats") end)
+    CHECKPOINT("REQUIRES — all modules done")
 end
 
+CHECKPOINT("REQUIRES — calling Bypass.Init")
 pcall(function() if Bypass and Bypass.Init then Bypass.Init() end end)
 pcall(function()
     if TweenSys then TweenSys.Notify = function() end end
@@ -10029,8 +10047,10 @@ local function RunExecutorDiagnostics()
     local missing={}
     for _,v in ipairs(critical) do if type(env[v])~="function" then table.insert(missing,v) end end
     if #missing>0 then
-        game.Players.LocalPlayer:Kick(string.format("\n[ZILI SECURITY: FATAL ERROR]\n\nExecutor [%s] missing:\n- %s\n\nPlease upgrade your executor.",name,table.concat(missing,"\n- ")))
-        task.wait(9e9); return
+        -- Warn thay vi kick de debug tren Arceus X
+        warn(string.format("[ZILI] Executor [%s] missing: %s", name, table.concat(missing,", ")))
+        print(string.format("[ZILI WARNING] Missing functions: %s", table.concat(missing,", ")))
+        -- Khong kick, tiep tuc chay de test
     end
 
     local deps={"hookmetamethod","hookfunction","getrawmetatable","setreadonly","getnamecallmethod","newcclosure","cloneref","fireproximityprompt","getconnections","readfile","writefile","isfile","makefolder","isfolder","getgenv","identifyexecutor","setclipboard","request"}
