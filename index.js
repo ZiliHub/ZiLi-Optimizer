@@ -2946,6 +2946,9 @@ __modules["Farm/AutoFishMerchant"] = function()
     local _Configs = {
         CraftLeg      = false,
         CraftRare     = false,
+        -- "single" = craft từng bait một (Count=1 mỗi call, loop)
+        -- "all"    = craft hết 1 lần (Count=floor(fishCount/2), 1 call)
+        CraftRareMode = "single",
         EquipRod     = true,
         EquipTitle   = true,
         BuyBait      = false,
@@ -3499,7 +3502,77 @@ __modules["Farm/AutoFishMerchant"] = function()
         return true
     end
 
+    -- mode: "single" = loop Count=1 từng lần (an toàn, chậm hơn)
+    --        "all"    = 1 call Count=floor(count/countPerCraft) (nhanh, craft hết 1 lần)
+    local function AutoCraftSilent(blueprintType, extraDataKey, fishList, minCount, countPerCraft, mode)
+        minCount      = minCount      or 1
+        countPerCraft = countPerCraft or 1
+        mode          = mode          or "single"
+        local inventory = GetInventory()
+        if not inventory then return false end
 
+        -- [FIX 3 DEBUG] In inventory keys lần đầu để verify tên cá khớp FishLists
+        -- Xóa block này sau khi confirm tên cá đúng.
+        if blueprintType == "Rare Fish Bait" and _G._RareCraftDebugDone ~= true then
+            _G._RareCraftDebugDone = true
+            local found = {}
+            for k, v in pairs(inventory) do
+                if type(v) == "number" and v >= 1 then
+                    found[#found+1] = k.."="..tostring(v)
+                end
+            end
+            print("[ZILI DEBUG] Inventory keys:", table.concat(found, ", "))
+        end
+
+        local craftedAny = false
+        for _, fishName in ipairs(fishList) do
+            local count = inventory[fishName] or 0
+            if count >= minCount then
+                if not craftedAny then
+                    TweenToPosAndWait(Cords.Craft)
+                    craftedAny = true
+                    if not _G.AutoFishing then return false end
+                end
+
+                local batches = math.floor(count / countPerCraft)
+                if batches < 1 then continue end
+
+                if mode == "all" then
+                    -- ── MODE ALL: 1 call duy nhất, Count = số bait cần craft ──
+                    -- Ví dụ: 30 Fangfish, countPerCraft=2 → Count=15 → server deduct 30 cá
+                    if CraftingRemoteR then
+                        pcall(function()
+                            CraftingRemoteR:InvokeServer(unpack({{
+                                ["BlueprintItem"] = blueprintType,
+                                ["Method"]        = "Craft",
+                                ["ExtraData"]     = {[fishName] = extraDataKey},
+                                ["Count"]         = batches,
+                            }}))
+                        end)
+                        task.wait(0.5)
+                    end
+                else
+                    -- ── MODE SINGLE: loop Count=1, mỗi lần craft 1 bait ──
+                    -- An toàn hơn, server không bao giờ reject do đủ điều kiện từng call
+                    for _ = 1, batches do
+                        if not _G.AutoFishing then return false end
+                        if CraftingRemoteR then
+                            pcall(function()
+                                CraftingRemoteR:InvokeServer(unpack({{
+                                    ["BlueprintItem"] = blueprintType,
+                                    ["Method"]        = "Craft",
+                                    ["ExtraData"]     = {[fishName] = extraDataKey},
+                                    ["Count"]         = 1,
+                                }}))
+                            end)
+                        end
+                        task.wait(0.5)
+                    end
+                end
+            end
+        end
+        return craftedAny
+    end
 
     -- =====================================================================
     -- MERCHANT
