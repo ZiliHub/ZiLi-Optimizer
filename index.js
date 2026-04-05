@@ -4613,6 +4613,137 @@ end
 -- =====================================================================
 
 -- =====================================================================
+-- CRASH REPORTER & CHECKPOINT SYSTEM
+-- =====================================================================
+local _CK_LOG      = {}
+local _CK_CURRENT  = "Startup"
+local _CK_REPORTED = false
+
+local function CHECKPOINT(name)
+    _CK_CURRENT = name
+    table.insert(_CK_LOG, string.format("[%.2f] %s", os.clock(), name))
+    print("[ZILI CK] " .. name)
+end
+
+local function _SHOW_CRASH(errMsg)
+    if _CK_REPORTED then return end
+    _CK_REPORTED = true
+    local logText = "=== ZILI HUB CRASH REPORT ===\n"
+        .. "Time    : " .. os.date("%H:%M:%S") .. "\n"
+        .. "Section : " .. tostring(_CK_CURRENT) .. "\n"
+        .. "Error   : " .. tostring(errMsg) .. "\n\n"
+        .. "=== CHECKPOINTS PASSED ===\n"
+        .. table.concat(_CK_LOG, "\n")
+    print("[ZILI CRASH]\n" .. logText)
+    pcall(function()
+        if writefile then writefile("zili_crash_log.txt", logText) end
+    end)
+    pcall(function()
+        local _cg = game:GetService("CoreGui")
+        local _sg = Instance.new("ScreenGui")
+        _sg.Name="ZiliCrashReport"; _sg.DisplayOrder=99999
+        _sg.ResetOnSpawn=false; _sg.IgnoreGuiInset=true
+        _sg.Parent = (gethui and gethui()) or _cg
+
+        local _bg = Instance.new("Frame")
+        _bg.Size=UDim2.new(1,0,1,0)
+        _bg.BackgroundColor3=Color3.fromRGB(3,2,10)
+        _bg.BackgroundTransparency=0.35; _bg.BorderSizePixel=0; _bg.Parent=_sg
+
+        local _panel = Instance.new("Frame")
+        _panel.Size=UDim2.new(0,500,0,330)
+        _panel.Position=UDim2.new(0.5,-250,0.5,-165)
+        _panel.BackgroundColor3=Color3.fromRGB(10,6,20)
+        _panel.BorderSizePixel=0; _panel.Parent=_sg
+        Instance.new("UICorner",_panel).CornerRadius=UDim.new(0,16)
+        local _str=Instance.new("UIStroke",_panel)
+        _str.Color=Color3.fromRGB(220,60,60); _str.Thickness=1.5; _str.Transparency=0.2
+
+        local _hdr=Instance.new("Frame",_panel)
+        _hdr.Size=UDim2.new(1,0,0,44); _hdr.BackgroundColor3=Color3.fromRGB(150,28,28)
+        _hdr.BorderSizePixel=0
+        Instance.new("UICorner",_hdr).CornerRadius=UDim.new(0,16)
+        local _hfix=Instance.new("Frame",_hdr)
+        _hfix.Size=UDim2.new(1,0,0,16); _hfix.Position=UDim2.new(0,0,1,-16)
+        _hfix.BackgroundColor3=Color3.fromRGB(150,28,28); _hfix.BorderSizePixel=0
+
+        local _htitle=Instance.new("TextLabel",_hdr)
+        _htitle.Size=UDim2.new(1,-16,1,0); _htitle.Position=UDim2.new(0,16,0,0)
+        _htitle.BackgroundTransparency=1
+        _htitle.Text="[!]  ZILI HUB  —  SCRIPT CRASHED"
+        _htitle.TextColor3=Color3.fromRGB(255,200,200)
+        _htitle.Font=Enum.Font.GothamBold; _htitle.TextSize=14
+        _htitle.TextXAlignment=Enum.TextXAlignment.Left
+
+        local _sLbl=Instance.new("TextLabel",_panel)
+        _sLbl.Size=UDim2.new(1,-24,0,22); _sLbl.Position=UDim2.new(0,12,0,54)
+        _sLbl.BackgroundTransparency=1
+        _sLbl.Text="Crashed tai:  " .. tostring(_CK_CURRENT)
+        _sLbl.TextColor3=Color3.fromRGB(255,180,80)
+        _sLbl.Font=Enum.Font.GothamSemibold; _sLbl.TextSize=12
+        _sLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+        local _ebox=Instance.new("ScrollingFrame",_panel)
+        _ebox.Size=UDim2.new(1,-24,0,130); _ebox.Position=UDim2.new(0,12,0,82)
+        _ebox.BackgroundColor3=Color3.fromRGB(6,4,14); _ebox.BorderSizePixel=0
+        _ebox.ScrollBarThickness=3
+        _ebox.AutomaticCanvasSize=Enum.AutomaticSize.Y
+        _ebox.CanvasSize=UDim2.new(0,0,0,0)
+        Instance.new("UICorner",_ebox).CornerRadius=UDim.new(0,8)
+        local _pad=Instance.new("UIPadding",_ebox)
+        _pad.PaddingTop=UDim.new(0,6); _pad.PaddingLeft=UDim.new(0,6)
+
+        local _etxt=Instance.new("TextLabel",_ebox)
+        _etxt.Size=UDim2.new(1,-12,0,0)
+        _etxt.AutomaticSize=Enum.AutomaticSize.Y
+        _etxt.BackgroundTransparency=1
+        _etxt.Text=tostring(errMsg)
+        _etxt.TextColor3=Color3.fromRGB(255,110,110)
+        _etxt.Font=Enum.Font.Code; _etxt.TextSize=10
+        _etxt.TextXAlignment=Enum.TextXAlignment.Left; _etxt.TextWrapped=true
+
+        local _ckLabel=Instance.new("TextLabel",_panel)
+        _ckLabel.Size=UDim2.new(1,-24,0,30); _ckLabel.Position=UDim2.new(0,12,0,222)
+        _ckLabel.BackgroundTransparency=1
+        local last3={}
+        for i=math.max(1,#_CK_LOG-2),#_CK_LOG do table.insert(last3,_CK_LOG[i]) end
+        _ckLabel.Text="Last: "..table.concat(last3,"  ->  ")
+        _ckLabel.TextColor3=Color3.fromRGB(100,95,130)
+        _ckLabel.Font=Enum.Font.Gotham; _ckLabel.TextSize=9
+        _ckLabel.TextXAlignment=Enum.TextXAlignment.Left; _ckLabel.TextWrapped=true
+
+        local _hint=Instance.new("TextLabel",_panel)
+        _hint.Size=UDim2.new(1,-24,0,16); _hint.Position=UDim2.new(0,12,0,258)
+        _hint.BackgroundTransparency=1
+        _hint.Text="Log saved:  zili_crash_log.txt  (thu muc executor)"
+        _hint.TextColor3=Color3.fromRGB(72,225,135)
+        _hint.Font=Enum.Font.GothamMedium; _hint.TextSize=10
+        _hint.TextXAlignment=Enum.TextXAlignment.Left
+
+        local _cb=Instance.new("TextButton",_panel)
+        _cb.Size=UDim2.new(0,140,0,30); _cb.Position=UDim2.new(0.5,-70,0,288)
+        _cb.BackgroundColor3=Color3.fromRGB(150,28,28); _cb.Text="Dong"
+        _cb.TextColor3=Color3.fromRGB(255,200,200)
+        _cb.Font=Enum.Font.GothamBold; _cb.TextSize=12; _cb.BorderSizePixel=0
+        Instance.new("UICorner",_cb).CornerRadius=UDim.new(0,8)
+        _cb.MouseButton1Click:Connect(function() _sg:Destroy() end)
+    end)
+end
+
+-- Hook task.spawn de bat loi async
+local _rawSpawn = task.spawn
+task.spawn = newcclosure(function(fn, ...)
+    local a={...}
+    return _rawSpawn(function()
+        local ok,err=xpcall(fn, debug.traceback, table.unpack(a))
+        if not ok then _SHOW_CRASH("[async] "..tostring(err)) end
+    end)
+end)
+
+CHECKPOINT("Debug system ready")
+
+
+-- =====================================================================
 -- PLACE DETECTION  (phải chạy TRƯỚC tất cả require)
 -- =====================================================================
 local PLACE_LOBBY = 1730877806   -- ← điền PlaceId lobby (nếu 0 = auto detect)
@@ -4628,6 +4759,7 @@ end
 
 -- =====================================================================
 -- REQUIRES  (game-world modules chỉ load khi ở game world)
+CHECKPOINT("REQUIRES — loading game modules")
 -- =====================================================================
 local Bypass, Esp, TweenSys, IslandData
 local AutoFarmLevel, AutoGetBuso, AutoGeppoFunc, AutoFishMerchantModule, AutoStats
@@ -4923,6 +5055,7 @@ local HttpService = game:GetService("HttpService")
 -- =====================================================================
 -- SCREEN GUI
 -- =====================================================================
+CHECKPOINT("SCREEN GUI — creating ScreenGui")
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = HttpService:GenerateGUID(false)
 ScreenGui.ResetOnSpawn = false
@@ -5237,6 +5370,7 @@ end
 -- =====================================================================
 -- HELPERS
 -- =====================================================================
+CHECKPOINT("HELPERS & COLORS — defining utilities")
 local C = Color3.fromRGB
 local function NEW(cls, props, parent)
     local i = Instance.new(cls)
@@ -5743,10 +5877,14 @@ UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseB
 -- =====================================================================
 -- MAIN FRAME
 -- =====================================================================
-local MainFrame = NEW("CanvasGroup",{
-    Size=UDim2.new(0,720,0,520), Position=UDim2.new(0.5,-360,0.5,-260),
-    BackgroundColor3=BG1, BorderSizePixel=0, ClipsDescendants=true,
-    GroupTransparency=1
+local MainFrame = NEW("CanvasGroup", {
+    Size = UDim2.new(0, 720, 0, 520), 
+    Position = UDim2.new(0.5, -360, 0.5, -260), -- Luôn nhớ dấu phẩy ở đây
+    -- CHECKPOINT("MAIN FRAME — building frame") 
+    BackgroundColor3 = BG1, 
+    BorderSizePixel = 0, 
+    ClipsDescendants = true,
+    GroupTransparency = 1
 }, ScreenGui)
 CORNER(14, MainFrame)
 STROKE(GOLD, 1.8, 0.06, MainFrame)
@@ -6533,6 +6671,7 @@ PageLayout(MainPage, 14, 10)
 
 if IS_LOBBY then
     -- ══════════════════════════════════════════════════════════════════
+CHECKPOINT("MAIN PAGE — building main tab")
     -- LOBBY BUILD — Race Reroll, Skin Changer, Private Server
     -- ══════════════════════════════════════════════════════════════════
 
@@ -8020,6 +8159,7 @@ do -- ■■ AutoFarm section — scoped to free local registers ■■
 PageLayout(AutoFarmPage, 14, 10)
 
 -- Level Farm card
+CHECKPOINT("AUTO FARM PAGE — building auto farm tab")
 local lfH = 144
 local lfCard = MakeCard(AutoFarmPage, lfH, 1)
 CardHeader(lfCard, "sword", "LEVEL FARM", AMBER)
@@ -8287,9 +8427,12 @@ local fmH = 80
 local fmCard = MakeCard(FishingPage, fmH, 1)
 CardHeader(fmCard, "fish", "FISHING + MERCHANT FARM", ORANGE)
 
-FishMasterBar = NEW("Frame",{
-    Size=UDim2.new(0,3,1,0), Position=UDim2.new(0,0,0,0),
-    BackgroundColor3=GOLD, BorderSizePixel=0
+FishMasterBar = NEW("Frame", {
+    Size = UDim2.new(0, 3, 1, 0), 
+    Position = UDim2.new(0, 0, 0, 0), -- Đảm bảo có dấu phẩy ở đây
+    -- CHECKPOINT("FISHING PAGE — building fishing tab") 
+    BackgroundColor3 = GOLD, 
+    BorderSizePixel = 0
 }, fmCard)
 CORNER(2, FishMasterBar)
 
@@ -9426,11 +9569,17 @@ local function CreateStatRow(statName, layoutOrder)
     local row = MakeCard(StatsPage, 52, layoutOrder)
 
     -- stat name
-    NEW("TextLabel",{
-        Text=statName, Size=UDim2.new(0.52,0,1,0), Position=UDim2.new(0,14,0,0),
-        BackgroundTransparency=1, TextColor3=TEXT1,
-        Font=Enum.Font.GothamBold, TextSize=14, TextXAlignment=Enum.TextXAlignment.Left
-    }, row)
+-- CHECKPOINT("STATS PAGE — building stats tab") 
+NEW("TextLabel", {
+    Text = statName, 
+    Size = UDim2.new(0.52, 0, 1, 0), 
+    Position = UDim2.new(0, 14, 0, 0), -- Thêm dấu phẩy ở đây
+    BackgroundTransparency = 1, 
+    TextColor3 = TEXT1,
+    Font = Enum.Font.GothamBold, 
+    TextSize = 14, 
+    TextXAlignment = Enum.TextXAlignment.Left
+}, row)
 
     -- auto add button
     local addBtn=NEW("TextButton",{
@@ -9489,6 +9638,7 @@ cfgHeaderCard.BackgroundColor3 = C(9,10,22)
 -- left accent bar
 local cfgAcc = NEW("Frame",{Size=UDim2.new(0,2,0.55,0),Position=UDim2.new(0,0,0.225,0),BackgroundColor3=GOLD,BorderSizePixel=0},cfgHeaderCard)
 CORNER(1,cfgAcc)
+CHECKPOINT("CONFIG PAGE — building config tab")
 -- "CONFIG MANAGER" main title
 NEW("TextLabel",{
     Text="CONFIG MANAGER",
