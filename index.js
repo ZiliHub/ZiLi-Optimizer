@@ -4730,13 +4730,19 @@ local function _SHOW_CRASH(errMsg)
     end)
 end
 
--- Hook task.spawn de bat loi async
-local _rawSpawn = task.spawn
-task.spawn = newcclosure(function(fn, ...)
-    local a={...}
-    return _rawSpawn(function()
-        local ok,err=xpcall(fn, debug.traceback, table.unpack(a))
-        if not ok then _SHOW_CRASH("[async] "..tostring(err)) end
+-- Sử dụng hookfunction để đánh tráo hàm thay vì sửa bảng task
+local oldSpawn
+oldSpawn = hookfunction(task.spawn, function(fn, ...)
+    local a = {...}
+    return oldSpawn(function()
+        local ok, err = xpcall(fn, debug.traceback, unpack(a))
+        if not ok then 
+            if _SHOW_CRASH then 
+                _SHOW_CRASH("[async] "..tostring(err)) 
+            else 
+                warn("[async] "..tostring(err)) 
+            end 
+        end
     end)
 end)
 
