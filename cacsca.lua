@@ -310,7 +310,7 @@ _G.ForceReblock = false
 print("▶️ Đã khởi chạy Auto Cupid Update 30 (V27 - ĐƠN GIẢN HÓA REPLAY)!\nSession ID: " .. currentScriptID)
 
 local MoveSpeed = 95        
-local AttackOffset = 10.5   
+local AttackOffset = 10.2   
 local SearchRadius = 800    
 local WaitSpawnTime = 15          
 local GatherTime = 2        
