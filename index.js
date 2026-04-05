@@ -4926,7 +4926,6 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = HttpService:GenerateGUID(false)
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-local CoreGui = game:GetService("CoreGui")
 if gethui then
     ScreenGui.Parent = gethui()
 elseif syn and syn.protect_gui then
@@ -4934,6 +4933,7 @@ elseif syn and syn.protect_gui then
 else
     ScreenGui.Parent = CoreGui:FindFirstChild("RobloxGui") or CoreGui
 end
+if gethui then ScreenGui.Parent = gethui() else ScreenGui.Parent = game.CoreGui end
 
 -- =====================================================================
 -- HELPERS
@@ -5429,7 +5429,7 @@ local miniLogoStroke = STROKE(GOLD2, 2.5, 0, MiniLogo)
 task.spawn(function()
     local cols = {COL_MAIN, COL_TRAVEL, COL_FISH, COL_STATS, COL_PS, COL_FARM}
     local i = 1
-    while MiniLogo and MiniLogo.Parent do
+    while MiniLogo do
         task.wait(1.2)
         TWEEN(miniLogoStroke, 1.0, {Color=cols[i]})
         i = (i % #cols) + 1
@@ -6376,9 +6376,7 @@ if IS_LOBBY then
     end, GOLD2)
 
     -- Private Server page is built separately below (PrivateServerPage)
-    if not PrivateServerPage:FindFirstChildOfClass("UIListLayout") then
-        PageLayout(PrivateServerPage, 14, 10)
-    end
+    PageLayout(PrivateServerPage, 14, 10)
 
     -- ══ SHARED state ═══════════════════════════════════════════════════════
     getgenv().PSCode      = getgenv().PSCode      or ""
@@ -6620,10 +6618,7 @@ if IS_LOBBY then
     joinNowBtn.MouseLeave:Connect(function() TWEEN(joinNowBtn,0.15,{BackgroundColor3=PINKD}) end)
     joinNowBtn.MouseButton1Click:Connect(function()
         TWEEN(joinNowBtn,0.08,{BackgroundColor3=C(80,20,65)})
-        task.spawn(function()
-            task.wait(0.1)
-            if joinNowBtn and joinNowBtn.Parent then TWEEN(joinNowBtn,0.15,{BackgroundColor3=PINKD}) end
-        end)
+        task.wait(0.1); TWEEN(joinNowBtn,0.15,{BackgroundColor3=PINKD})
         task.spawn(function()
             local code = getgenv().PSCode or ""
             local hub  = getgenv().SelectedHub or "Regular"
@@ -7023,9 +7018,7 @@ else
     end
 
     -- ── PRIVATE SERVER (Game World) ─────────────────────────────────────────
-    if not PrivateServerPage:FindFirstChildOfClass("UIListLayout") then
-        PageLayout(PrivateServerPage, 14, 10)
-    end
+    PageLayout(PrivateServerPage, 14, 10)
     getgenv().PSCode      = getgenv().PSCode      or ""
     getgenv().SelectedHub = getgenv().SelectedHub or "Regular"
     getgenv().SelectedSea = getgenv().SelectedSea or "Sea 1"
@@ -7409,10 +7402,7 @@ else
     gwJoinBtn.MouseLeave:Connect(function() TWEEN(gwJoinBtn,0.15,{BackgroundColor3=PINKD}) end)
     gwJoinBtn.MouseButton1Click:Connect(function()
         TWEEN(gwJoinBtn,0.08,{BackgroundColor3=C(80,20,65)})
-        task.spawn(function()
-            task.wait(0.1)
-            if gwJoinBtn and gwJoinBtn.Parent then TWEEN(gwJoinBtn,0.15,{BackgroundColor3=PINKD}) end
-        end)
+        task.wait(0.1); TWEEN(gwJoinBtn,0.15,{BackgroundColor3=PINKD})
         AutoRejoinModule._saveSession()
         GW_SetAutoJoin(true)
         -- GW_SetAutoJoin handles teleport-to-lobby if public; does nothing if in PS
@@ -9396,10 +9386,7 @@ end
 MinBtn.MouseButton1Click:Connect(function() ToggleHub(false) end)
 MiniLogo.MouseButton1Click:Connect(function() ToggleHub(true) end)
 
-local _closeInProgress = false
 CloseBtn.MouseButton1Click:Connect(function()
-    if _closeInProgress then return end
-    _closeInProgress = true
     d = false
     getgenv().ZiliHub_Loaded = false
 
