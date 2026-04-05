@@ -4789,7 +4789,8 @@ if not IS_LOBBY then
     CHECKPOINT("REQUIRES — loading IslandData")
     pcall(function() IslandData    = require("Island/IslandData") end)
     CHECKPOINT("REQUIRES — loading AutoFarmLevel")
-    pcall(function() AutoFarmLevel = require("Farm/AutoFarmLevel") end)
+    -- pcall(function() AutoFarmLevel = require("Farm/AutoFarmLevel") end)  -- TAM DISABLE: hard crash
+    AutoFarmLevel = nil
     CHECKPOINT("REQUIRES — loading AutoGetBuso")
     pcall(function() AutoGetBuso   = require("Farm/AutoGetBuso") end)
     CHECKPOINT("REQUIRES — loading AutoGeppo")
