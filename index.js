@@ -5884,16 +5884,11 @@ UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseB
 -- =====================================================================
 -- MAIN FRAME
 -- =====================================================================
-local MainFrame = NEW("CanvasGroup", {
-    Size = UDim2.new(0, 720, 0, 520), 
-    Position = UDim2.new(0.5, -360, 0.5, -260), -- Đảm bảo có dấu phẩy ở đây
-    
-    -- CHECKPOINT("MAIN FRAME — building frame") <--- Thêm dấu gạch ngang ở đây
-    
-    BackgroundColor3 = BG1, 
-    BorderSizePixel = 0, 
-    ClipsDescendants = true,
-    GroupTransparency = 1
+local MainFrame = NEW("CanvasGroup",{
+    Size=UDim2.new(0,720,0,520), Position=UDim2.new(0.5,-360,0.5,-260),
+CHECKPOINT("MAIN FRAME — building frame")
+    BackgroundColor3=BG1, BorderSizePixel=0, ClipsDescendants=true,
+    GroupTransparency=1
 }, ScreenGui)
 CORNER(14, MainFrame)
 STROKE(GOLD, 1.8, 0.06, MainFrame)
@@ -8436,15 +8431,11 @@ local fmH = 80
 local fmCard = MakeCard(FishingPage, fmH, 1)
 CardHeader(fmCard, "fish", "FISHING + MERCHANT FARM", ORANGE)
 
+FishMasterBar = NEW("Frame",{
+    Size=UDim2.new(0,3,1,0), Position=UDim2.new(0,0,0,0),
 CHECKPOINT("FISHING PAGE — building fishing tab")
-
-FishMasterBar = NEW("Frame", {
-    Size = UDim2.new(0,3,1,0), 
-    Position = UDim2.new(0,0,0,0), -- Đã thêm dấu phẩy
-    BackgroundColor3 = GOLD, 
-    BorderSizePixel = 0
+    BackgroundColor3=GOLD, BorderSizePixel=0
 }, fmCard)
-
 CORNER(2, FishMasterBar)
 
 -- main label
@@ -9580,20 +9571,12 @@ local function CreateStatRow(statName, layoutOrder)
     local row = MakeCard(StatsPage, 52, layoutOrder)
 
     -- stat name
--- stat name
-NEW("TextLabel",{
-    Text=statName, 
-    Size=UDim2.new(0.52,0,1,0), 
-    Position=UDim2.new(0,14,0,0), -- Phải có dấu phẩy ở đây
-    
-    -- CHECKPOINT("STATS PAGE — building stats tab") <--- Thêm dấu -- ở đây là xong!
-    
-    BackgroundTransparency=1, 
-    TextColor3=TEXT1,
-    Font=Enum.Font.GothamBold, 
-    TextSize=14, 
-    TextXAlignment=Enum.TextXAlignment.Left
-}, row)
+    NEW("TextLabel",{
+        Text=statName, Size=UDim2.new(0.52,0,1,0), Position=UDim2.new(0,14,0,0),
+CHECKPOINT("STATS PAGE — building stats tab")
+        BackgroundTransparency=1, TextColor3=TEXT1,
+        Font=Enum.Font.GothamBold, TextSize=14, TextXAlignment=Enum.TextXAlignment.Left
+    }, row)
 
     -- auto add button
     local addBtn=NEW("TextButton",{
@@ -10042,7 +10025,7 @@ local function RunExecutorDiagnostics()
     local name="Unknown Engine"
     if type(identifyexecutor)=="function" then pcall(function() name=identifyexecutor() end) end
 
-    local critical={"hookmetamethod","hookfunction","getrawmetatable","setreadonly","getnamecallmethod","newcclosure"}
+    local critical={"hookmetamethod","hookfunction","getrawmetatable","setreadonly","getnamecallmethod"}
     local missing={}
     for _,v in ipairs(critical) do if type(env[v])~="function" then table.insert(missing,v) end end
     if #missing>0 then
