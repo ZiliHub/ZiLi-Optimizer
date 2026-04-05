@@ -4731,14 +4731,29 @@ local function _SHOW_CRASH(errMsg)
 end
 
 local _rawSpawn = task.spawn
-if type(newcclosure) == "function" then
+
+-- Mở khóa table task, ghi đè, rồi khóa lại
+local mt = getrawmetatable(task)
+if mt then
+    setreadonly(mt, false)
+    -- Nếu task dùng __index/__newindex qua metatable
+end
+
+local ok_set = pcall(function()
+    setreadonly(task, false)
     task.spawn = newcclosure(function(fn, ...)
-        local a={...}
+        local a = {...}
         return _rawSpawn(function()
-            local ok,err=xpcall(fn, debug.traceback, table.unpack(a))
+            local ok, err = xpcall(fn, debug.traceback, table.unpack(a))
             if not ok then _SHOW_CRASH("[async] "..tostring(err)) end
         end)
     end)
+    setreadonly(task, true)
+end)
+
+-- Fallback: nếu không set được thì bỏ qua, dùng rawSpawn bình thường
+if not ok_set then
+    warn("[ZILI] Cannot hook task.spawn on this executor — async crash catching disabled")
 end
 
 CHECKPOINT("Debug system ready")
