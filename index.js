@@ -4730,21 +4730,16 @@ local function _SHOW_CRASH(errMsg)
     end)
 end
 
--- Sử dụng hookfunction để đánh tráo hàm thay vì sửa bảng task
-local oldSpawn
-oldSpawn = hookfunction(task.spawn, function(fn, ...)
-    local a = {...}
-    return oldSpawn(function()
-        local ok, err = xpcall(fn, debug.traceback, unpack(a))
-        if not ok then 
-            if _SHOW_CRASH then 
-                _SHOW_CRASH("[async] "..tostring(err)) 
-            else 
-                warn("[async] "..tostring(err)) 
-            end 
-        end
+local _rawSpawn = task.spawn
+if type(newcclosure) == "function" then
+    task.spawn = newcclosure(function(fn, ...)
+        local a={...}
+        return _rawSpawn(function()
+            local ok,err=xpcall(fn, debug.traceback, table.unpack(a))
+            if not ok then _SHOW_CRASH("[async] "..tostring(err)) end
+        end)
     end)
-end)
+end
 
 CHECKPOINT("Debug system ready")
 
@@ -5066,6 +5061,7 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = HttpService:GenerateGUID(false)
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+local CoreGui = game:GetService("CoreGui") 
 if gethui then
     ScreenGui.Parent = gethui()
 elseif syn and syn.protect_gui then
@@ -5073,7 +5069,6 @@ elseif syn and syn.protect_gui then
 else
     ScreenGui.Parent = CoreGui:FindFirstChild("RobloxGui") or CoreGui
 end
-if gethui then ScreenGui.Parent = gethui() else ScreenGui.Parent = game.CoreGui end
 
 -- =====================================================================
 -- ██ ZILI HUB — LOADING SCREEN ██
