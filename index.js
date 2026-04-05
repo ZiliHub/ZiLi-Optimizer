@@ -4784,7 +4784,8 @@ if not IS_LOBBY then
     CHECKPOINT("REQUIRES — loading Esp")
     pcall(function() Esp           = require("Island/Esp") end)
     CHECKPOINT("REQUIRES — loading TweenSys")
-    pcall(function() TweenSys      = require("Island/TWEEN TO ISLAND") end)
+    -- pcall(function() TweenSys = require("Island/TWEEN TO ISLAND") end)  -- TAM DISABLE: module nay hard crash Roblox
+    TweenSys = nil
     CHECKPOINT("REQUIRES — loading IslandData")
     pcall(function() IslandData    = require("Island/IslandData") end)
     CHECKPOINT("REQUIRES — loading AutoFarmLevel")
