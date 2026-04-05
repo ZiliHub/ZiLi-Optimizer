@@ -1760,8 +1760,8 @@ task.spawn(function()
     local CombatRegister   = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
     local currentCombo     = 1
     local MAX_COMBO        = 5      -- V7: đúng game combo (5 hit)
-    local strikeDelay      = 0.4  -- V7: đúng game attack speed
-    local comboResetDelay  = 1
+    local strikeDelay      = 0.36  -- V7: đúng game attack speed
+    local comboResetDelay  = 1.5
     local _lastFireTime    = 0
 
     while _G.DungeonScriptID == currentScriptID do
