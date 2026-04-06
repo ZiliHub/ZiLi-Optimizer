@@ -584,7 +584,7 @@ task.spawn(function()
 end)
 print("[TakeStam] Đã bật Auto Take Stamina!")
 
-local MoveSpeed     = 60
+local MoveSpeed     = 45
 local AttackOffset  = 10.2
 local SearchRadius  = 800
 local WaitSpawnTime = 15
