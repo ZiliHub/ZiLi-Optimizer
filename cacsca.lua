@@ -175,15 +175,46 @@ task.spawn(function()
         end)
     end
 
+    -- Scan CoreGui (custom game UI)
     for _, child in ipairs(CoreGui:GetChildren()) do task.spawn(ScanGui, child) end
     CoreGui.ChildAdded:Connect(function(child) task.spawn(ScanGui, child) end)
+
+    -- [FIX-V30] Scan RobloxGui — dialog kick native "Error Code: 267" nằm ở đây
+    -- KHÔNG nằm trong CoreGui children thông thường
+    pcall(function()
+        local robloxGui = CoreGui:FindFirstChild("RobloxGui")
+        if robloxGui then
+            for _, child in ipairs(robloxGui:GetChildren()) do task.spawn(ScanGui, child) end
+            robloxGui.ChildAdded:Connect(function(child) task.spawn(ScanGui, child) end)
+        end
+    end)
+
+    -- Fallback: gethui() — Synapse X, KRNL, Fluxus hỗ trợ
+    pcall(function()
+        if gethui then
+            local hui = gethui()
+            if hui then
+                for _, child in ipairs(hui:GetChildren()) do task.spawn(ScanGui, child) end
+                hui.ChildAdded:Connect(function(child) task.spawn(ScanGui, child) end)
+            end
+        end
+    end)
+
+    -- Poll fallback 2s — đảm bảo không bỏ sót nếu dialog xuất hiện muộn
+    task.spawn(function()
+        while not _kickFired do
+            pcall(function()
+                local rGui = CoreGui:FindFirstChild("RobloxGui")
+                if rGui then ScanGui(rGui) end
+            end)
+            task.wait(2)
+        end
+    end)
 end)
 
 -- ==========================================
--- [FIX-1] TAKESTAM LOOP — FindFirstChild, không break
--- ==========================================
--- [FIX-2] TAKESTAM LOOP — WaitForChild 1 lần bên ngoài, cache Remote
--- Tránh cloneref(nil) crash khi FindFirstChild trả nil mỗi vòng lặp
+-- [FIX-V30] TAKESTAM LOOP — thêm CFrame arg thứ 3 (HumanoidRootPart.CFrame)
+-- Server yêu cầu: FireServer(staminaCost, actionType, playerCFrame)
 task.spawn(function()
     local staminaCost = 1.075
     local actionType  = "dash"
@@ -209,7 +240,14 @@ task.spawn(function()
             local r = eventsFolder:FindFirstChild("takestam")
             if r then Remote = cloneref(r) else task.wait(1) end
         else
-            pcall(function() Remote:FireServer(staminaCost, actionType) end)
+            pcall(function()
+                -- Lấy CFrame hiện tại của nhân vật (arg thứ 3 server yêu cầu)
+                local char = Player.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                local cf   = root and root.CFrame
+                    or CFrame.new(5913.02685546875, 5.307063102722168, -9723.68359375)
+                Remote:FireServer(staminaCost, actionType, cf)
+            end)
         end
         task.wait(spamSpeed)
     end
