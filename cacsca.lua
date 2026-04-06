@@ -26,6 +26,10 @@ local Workspace = game:GetService("Workspace")
 -- [GUARD] KICK NẾU CÓ NGƯỜI JOIN SERVER
 local function CheckPlayers()
     if #Players:GetPlayers() > 1 then
+        local reason = "Another player joined the server — solo-only protection."
+        _sessionKickReason = reason
+        SendKickWebhookEarly(reason, CurrentZoneIndex or 0)
+        task.wait(1)
         Player:Kick("You are banned. if you think this is a false ban, please contact the support team via discord with sufficient evidence.")
     end
 end
@@ -55,11 +59,12 @@ task.spawn(function()
     end)
 end)
 
+-- Rare item → permanent postimg URL (drives thumbnail + image in webhook)
 local RareImages = {
-    ["Prestige Cupid's Chakram"] = true,
-    ["Cupid Queen's Maid Outfit"] = true,
-    ["Leo's Inferno Hagoromo"] = true,
-    ["Cupid's All Seeing Eye"] = true
+    ["Cupid's All Seeing Eye"]    = "https://i.postimg.cc/85NCJCWN/Cupid27s_All_Seeing_Eye.webp",
+    ["Leo's Inferno Hagoromo"]    = "https://i.postimg.cc/63tQ2QRW/l_Hagoromo.webp",
+    ["Prestige Cupid's Chakram"]  = "https://i.postimg.cc/k4q5658X/Chat_GPT_Image_03_16_32_15_thg_3_2026.webp",
+    ["Cupid Queen's Maid Outfit"] = "https://i.postimg.cc/63tQ2QR6/cupid_maid_fit.webp",
 }
 local NormalItems = {
     "Cupid's Harp", "Leo's Blazing Scarf", "Love Shades", "Cupid's Wand",
@@ -80,79 +85,262 @@ _G.IsProcessingFruit = false
 _G.EndGameStarted = false
 _G.GoToPortal = false
 
--- ==========================================
--- [1] WEBHOOK
--- ==========================================
-local function SendWebhook()
-    if WebhookSentForSession then return end
-    WebhookSentForSession = true
-    local dropsText = ""
-    local colorHex = 16758465
-    local shouldPing = false
-    if #SessionItems == 0 then
-        dropsText = "```diff\n- Không có Item / Fruit nào```\n"
-    else
-        dropsText = "```diff\n"
-        for _, item in ipairs(SessionItems) do
-            dropsText = dropsText .. "+ " .. item .. "\n"
-            if item:match("VIP") or item:match("RARE") then colorHex = 16711680; shouldPing = true end
-        end
-        dropsText = dropsText .. "```\n"
-    end
-    local payload = {
-        ["embeds"] = {{
-            ["author"] = {["name"] = "🎁 Cupid Dungeon Summary 🎁"},
-            ["title"] = shouldPing and "🔥 RARE / VIP DROPPED !!! 🔥" or "🎁 Dungeon Cleared Successfully!",
-            ["color"] = colorHex,
-            ["description"] = "━━━━━━━━━━━━━━━━━━━━━━\n:bust_in_silhouette: **User:** ||" .. Player.Name .. "||\n:stopwatch: **Clear Time:** `" .. DungeonClearTimeStr .. "`\n:map: **Map:** `Cupid Dungeon`\n━━━━━━━━━━━━━━━━━━━━━━\n### :sparkles: Session Drops:\n" .. dropsText,
-            ["thumbnail"] = {["url"] = NormalThumb},
-            ["footer"] = {["text"] = "ZiLi Hub | " .. os.date("%d/%m/%Y - %H:%M:%S"), ["icon_url"] = LogoZiLi}
+-- Forward-declared so the player-guard (above webhook section) can reference them
+local _sessionDeathZone  = nil
+local _sessionKickReason = nil
+local CurrentZoneIndex   = 1  -- will be re-declared below; this just satisfies the guard
+
+local function _SendRawEarly(payload)
+    local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+    if not req then return end
+    pcall(function()
+        req({Url = WebhookURL, Method = "POST",
+             Headers = {["Content-Type"] = "application/json"},
+             Body = HttpService:JSONEncode(payload)})
+    end)
+end
+
+local function SendKickWebhookEarly(reason, zone)
+    _SendRawEarly({
+        embeds = {{
+            author = {name = "🚫  Auto Cupid Farm  •  ZiLi Hub", icon_url = LogoZiLi},
+            title  = "🚫  Player Kicked / Banned",
+            color  = 0xFF0000,
+            description = "━━━━━━━━━━━━━━━━━━━━━━\n"
+                .. "👤  **Player:** ||" .. Player.Name .. "||\n"
+                .. "📝  **Reason:** `" .. tostring(reason) .. "`\n"
+                .. "🗺️  **Zone at time:** Zone `" .. tostring(zone) .. "`\n"
+                .. "━━━━━━━━━━━━━━━━━━━━━━",
+            footer    = {text = "ZiLi Hub  •  " .. os.date("%d/%m/%Y  %H:%M:%S"), icon_url = LogoZiLi},
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
         }}
-    }
-    if shouldPing then payload["content"] = "@everyone" end
+    })
+end
+
+-- ==========================================
+-- [1] WEBHOOK — Full English, fields layout, image preview
+-- ==========================================
+local function SendRaw(payload)
     local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
     if req then
         task.spawn(function()
-            pcall(function() req({Url = WebhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = HttpService:JSONEncode(payload)}) end)
+            pcall(function()
+                req({Url = WebhookURL, Method = "POST",
+                     Headers = {["Content-Type"] = "application/json"},
+                     Body = HttpService:JSONEncode(payload)})
+            end)
         end)
     end
 end
 
+local function SendWebhook()
+    if WebhookSentForSession then return end
+    WebhookSentForSession = true
+
+    local rareDrops, vipDrops, normalDrops = {}, {}, {}
+    local shouldPing = false
+    for _, item in ipairs(SessionItems) do
+        if item:match("%[RARE%]") then
+            table.insert(rareDrops, item); shouldPing = true
+        elseif item:match("%[VIP") then
+            table.insert(vipDrops, item); shouldPing = true
+        else
+            table.insert(normalDrops, item)
+        end
+    end
+
+    -- Build fields
+    local fields = {}
+    if #rareDrops > 0 then
+        local lines = ""
+        for _, v in ipairs(rareDrops) do lines = lines .. "+ " .. v .. "\n" end
+        table.insert(fields, {name = "✨  Rare Drops", value = "```diff\n" .. lines .. "```", inline = false})
+    end
+    if #vipDrops > 0 then
+        local lines = ""
+        for _, v in ipairs(vipDrops) do lines = lines .. "+ " .. v .. "\n" end
+        table.insert(fields, {name = "🍑  VIP Fruits", value = "```diff\n" .. lines .. "```", inline = false})
+    end
+    if #normalDrops > 0 then
+        local lines = ""
+        for _, v in ipairs(normalDrops) do lines = lines .. "  " .. v .. "\n" end
+        table.insert(fields, {name = "🎁  Normal Drops", value = "```\n" .. lines .. "```", inline = false})
+    end
+    if #SessionItems == 0 then
+        table.insert(fields, {name = "🎁  Session Drops", value = "```diff\n- No items or fruits dropped this run.```", inline = false})
+    end
+
+    -- Statistics field
+    table.insert(fields, {
+        name  = "📊  Statistics",
+        value = string.format("```\nRare   : %d\nVIP    : %d\nNormal : %d\nTotal  : %d```",
+                    #rareDrops, #vipDrops, #normalDrops, #SessionItems),
+        inline = true
+    })
+
+    -- Death / kick info field
+    local eventLines = ""
+    if _sessionDeathZone then
+        eventLines = eventLines .. "💀  Died at Zone " .. _sessionDeathZone .. "\n"
+    end
+    if _sessionKickReason then
+        eventLines = eventLines .. "🚫  Kicked — " .. _sessionKickReason .. "\n"
+    end
+    if eventLines ~= "" then
+        table.insert(fields, {name = "⚠️  Session Events", value = "```\n" .. eventLines .. "```", inline = true})
+    end
+
+    local embedTitle
+    if #rareDrops > 0 and #vipDrops > 0 then embedTitle = "🔥  RARE + VIP DROPPED!"
+    elseif #rareDrops > 0                 then embedTitle = "✨  RARE ITEM DROPPED!"
+    elseif #vipDrops > 0                  then embedTitle = "🍑  VIP FRUIT DROPPED!"
+    else                                       embedTitle = "🎁  Dungeon Cleared" end
+
+    -- Pick thumbnail: first rare item dropped → use its image, else fallback
+    local thumbURL = NormalThumb
+    local imageURL = NormalThumb
+    if #rareDrops > 0 then
+        -- rareDrops entries look like "Leo's Inferno Hagoromo  [RARE]"
+        -- strip the tag to get the raw item name
+        local firstName = rareDrops[1]:match("^(.-)%s+%[")
+        if firstName then
+            local url = RareImages[firstName]
+            if url then
+                thumbURL = url   -- small thumbnail (top-right)
+                imageURL = url   -- large image (bottom of embed)
+            end
+        end
+    end
+
+    local payload = {
+        embeds = {{
+            author      = {name = "⚔️  Auto Cupid Farm  •  ZiLi Hub", icon_url = LogoZiLi},
+            title       = embedTitle,
+            color       = shouldPing and 0xFF2222 or 0xFFB347,
+            description = "━━━━━━━━━━━━━━━━━━━━━━\n"
+                .. "👤  **Player:** ||" .. Player.Name .. "||\n"
+                .. "⏱️  **Clear Time:** `" .. DungeonClearTimeStr .. "`\n"
+                .. "🗺️  **Map:** `Cupid Dungeon`\n"
+                .. "━━━━━━━━━━━━━━━━━━━━━━",
+            fields      = fields,
+            thumbnail   = {url = thumbURL},
+            image       = {url = imageURL},
+            footer      = {text = "ZiLi Hub  •  " .. os.date("%d/%m/%Y  %H:%M:%S"), icon_url = LogoZiLi},
+            timestamp   = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        }}
+    }
+    if shouldPing then payload["content"] = "@everyone 🚨 RARE / VIP DROP!" end
+    SendRaw(payload)
+end
+
+-- Death webhook (zone-aware)
+local function SendDeathWebhook(zone)
+    local payload = {
+        embeds = {{
+            author = {name = "💀  Auto Cupid Farm  •  ZiLi Hub", icon_url = LogoZiLi},
+            title  = "💀  Character Died!",
+            color  = 0x808080,
+            description = "━━━━━━━━━━━━━━━━━━━━━━\n"
+                .. "👤  **Player:** ||" .. Player.Name .. "||\n"
+                .. "🗺️  **Died at:** Zone `" .. tostring(zone) .. "`\n"
+                .. "━━━━━━━━━━━━━━━━━━━━━━",
+            footer    = {text = "ZiLi Hub  •  " .. os.date("%d/%m/%Y  %H:%M:%S"), icon_url = LogoZiLi},
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        }}
+    }
+    SendRaw(payload)
+end
+
+-- Kick / ban webhook
+local function SendKickWebhook(reason, zone)
+    local payload = {
+        embeds = {{
+            author = {name = "🚫  Auto Cupid Farm  •  ZiLi Hub", icon_url = LogoZiLi},
+            title  = "🚫  Player Kicked / Banned",
+            color  = 0xFF0000,
+            description = "━━━━━━━━━━━━━━━━━━━━━━\n"
+                .. "👤  **Player:** ||" .. Player.Name .. "||\n"
+                .. "📝  **Reason:** `" .. tostring(reason) .. "`\n"
+                .. "🗺️  **Zone at time:** Zone `" .. tostring(zone) .. "`\n"
+                .. "━━━━━━━━━━━━━━━━━━━━━━",
+            footer    = {text = "ZiLi Hub  •  " .. os.date("%d/%m/%Y  %H:%M:%S"), icon_url = LogoZiLi},
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        }}
+    }
+    SendRaw(payload)
+end
+
 -- ==========================================
--- [2] RADAR TRACK ĐỒ
+-- [2] RADAR TRACK — Item Drop Detector
+-- Detects two UI notification patterns from the game:
+--   "New Item <item name>"       → item obtained normally
+--   "Max capacity of <item name>"→ inventory full for that item (already owned)
+-- Also matches known RareImages / NormalItems by name as fallback.
 -- ==========================================
 task.spawn(function()
     local pGui = Player:WaitForChild("PlayerGui", 9e9)
     local notif = pGui:WaitForChild("Notifications", 9e9)
+
     local function CheckItemText(label)
         if not label or not label:IsA("TextLabel") then return end
+
         local function parseText()
-            local rawText = string.gsub(label.Text, "<[^>]+>", "")
+            local rawText = string.gsub(label.Text, "<[^>]+>", "")  -- strip rich-text tags
             local txt = string.lower(rawText)
             if txt == "" then return end
+
+            -- [A] "New Item <name>" pattern — item dropped and obtained
+            local newItemName = rawText:match("[Nn]ew [Ii]tem%s+<?([^>%\n]+)>?")
+                             or rawText:match("[Nn]ew [Ii]tem:%s*(.+)")
+            if newItemName then
+                newItemName = newItemName:match("^%s*(.-)%s*$")  -- trim
+                local uid = tostring(label) .. "new:" .. newItemName
+                if not ProcessedUITexts[uid] then
+                    ProcessedUITexts[uid] = true
+                    table.insert(SessionItems, newItemName .. "  [NEW ITEM]")
+                end
+                return
+            end
+
+            -- [B] "Max capacity of <name>" pattern — already own this item
+            local maxCapName = rawText:match("[Mm]ax [Cc]apacity %w* ?<?([^>%\n]+)>?")
+                            or rawText:match("[Mm]ax [Cc]apacity%s+of%s+(.+)")
+            if maxCapName then
+                maxCapName = maxCapName:match("^%s*(.-)%s*$")
+                local uid = tostring(label) .. "maxcap:" .. maxCapName
+                if not ProcessedUITexts[uid] then
+                    ProcessedUITexts[uid] = true
+                    table.insert(SessionItems, maxCapName .. "  [MAX CAPACITY — Already Owned]")
+                end
+                return
+            end
+
+            -- [C] Fallback: match known rare/normal item names directly in text
             for rareName, _ in pairs(RareImages) do
                 if string.find(txt, string.lower(rareName), 1, true) then
-                    local uniqueID = tostring(label) .. rareName
-                    if not ProcessedUITexts[uniqueID] then
-                        ProcessedUITexts[uniqueID] = true
-                        table.insert(SessionItems, rareName .. " [ RARE ITEM ]")
+                    local uid = tostring(label) .. rareName
+                    if not ProcessedUITexts[uid] then
+                        ProcessedUITexts[uid] = true
+                        table.insert(SessionItems, rareName .. "  [RARE]")
                     end
                 end
             end
             for _, normalName in ipairs(NormalItems) do
                 if string.find(txt, string.lower(normalName), 1, true) then
-                    local uniqueID = tostring(label) .. normalName
-                    if not ProcessedUITexts[uniqueID] then
-                        ProcessedUITexts[uniqueID] = true
-                        table.insert(SessionItems, normalName .. " [ Normal Item ]")
+                    local uid = tostring(label) .. normalName
+                    if not ProcessedUITexts[uid] then
+                        ProcessedUITexts[uid] = true
+                        table.insert(SessionItems, normalName .. "  [Normal Item]")
                     end
                 end
             end
         end
+
         parseText()
         local conn = label:GetPropertyChangedSignal("Text"):Connect(parseText)
         label.AncestryChanged:Connect(function(_, parent) if not parent then conn:Disconnect() end end)
     end
+
     local function SetupTracker(frameName)
         local frame = notif:FindFirstChild(frameName)
         if frame then
@@ -515,28 +703,30 @@ local function HookCharacterZ8(char)
     if not char then return end
     local hum = char:FindFirstChild("Humanoid") or char:WaitForChild("Humanoid", 5)
     if not hum then return end
+
+    -- [4] Death → send zone-aware death webhook
+    hum.Died:Connect(function()
+        _sessionDeathZone = CurrentZoneIndex
+        task.spawn(function() SendDeathWebhook(CurrentZoneIndex) end)
+    end)
+
     local prevHP = hum.Health
     hum.HealthChanged:Connect(function(newHP)
         local dmg = prevHP - newHP
         prevHP = newHP
-        if dmg <= 0 then return end                    -- no damage, skip
-        if CurrentZoneIndex ~= 8 then return end       -- only zone 8
+        if dmg <= 0 then return end
+        if CurrentZoneIndex ~= 8 then return end
         if not IsFarmingReady then return end
 
-        -- Jump +10 studs instantly
         local root = char:FindFirstChild("HumanoidRootPart")
-        if root then
-            root.CFrame = root.CFrame + Vector3.new(0, 10, 0)
-        end
+        if root then root.CFrame = root.CFrame + Vector3.new(0, 10, 0) end
 
-        -- Hold raised position for 2s then resume
         _z8DmgDodging = true
         _z8DmgUntil   = tick() + 2
         task.delay(2, function()
-            -- only release if this is still the same dodge (not overwritten)
             if tick() >= _z8DmgUntil then
                 _z8DmgDodging = false
-                TargetCFrame  = nil  -- resume normal mob targeting
+                TargetCFrame  = nil
             end
         end)
     end)
@@ -691,14 +881,20 @@ task.spawn(function()
                         end
                     end
 
-                    -- [C] Normal dungeon hazards (all zones, not BossSkill)
+                    -- [C] Normal dungeon hazards (all zones)
+                    -- Bao gồm: aoe, circle, bomb, meteor, projectile, lightning, arrow, rain
                     if detectedHazard == "None" then
                         for _, v in pairs(efFolder:GetChildren()) do
                             local name = v.Name:lower()
                             local vPos = v:IsA("Model") and (v.PrimaryPart and v.PrimaryPart.Position or v:GetModelCFrame().Position) or (v:IsA("BasePart") and v.Position or nil)
                             if vPos and not IgnoredHazards[v] then
                                 local dist = (Vector2.new(vPos.X, vPos.Z) - Vector2.new(playerPos.X, playerPos.Z)).Magnitude
-                                if (name:match("aoe") or name:match("circle") or name:match("bomb") or name:match("meteor") or name:match("projectile")) and dist < DangerRadius then
+                                local isHazard = name:match("aoe")        or name:match("circle")
+                                             or name:match("bomb")        or name:match("meteor")
+                                             or name:match("lightning")   or name:match("thunder")
+                                             or name:match("arrow")       or name:match("rain")
+                                             or name:match("projectile")
+                                if isHazard and dist < DangerRadius then
                                     detectedHazard = "Normal"
                                     hazardAction   = "DODGE"
                                     hazardPos      = vPos
@@ -734,8 +930,8 @@ local function ExecuteDodgeTween(root, dodgeTarget, evadeDist, holdWait, onDone)
     if _dodgeTweenActive then return end
     _dodgeTweenActive = true
 
-    -- Tốc độ 35 studs/s cho mượt — server không flag
-    local tweenTime = math.clamp(evadeDist / 95, 0.5, 1.4)
+    -- Dùng MoveSpeed (95 studs/s) giống Heartbeat movement — server không flag
+    local tweenTime = math.clamp(evadeDist / MoveSpeed, 0.3, 2.0)
     local goalCF    = CFrame.new(dodgeTarget) * root.CFrame.Rotation
 
     local info  = TweenInfo.new(tweenTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
