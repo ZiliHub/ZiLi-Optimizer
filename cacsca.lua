@@ -69,7 +69,7 @@ local function SendKickWebhookEarly(reason, zone)
             color     = 0xFF0000,
             description = "━━━━━━━━━━━━━━━━━━━━━━\n"
                 .. "👤  **Player:** ||" .. Player.Name .. "||\n"
-                .. "📝  **Reason:** `" .. tostring(reason) .. "`\n"
+                .. "📝  **Reason:**\n```\n" .. tostring(reason) .. "\n```\n"
                 .. "🗺️  **Zone at time:** Zone `" .. tostring(zone) .. "`\n"
                 .. "━━━━━━━━━━━━━━━━━━━━━━",
             footer    = {text = "ZiLi Hub  •  " .. os.date("%d/%m/%Y  %H:%M:%S"), icon_url = LogoZiLi},
@@ -127,7 +127,7 @@ local function OnKickDetected(msg)
             color     = 0xFF0000,
             description = "━━━━━━━━━━━━━━━━━━━━━━\n"
                 .. "👤  **Player:** ||" .. Player.Name .. "||\n"
-                .. "📝  **Reason:** `" .. tostring(_sessionKickReason) .. "`\n"
+                .. "📝  **Reason:**\n```\n" .. tostring(_sessionKickReason) .. "\n```\n"
                 .. "🗺️  **Zone at time:** Zone `" .. tostring(CurrentZoneIndex or 0) .. "`\n"
                 .. "━━━━━━━━━━━━━━━━━━━━━━",
             footer    = {text = "ZiLi Hub  •  " .. os.date("%d/%m/%Y  %H:%M:%S"), icon_url = LogoZiLi},
@@ -526,27 +526,58 @@ _G.AutoDungeon  = true
 _G.ForceReblock = false
 
 -- ==========================================
--- TAKESTAM LOOP  (V31 — theo pattern _G.SpamStamina)
--- - Dùng _G.SpamStamina thay currentScriptID → chạy cả lobby lẫn dungeon
--- - CFrame lấy từ HumanoidRootPart thực tế mỗi tick để qua mặt server
--- - Fallback CFrame.new() nếu char chưa spawn (giữa các zone, respawn, v.v.)
+-- TAKESTAM LOOP  (V32)
+-- - _G.SpamStamina: bật/tắt từ ngoài
+-- - Re-fetch Remote nếu FireServer fail (zone transition làm reference cũ invalid)
 -- ==========================================
 _G.SpamStamina = true
 task.spawn(function()
-    local Events   = ReplicatedStorage:WaitForChild("Events", 30)
-    local Remote   = Events and Events:WaitForChild("takestam", 30)
+    local function getRemote()
+        local ok, Events = pcall(function()
+            return ReplicatedStorage:WaitForChild("Events", 10)
+        end)
+        if not ok or not Events then return nil end
+        local ok2, Remote = pcall(function()
+            return Events:WaitForChild("takestam", 10)
+        end)
+        return (ok2 and Remote) or nil
+    end
+
+    local Remote = getRemote()
     if not Remote then
         warn("[TakeStam] Không tìm thấy takestam — dừng")
         return
     end
 
+    local failCount = 0
+
     while _G.SpamStamina do
-        pcall(function()
-            local char = Player.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            local cf   = (root and root.CFrame) or CFrame.new()
+        local char = Player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local cf   = (root and root.CFrame) or CFrame.new()
+
+        local ok = pcall(function()
             Remote:FireServer(1.075, "dash", cf)
         end)
+
+        if not ok then
+            failCount = failCount + 1
+            -- Sau 3 lần fail liên tiếp → re-fetch Remote (zone transition)
+            if failCount >= 3 then
+                failCount = 0
+                warn("[TakeStam] FireServer fail — đang reconnect Remote...")
+                local newRemote = getRemote()
+                if newRemote then
+                    Remote = newRemote
+                    print("[TakeStam] Reconnect Remote thành công!")
+                else
+                    task.wait(1) -- chờ thêm nếu chưa load xong
+                end
+            end
+        else
+            failCount = 0
+        end
+
         task.wait(0.05)
     end
 end)
