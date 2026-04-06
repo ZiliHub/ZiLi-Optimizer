@@ -526,11 +526,10 @@ _G.AutoDungeon  = true
 _G.ForceReblock = false
 
 -- ==========================================
--- TAKESTAM LOOP  (V33 — CFrame bypass)
--- Root cause: di chuyển nhanh → HumanoidRootPart.CFrame thay đổi liên tục
--- → server nhận CFrame lệch vị trí server-side đang track → reject silent
--- Fix: Cache CFrame mỗi 0.3s (chậm hơn tốc độ di chuyển) thay vì đọc live mỗi 0.05s
--- Server chỉ cần CFrame hợp lệ về format, không validate position nghiêm
+-- TAKESTAM LOOP  (V34 — position-only CFrame)
+-- Root cause: Heartbeat set root.CFrame với tilt -90° khi attack
+-- → takestam gửi CFrame tilt lên server → server reject
+-- Fix: chỉ lấy root.Position, build CFrame mới không rotation mỗi tick
 -- ==========================================
 _G.SpamStamina = true
 task.spawn(function()
@@ -551,48 +550,30 @@ task.spawn(function()
         return
     end
 
-    -- CFrame cache: cập nhật mỗi 0.3s, tách hoàn toàn khỏi loop fire 0.05s
-    -- → tránh gửi CFrame "đang bay" giữa chừng khi speed hack đang dịch chuyển root
-    local cachedCF    = CFrame.new()
-    local lastCFTick  = 0
-    local CF_UPDATE   = 0.3  -- giây cập nhật CFrame 1 lần
-
     local failCount = 0
 
     while _G.SpamStamina do
-        -- Cập nhật cache nếu đã đủ thời gian
-        local now = tick()
-        if now - lastCFTick >= CF_UPDATE then
-            pcall(function()
-                local char = Player.Character
-                local root = char and char:FindFirstChild("HumanoidRootPart")
-                if root then
-                    -- Làm phẳng rotation (chỉ giữ position + yaw) để tránh giá trị kỳ lạ
-                    -- khi script đang tilt CFrame cho movement
-                    local pos = root.Position
-                    local _, yaw, _ = root.CFrame:ToEulerAnglesYXZ()
-                    cachedCF = CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
-                end
-            end)
-            lastCFTick = now
-        end
+        -- Lấy position thực, build CFrame sạch không rotation
+        -- Tránh hoàn toàn tilt -90 mà Heartbeat đang inject vào root.CFrame
+        local cf = CFrame.new()
+        pcall(function()
+            local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                cf = CFrame.new(root.Position)  -- position only, identity rotation
+            end
+        end)
 
         local ok = pcall(function()
-            Remote:FireServer(1.075, "dash", cachedCF)
+            Remote:FireServer(1.075, "dash", cf)
         end)
 
         if not ok then
             failCount = failCount + 1
             if failCount >= 3 then
                 failCount = 0
-                warn("[TakeStam] FireServer fail — reconnect Remote...")
                 local newRemote = getRemote()
-                if newRemote then
-                    Remote = newRemote
-                    print("[TakeStam] Reconnect thành công!")
-                else
-                    task.wait(1)
-                end
+                if newRemote then Remote = newRemote
+                else task.wait(1) end
             end
         else
             failCount = 0
