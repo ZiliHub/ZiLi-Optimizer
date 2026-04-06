@@ -526,9 +526,11 @@ _G.AutoDungeon  = true
 _G.ForceReblock = false
 
 -- ==========================================
--- TAKESTAM LOOP  (V32)
--- - _G.SpamStamina: bật/tắt từ ngoài
--- - Re-fetch Remote nếu FireServer fail (zone transition làm reference cũ invalid)
+-- TAKESTAM LOOP  (V33 — CFrame bypass)
+-- Root cause: di chuyển nhanh → HumanoidRootPart.CFrame thay đổi liên tục
+-- → server nhận CFrame lệch vị trí server-side đang track → reject silent
+-- Fix: Cache CFrame mỗi 0.3s (chậm hơn tốc độ di chuyển) thay vì đọc live mỗi 0.05s
+-- Server chỉ cần CFrame hợp lệ về format, không validate position nghiêm
 -- ==========================================
 _G.SpamStamina = true
 task.spawn(function()
@@ -549,29 +551,47 @@ task.spawn(function()
         return
     end
 
+    -- CFrame cache: cập nhật mỗi 0.3s, tách hoàn toàn khỏi loop fire 0.05s
+    -- → tránh gửi CFrame "đang bay" giữa chừng khi speed hack đang dịch chuyển root
+    local cachedCF    = CFrame.new()
+    local lastCFTick  = 0
+    local CF_UPDATE   = 0.3  -- giây cập nhật CFrame 1 lần
+
     local failCount = 0
 
     while _G.SpamStamina do
-        local char = Player.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        local cf   = (root and root.CFrame) or CFrame.new()
+        -- Cập nhật cache nếu đã đủ thời gian
+        local now = tick()
+        if now - lastCFTick >= CF_UPDATE then
+            pcall(function()
+                local char = Player.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    -- Làm phẳng rotation (chỉ giữ position + yaw) để tránh giá trị kỳ lạ
+                    -- khi script đang tilt CFrame cho movement
+                    local pos = root.Position
+                    local _, yaw, _ = root.CFrame:ToEulerAnglesYXZ()
+                    cachedCF = CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
+                end
+            end)
+            lastCFTick = now
+        end
 
         local ok = pcall(function()
-            Remote:FireServer(1.075, "dash", cf)
+            Remote:FireServer(1.075, "dash", cachedCF)
         end)
 
         if not ok then
             failCount = failCount + 1
-            -- Sau 3 lần fail liên tiếp → re-fetch Remote (zone transition)
             if failCount >= 3 then
                 failCount = 0
-                warn("[TakeStam] FireServer fail — đang reconnect Remote...")
+                warn("[TakeStam] FireServer fail — reconnect Remote...")
                 local newRemote = getRemote()
                 if newRemote then
                     Remote = newRemote
-                    print("[TakeStam] Reconnect Remote thành công!")
+                    print("[TakeStam] Reconnect thành công!")
                 else
-                    task.wait(1) -- chờ thêm nếu chưa load xong
+                    task.wait(1)
                 end
             end
         else
