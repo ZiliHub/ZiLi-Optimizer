@@ -212,46 +212,8 @@ task.spawn(function()
     end)
 end)
 
--- ==========================================
--- [FIX-V30] TAKESTAM LOOP — thêm CFrame arg thứ 3 (HumanoidRootPart.CFrame)
--- Server yêu cầu: FireServer(staminaCost, actionType, playerCFrame)
-task.spawn(function()
-    local staminaCost = 1.075
-    local actionType  = "dash"
-    local spamSpeed   = 0.05
-
-    -- Chờ Events folder sẵn sàng 1 lần duy nhất
-    local eventsFolder = ReplicatedStorage:WaitForChild("Events", 15)
-    if not eventsFolder then
-        warn("[TakeStam] Không tìm thấy Events folder sau 15s — dừng loop")
-        return
-    end
-
-    local Remote = eventsFolder:WaitForChild("takestam", 15)
-    if not Remote then
-        warn("[TakeStam] Không tìm thấy takestam remote sau 15s — dừng loop")
-        return
-    end
-    Remote = cloneref(Remote)
-
-    while _G.DungeonScriptID == currentScriptID do
-        if not Remote or not Remote.Parent then
-            warn("[TakeStam] Remote bị xóa — thử reconnect...")
-            local r = eventsFolder:FindFirstChild("takestam")
-            if r then Remote = cloneref(r) else task.wait(1) end
-        else
-            pcall(function()
-                -- Lấy CFrame hiện tại của nhân vật (arg thứ 3 server yêu cầu)
-                local char = Player.Character
-                local root = char and char:FindFirstChild("HumanoidRootPart")
-                local cf   = root and root.CFrame
-                    or CFrame.new(5913.02685546875, 5.307063102722168, -9723.68359375)
-                Remote:FireServer(staminaCost, actionType, cf)
-            end)
-        end
-        task.wait(spamSpeed)
-    end
-end)
+-- [NOTE] takestam loop đã được chuyển xuống SAU dòng khai báo currentScriptID
+-- Xem phần "TAKESTAM LOOP" bên dưới
 
 -- Auto equip title
 task.spawn(function()
@@ -570,6 +532,45 @@ local currentScriptID = _G.DungeonScriptID
 
 _G.AutoDungeon  = true
 _G.ForceReblock = false
+
+-- ==========================================
+-- TAKESTAM LOOP
+-- PHẢI đặt SAU "local currentScriptID" — nếu đặt trước,
+-- currentScriptID = nil → while condition false ngay → loop chết
+-- ==========================================
+task.spawn(function()
+    local staminaCost = 1.075
+    local actionType  = "dash"
+    local spamSpeed   = 0.05
+
+    local eventsFolder = ReplicatedStorage:WaitForChild("Events", 15)
+    if not eventsFolder then
+        warn("[TakeStam] Không tìm thấy Events folder — dừng")
+        return
+    end
+    local Remote = eventsFolder:WaitForChild("takestam", 15)
+    if not Remote then
+        warn("[TakeStam] Không tìm thấy takestam remote — dừng")
+        return
+    end
+    Remote = cloneref(Remote)
+
+    while _G.DungeonScriptID == currentScriptID do
+        if not Remote or not Remote.Parent then
+            local r = eventsFolder:FindFirstChild("takestam")
+            if r then Remote = cloneref(r) else task.wait(1) end
+        else
+            pcall(function()
+                local char = Player.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                local cf   = root and root.CFrame
+                          or CFrame.new(5913.02685546875, 5.307063102722168, -9723.68359375)
+                Remote:FireServer(staminaCost, actionType, cf)
+            end)
+        end
+        task.wait(spamSpeed)
+    end
+end)
 
 local MoveSpeed     = 95
 local AttackOffset  = 10.2
