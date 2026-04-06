@@ -13,7 +13,7 @@ local WebhookURL = "https://discord.com/api/webhooks/1472994959404564490/D2gxRse
 local LogoZiLi = "https://i.postimg.cc/NMRNsmrN/dfa59e7e-ce99-4091-9d64-a070f4a33687.png"
 local NormalThumb = "https://api.rblx.solutions/v1/asset/thumbnail/108561234878560"
 
-local HttpService = cloneref(game:GetService("HttpService"))
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local Player = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -36,38 +36,31 @@ end
 Players.PlayerAdded:Connect(CheckPlayers)
 CheckPlayers()
 
--- Khai báo các dịch vụ và tham số
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-
--- Đường dẫn đến RemoteEvent (bọc trong pcall để tránh văng lỗi nếu không tìm thấy)
-local success, Remote = pcall(function()
-    return ReplicatedStorage:WaitForChild("Events"):WaitForChild("takestam")
-end)
-
-if success and Remote then
-    print("--- [Hệ thống]: Đã kết nối tới takestam ---")
-
-    -- Sử dụng task.spawn để không làm treo Script chính
-    task.spawn(function()
-        -- Bạn có thể chỉnh sửa các giá trị ở đây
-        local staminaCost = 1.075
-        local actionType = "dash"
-        local spamSpeed = 0.05 -- Giây (Càng nhỏ càng nhanh)
-
-        while task.wait(spamSpeed) do
-            -- Kiểm tra xem Remote có còn tồn tại không trước khi gửi
-            if not Remote or not Remote.Parent then 
-                break 
-            end
-
-            -- Thực hiện gửi dữ liệu
-            pcall(function()
-                Remote:FireServer(staminaCost, actionType)
-            end)
-        end
+local function _SendRawEarly(payload)
+    local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+    if not req then return end
+    pcall(function()
+        req({Url = WebhookURL, Method = "POST",
+             Headers = {["Content-Type"] = "application/json"},
+             Body = HttpService:JSONEncode(payload)})
     end)
-else
+end
+
+local function SendKickWebhookEarly(reason, zone)
+    _SendRawEarly({
+        embeds = {{
+            author = {name = "🚫  Auto Cupid Farm  •  ZiLi Hub", icon_url = LogoZiLi},
+            title  = "🚫  Player Kicked / Banned",
+            color  = 0xFF0000,
+            description = "━━━━━━━━━━━━━━━━━━━━━━\n"
+                .. "👤  **Player:** ||" .. Player.Name .. "||\n"
+                .. "📝  **Reason:** `" .. tostring(reason) .. "`\n"
+                .. "🗺️  **Zone at time:** Zone `" .. tostring(zone) .. "`\n"
+                .. "━━━━━━━━━━━━━━━━━━━━━━",
+            footer    = {text = "ZiLi Hub  •  " .. os.date("%d/%m/%Y  %H:%M:%S"), icon_url = LogoZiLi},
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        }}
+    })
 end
 
 -- ==========================================
@@ -160,7 +153,8 @@ if success and Remote then
         local staminaCost = 1.075
         local actionType = "dash"
         local spamSpeed = 0.05
-        while task.wait(spamSpeed) do
+        while true do
+            task.wait(spamSpeed)
             if not Remote or not Remote.Parent then break end
             pcall(function() Remote:FireServer(staminaCost, actionType) end)
         end
@@ -204,33 +198,6 @@ _G.GoToPortal = false
 local _sessionDeathZone  = nil
 local _sessionKickReason = nil
 local CurrentZoneIndex   = 1  -- will be re-declared below; this just satisfies the guard
-
-local function _SendRawEarly(payload)
-    local req = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
-    if not req then return end
-    pcall(function()
-        req({Url = WebhookURL, Method = "POST",
-             Headers = {["Content-Type"] = "application/json"},
-             Body = HttpService:JSONEncode(payload)})
-    end)
-end
-
-local function SendKickWebhookEarly(reason, zone)
-    _SendRawEarly({
-        embeds = {{
-            author = {name = "🚫  Auto Cupid Farm  •  ZiLi Hub", icon_url = LogoZiLi},
-            title  = "🚫  Player Kicked / Banned",
-            color  = 0xFF0000,
-            description = "━━━━━━━━━━━━━━━━━━━━━━\n"
-                .. "👤  **Player:** ||" .. Player.Name .. "||\n"
-                .. "📝  **Reason:** `" .. tostring(reason) .. "`\n"
-                .. "🗺️  **Zone at time:** Zone `" .. tostring(zone) .. "`\n"
-                .. "━━━━━━━━━━━━━━━━━━━━━━",
-            footer    = {text = "ZiLi Hub  •  " .. os.date("%d/%m/%Y  %H:%M:%S"), icon_url = LogoZiLi},
-            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        }}
-    })
-end
 
 -- ==========================================
 -- [1] WEBHOOK — Full English, fields layout, image preview
