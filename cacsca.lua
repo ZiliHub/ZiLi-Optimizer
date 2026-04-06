@@ -37,15 +37,11 @@ Players.PlayerAdded:Connect(CheckPlayers)
 CheckPlayers()
 
 -- ==========================================
--- DISCONNECT / KICK WATCHER  (v3 — sync + BindToClose)
--- Root cause of previous fails:
---   • task.delay(0.5) + task.spawn → game closes before async runs
---   • CoreGui task.wait(0.15) → too slow
--- Fix:
---   [1] hookfunction on Player.Kick  → fires BEFORE disconnect, synchronous
---   [2] AncestryChanged              → fires immediately, no delay
---   [3] CoreGui scan                 → no wait, fire sync
---   [4] game:BindToClose             → hold game open 2s so HTTP can complete
+-- DISCONNECT / KICK WATCHER  (v3 — sync, no BindToClose)
+-- [1] hookfunction(Player.Kick) → fires BEFORE disconnect, synchronous HTTP
+-- [2] AncestryChanged           → immediate, no delay
+-- [3] CoreGui scan              → no wait, instant scan
+-- _SendRawEarly is synchronous (no task.spawn) → completes before game closes
 -- ==========================================
 local _kickFired = false
 
@@ -119,13 +115,6 @@ task.spawn(function()
 
     for _, child in ipairs(CoreGui:GetChildren()) do task.spawn(ScanGui, child) end
     CoreGui.ChildAdded:Connect(function(child) task.spawn(ScanGui, child) end)
-end)
-
--- [4] BindToClose — hold game open 2s so HTTP request has time to complete
-game:BindToClose(function()
-    if _kickFired then
-        task.wait(2)  -- buy 2s for webhook HTTP to finish
-    end
 end)
 
 
