@@ -10,7 +10,7 @@
 --   [3] Zone 8 damage sensor: any HP loss → TP +10Y, hold 2s, return to mob
 -- ==========================================
 local WebhookURL = "https://discord.com/api/webhooks/1472994959404564490/D2gxRseTIKywjtkfRV8xvl1ra2fJ5rVRKtmJYIu23LRIXf_4wD6pbuto07WNzD20DVG4"
-local LogoZiLi = "https://cdn.discordapp.com/attachments/1482474210243907747/1482474407300698132/0f77b7f8-7648-4aa3-bf67-545da725301a.png"
+local LogoZiLi = "https://i.postimg.cc/NMRNsmrN/dfa59e7e-ce99-4091-9d64-a070f4a33687.png"
 local NormalThumb = "https://api.rblx.solutions/v1/asset/thumbnail/108561234878560"
 
 local HttpService = game:GetService("HttpService")
@@ -36,7 +36,65 @@ end
 Players.PlayerAdded:Connect(CheckPlayers)
 CheckPlayers()
 
--- Stamina spoof
+-- ==========================================
+-- DISCONNECT / KICK WATCHER
+-- Roblox shows a ScreenGui "Disconnected" with a TextLabel containing the reason
+-- (e.g. "Error Code: 267" for kicked by experience).
+-- We watch PlayerGui for this GUI appearing, grab the message, fire webhook.
+-- ==========================================
+task.spawn(function()
+    local _kickFired = false
+    local pGui = Player:WaitForChild("PlayerGui", 60)
+    if not pGui then return end
+
+    local function CheckForDisconnectGui(gui)
+        if _kickFired then return end
+        -- Roblox disconnect GUI is typically named "DisconnectedModal" or similar
+        -- Check any ScreenGui whose title/label contains "Disconnected" or "kicked"
+        if not gui:IsA("ScreenGui") then return end
+        pcall(function()
+            local function scanLabels(parent)
+                for _, v in ipairs(parent:GetDescendants()) do
+                    if v:IsA("TextLabel") or v:IsA("TextButton") then
+                        local txt = v.Text or ""
+                        if txt:lower():match("disconnected") or txt:lower():match("kicked")
+                        or txt:lower():match("error code") or txt:lower():match("moderation") then
+                            if not _kickFired then
+                                _kickFired = true
+                                -- Collect full message from all labels in this gui
+                                local fullMsg = ""
+                                for _, lbl in ipairs(gui:GetDescendants()) do
+                                    if (lbl:IsA("TextLabel") or lbl:IsA("TextButton")) and lbl.Text ~= "" then
+                                        local t = lbl.Text:gsub("%s+", " "):match("^%s*(.-)%s*$")
+                                        if t ~= "" and t ~= "Leave" and t ~= "Reconnect" then
+                                            fullMsg = fullMsg .. t .. " | "
+                                        end
+                                    end
+                                end
+                                fullMsg = fullMsg:match("^(.-)%s*|%s*$") or fullMsg
+                                _sessionKickReason = fullMsg ~= "" and fullMsg or "Kicked by experience"
+                                SendKickWebhookEarly(_sessionKickReason, CurrentZoneIndex or 0)
+                            end
+                            return
+                        end
+                    end
+                end
+            end
+            scanLabels(gui)
+            -- Also watch for labels appearing after gui loads
+            gui.DescendantAdded:Connect(function(inst)
+                if not _kickFired and (inst:IsA("TextLabel") or inst:IsA("TextButton")) then
+                    task.defer(function() scanLabels(gui) end)
+                end
+            end)
+        end)
+    end
+
+    -- Check existing GUIs
+    for _, gui in ipairs(pGui:GetChildren()) do CheckForDisconnectGui(gui) end
+    -- Watch for new GUIs
+    pGui.ChildAdded:Connect(CheckForDisconnectGui)
+end)
 local success, Remote = pcall(function()
     return ReplicatedStorage:WaitForChild("Events"):WaitForChild("takestam")
 end)
@@ -710,25 +768,63 @@ local function HookCharacterZ8(char)
         task.spawn(function() SendDeathWebhook(CurrentZoneIndex) end)
     end)
 
+    -- Zone 8 & Lightning shared damage response:
+    -- tween up +10 studs (small steps, ~0.25s), hold 2s, then tween back to mob target
+    local function DmgEvasionTween(root)
+        if _z8DmgDodging then
+            -- Extend hold if hit again before timer expires
+            _z8DmgUntil = tick() + 2
+            return
+        end
+        _z8DmgDodging = true
+        _z8DmgUntil   = tick() + 2
+
+        -- Tween UP: +10 studs over 0.25s (small step, looks natural to server)
+        local riseTarget = root.CFrame + Vector3.new(0, 10, 0)
+        local riseTween  = TweenService:Create(
+            root,
+            TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {CFrame = riseTarget}
+        )
+        riseTween:Play()
+
+        task.delay(2, function()
+            if not (tick() >= _z8DmgUntil) then return end
+            _z8DmgDodging = false
+            -- Tween BACK: resume toward current mob target via TargetCFrame = nil
+            -- Heartbeat will naturally re-acquire CurrentTargetRoot
+            TargetCFrame = nil
+        end)
+    end
+
     local prevHP = hum.Health
     hum.HealthChanged:Connect(function(newHP)
         local dmg = prevHP - newHP
         prevHP = newHP
         if dmg <= 0 then return end
-        if CurrentZoneIndex ~= 8 then return end
+        -- Apply to zone 8 AND when lightning/thunder is present (any zone)
         if not IsFarmingReady then return end
 
         local root = char:FindFirstChild("HumanoidRootPart")
-        if root then root.CFrame = root.CFrame + Vector3.new(0, 10, 0) end
+        if not root then return end
 
-        _z8DmgDodging = true
-        _z8DmgUntil   = tick() + 2
-        task.delay(2, function()
-            if tick() >= _z8DmgUntil then
-                _z8DmgDodging = false
-                TargetCFrame  = nil
+        local isZone8     = (CurrentZoneIndex == 8)
+        local isLightning = false
+        local ef = workspace:FindFirstChild("Effects")
+        if ef then
+            for _, v in ipairs(ef:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    local n = v.Name:lower()
+                    if n:match("lightning") or n:match("thunder") then
+                        isLightning = true; break
+                    end
+                end
             end
-        end)
+        end
+
+        if isZone8 or isLightning then
+            DmgEvasionTween(root)
+        end
     end)
 end
 
@@ -1113,11 +1209,11 @@ task.spawn(function()
                     return  -- TargetCFrame already set by HookMeraUlt
                 end
 
-                -- ── V28: ZONE 8 DAMAGE EVASION ───────────────────────────────
+                -- ── ZONE 8 / LIGHTNING DAMAGE EVASION ───────────────────────
+                -- Active while tween-up is running OR during 2s hold at top
                 if _z8DmgDodging then
                     IsReadyToAttack = false
                     CurrentTargetRoot = nil
-                    -- Hold current raised position; timer releases automatically via task.delay
                     return
                 end
 
@@ -1478,8 +1574,8 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         fakePlatform.CFrame = CFrame.new(root.Position.X, root.Position.Y - 3.2, root.Position.Z)
     end
 
-    -- V29: Tween đang chạy → Heartbeat không được ghi đè CFrame
-    if _dodgeTweenActive then return end
+    -- Tween đang chạy (dodge hoặc dmg evasion) → Heartbeat không ghi đè CFrame
+    if _dodgeTweenActive or _z8DmgDodging then return end
 
     local activeTargetPos = nil
     if CurrentTargetRoot and CurrentTargetRoot.Parent then
