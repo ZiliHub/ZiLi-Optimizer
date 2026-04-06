@@ -37,11 +37,15 @@ Players.PlayerAdded:Connect(CheckPlayers)
 CheckPlayers()
 
 -- ==========================================
--- DISCONNECT / KICK WATCHER
--- Roblox đặt modal "Disconnected" trong CoreGui (KHÔNG phải PlayerGui).
--- Dual approach:
---   [A] CoreGui.ChildAdded → scan TextLabel cho message đầy đủ (Error Code 267, v.v.)
---   [B] Player.AncestryChanged fallback → khi player bị remove khỏi Players service
+-- DISCONNECT / KICK WATCHER  (v3 — sync + BindToClose)
+-- Root cause of previous fails:
+--   • task.delay(0.5) + task.spawn → game closes before async runs
+--   • CoreGui task.wait(0.15) → too slow
+-- Fix:
+--   [1] hookfunction on Player.Kick  → fires BEFORE disconnect, synchronous
+--   [2] AncestryChanged              → fires immediately, no delay
+--   [3] CoreGui scan                 → no wait, fire sync
+--   [4] game:BindToClose             → hold game open 2s so HTTP can complete
 -- ==========================================
 local _kickFired = false
 
@@ -62,16 +66,35 @@ local function OnKickDetected(msg)
     if _kickFired then return end
     _kickFired = true
     _sessionKickReason = msg or "Disconnected / Kicked"
+    -- Call SYNCHRONOUSLY — no task.spawn, no delay
     SendKickWebhookEarly(_sessionKickReason, CurrentZoneIndex or 0)
 end
 
--- [A] CoreGui watcher — Roblox puts disconnect modal HERE
+-- [1] hookfunction — fires BEFORE Roblox shows the modal (most reliable)
+pcall(function()
+    if hookfunction then
+        local oldKick = hookfunction(Player.Kick, newcclosure(function(self, reason)
+            OnKickDetected("Kicked: " .. tostring(reason or "No reason given"))
+            return oldKick(self, reason)
+        end))
+    end
+end)
+
+-- [2] AncestryChanged — fires when Player is removed from Players service
+-- NO delay — fire immediately
+Player.AncestryChanged:Connect(function(_, parent)
+    if not parent then
+        OnKickDetected(_sessionKickReason or "Disconnected (no message captured)")
+    end
+end)
+
+-- [3] CoreGui scan — NO task.wait, scan synchronously via DescendantAdded
 task.spawn(function()
     local CoreGui = game:GetService("CoreGui")
 
     local function ScanGui(gui)
         if _kickFired then return end
-        task.wait(0.15)
+        -- No task.wait — scan immediately
         pcall(function()
             for _, v in ipairs(gui:GetDescendants()) do
                 if v:IsA("TextLabel") and v.Text then
@@ -84,30 +107,24 @@ task.spawn(function()
                 end
             end
         end)
+        -- Watch for labels added async by Roblox
         pcall(function()
             gui.DescendantAdded:Connect(function(inst)
-                if _kickFired then return end
-                if inst:IsA("TextLabel") then
+                if not _kickFired and inst:IsA("TextLabel") then
                     task.defer(function() ScanGui(gui) end)
                 end
             end)
         end)
     end
 
-    for _, child in ipairs(CoreGui:GetChildren()) do
-        task.spawn(ScanGui, child)
-    end
-    CoreGui.ChildAdded:Connect(function(child)
-        task.spawn(ScanGui, child)
-    end)
+    for _, child in ipairs(CoreGui:GetChildren()) do task.spawn(ScanGui, child) end
+    CoreGui.ChildAdded:Connect(function(child) task.spawn(ScanGui, child) end)
 end)
 
--- [B] AncestryChanged fallback
-Player.AncestryChanged:Connect(function(_, parent)
-    if not parent then
-        task.delay(0.5, function()
-            OnKickDetected(_sessionKickReason or "Disconnected (no message captured)")
-        end)
+-- [4] BindToClose — hold game open 2s so HTTP request has time to complete
+game:BindToClose(function()
+    if _kickFired then
+        task.wait(2)  -- buy 2s for webhook HTTP to finish
     end
 end)
 
