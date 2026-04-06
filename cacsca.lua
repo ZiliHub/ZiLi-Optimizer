@@ -38,63 +38,80 @@ CheckPlayers()
 
 -- ==========================================
 -- DISCONNECT / KICK WATCHER
--- Roblox shows a ScreenGui "Disconnected" with a TextLabel containing the reason
--- (e.g. "Error Code: 267" for kicked by experience).
--- We watch PlayerGui for this GUI appearing, grab the message, fire webhook.
+-- Roblox đặt modal "Disconnected" trong CoreGui (KHÔNG phải PlayerGui).
+-- Dual approach:
+--   [A] CoreGui.ChildAdded → scan TextLabel cho message đầy đủ (Error Code 267, v.v.)
+--   [B] Player.AncestryChanged fallback → khi player bị remove khỏi Players service
 -- ==========================================
-task.spawn(function()
-    local _kickFired = false
-    local pGui = Player:WaitForChild("PlayerGui", 60)
-    if not pGui then return end
+local _kickFired = false
 
-    local function CheckForDisconnectGui(gui)
+local function CollectKickMessage(root)
+    local lines = {}
+    pcall(function()
+        for _, v in ipairs(root:GetDescendants()) do
+            if v:IsA("TextLabel") and v.Text and v.Text ~= "" then
+                local t = v.Text:gsub("%s+", " "):match("^%s*(.-)%s*$")
+                if t ~= "" then table.insert(lines, t) end
+            end
+        end
+    end)
+    return #lines > 0 and table.concat(lines, " — ") or nil
+end
+
+local function OnKickDetected(msg)
+    if _kickFired then return end
+    _kickFired = true
+    _sessionKickReason = msg or "Disconnected / Kicked"
+    SendKickWebhookEarly(_sessionKickReason, CurrentZoneIndex or 0)
+end
+
+-- [A] CoreGui watcher — Roblox puts disconnect modal HERE
+task.spawn(function()
+    local CoreGui = game:GetService("CoreGui")
+
+    local function ScanGui(gui)
         if _kickFired then return end
-        -- Roblox disconnect GUI is typically named "DisconnectedModal" or similar
-        -- Check any ScreenGui whose title/label contains "Disconnected" or "kicked"
-        if not gui:IsA("ScreenGui") then return end
+        task.wait(0.15)
         pcall(function()
-            local function scanLabels(parent)
-                for _, v in ipairs(parent:GetDescendants()) do
-                    if v:IsA("TextLabel") or v:IsA("TextButton") then
-                        local txt = v.Text or ""
-                        if txt:lower():match("disconnected") or txt:lower():match("kicked")
-                        or txt:lower():match("error code") or txt:lower():match("moderation") then
-                            if not _kickFired then
-                                _kickFired = true
-                                -- Collect full message from all labels in this gui
-                                local fullMsg = ""
-                                for _, lbl in ipairs(gui:GetDescendants()) do
-                                    if (lbl:IsA("TextLabel") or lbl:IsA("TextButton")) and lbl.Text ~= "" then
-                                        local t = lbl.Text:gsub("%s+", " "):match("^%s*(.-)%s*$")
-                                        if t ~= "" and t ~= "Leave" and t ~= "Reconnect" then
-                                            fullMsg = fullMsg .. t .. " | "
-                                        end
-                                    end
-                                end
-                                fullMsg = fullMsg:match("^(.-)%s*|%s*$") or fullMsg
-                                _sessionKickReason = fullMsg ~= "" and fullMsg or "Kicked by experience"
-                                SendKickWebhookEarly(_sessionKickReason, CurrentZoneIndex or 0)
-                            end
-                            return
-                        end
+            for _, v in ipairs(gui:GetDescendants()) do
+                if v:IsA("TextLabel") and v.Text then
+                    local t = v.Text:lower()
+                    if t:match("disconnect") or t:match("kicked")
+                    or t:match("error code") or t:match("moderation") then
+                        OnKickDetected(CollectKickMessage(gui))
+                        return
                     end
                 end
             end
-            scanLabels(gui)
-            -- Also watch for labels appearing after gui loads
+        end)
+        pcall(function()
             gui.DescendantAdded:Connect(function(inst)
-                if not _kickFired and (inst:IsA("TextLabel") or inst:IsA("TextButton")) then
-                    task.defer(function() scanLabels(gui) end)
+                if _kickFired then return end
+                if inst:IsA("TextLabel") then
+                    task.defer(function() ScanGui(gui) end)
                 end
             end)
         end)
     end
 
-    -- Check existing GUIs
-    for _, gui in ipairs(pGui:GetChildren()) do CheckForDisconnectGui(gui) end
-    -- Watch for new GUIs
-    pGui.ChildAdded:Connect(CheckForDisconnectGui)
+    for _, child in ipairs(CoreGui:GetChildren()) do
+        task.spawn(ScanGui, child)
+    end
+    CoreGui.ChildAdded:Connect(function(child)
+        task.spawn(ScanGui, child)
+    end)
 end)
+
+-- [B] AncestryChanged fallback
+Player.AncestryChanged:Connect(function(_, parent)
+    if not parent then
+        task.delay(0.5, function()
+            OnKickDetected(_sessionKickReason or "Disconnected (no message captured)")
+        end)
+    end
+end)
+
+
 local success, Remote = pcall(function()
     return ReplicatedStorage:WaitForChild("Events"):WaitForChild("takestam")
 end)
