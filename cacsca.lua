@@ -95,7 +95,11 @@ Players.PlayerAdded:Connect(CheckPlayers)
 CheckPlayers()
 
 -- ==========================================
--- DISCONNECT / KICK WATCHER
+-- DISCONNECT / KICK WATCHER  (V31 - rewrite hoàn toàn)
+-- 3 lớp bảo vệ chồng nhau:
+--   [L1] game:BindToClose()          — API Roblox, bắt MỌI disconnect kể cả Error 267
+--   [L2] RobloxPromptGui.promptOverlay — vị trí thật của dialog Error Code 267
+--   [L3] hookfunction Player.Kick     — bắt kick từ script nội bộ (CheckPlayers...)
 -- ==========================================
 local _kickFired = false
 
@@ -132,6 +136,59 @@ local function OnKickDetected(msg)
     })
 end
 
+-- [L1] game:BindToClose — API chính thức của Roblox, fired TRƯỚC khi ngắt kết nối
+-- Đây là lớp quan trọng nhất, bắt được Error 267 trước khi internet bị cắt
+-- BindToClose cho ~5 giây để hoàn thành callback trước khi game thực sự đóng
+pcall(function()
+    game:BindToClose(function()
+        -- Lấy reason từ promptOverlay nếu có, không thì dùng reason đã lưu
+        local reason = _sessionKickReason or "Disconnected"
+        pcall(function()
+            local overlay = CoreGui
+                :WaitForChild("RobloxPromptGui", 1)
+                :WaitForChild("promptOverlay",   1)
+            local msg = CollectKickMessage(overlay)
+            if msg and msg ~= "" then reason = msg end
+        end)
+        OnKickDetected(reason)
+        -- Busy-wait để _SendRawEarly kịp gửi xong trước khi Roblox đóng
+        local t0 = tick()
+        repeat task.wait(0.05) until _kickFired or (tick() - t0 > 4)
+    end)
+end)
+
+-- [L2] Nghe trực tiếp CoreGui.RobloxPromptGui.promptOverlay — vị trí ĐÚNG của dialog Error 267
+-- Trigger ngay khi dialog xuất hiện, không cần poll
+pcall(function()
+    task.spawn(function()
+        local promptGui = CoreGui:WaitForChild("RobloxPromptGui", 30)
+        if not promptGui then return end
+        local overlay = promptGui:WaitForChild("promptOverlay", 30)
+        if not overlay then return end
+
+        local function CheckOverlay()
+            if _kickFired then return end
+            local msg = CollectKickMessage(overlay)
+            if msg then
+                local low = msg:lower()
+                if low:match("kicked") or low:match("error code") or low:match("banned")
+                or low:match("moderation") or low:match("disconnect") then
+                    OnKickDetected(msg)
+                end
+            end
+        end
+
+        -- Lắng nghe mọi element mới được thêm vào overlay (dialog render dần)
+        overlay.DescendantAdded:Connect(function(inst)
+            if inst:IsA("TextLabel") then
+                task.defer(CheckOverlay)
+            end
+        end)
+        CheckOverlay() -- Kiểm tra ngay nếu dialog đã có sẵn
+    end)
+end)
+
+-- [L3] hookfunction Player.Kick — bắt kick từ script nội bộ (CheckPlayers, v.v.)
 pcall(function()
     if hookfunction then
         local oldKick = hookfunction(Player.Kick, newcclosure(function(self, reason)
@@ -141,79 +198,14 @@ pcall(function()
     end
 end)
 
+-- Fallback: AncestryChanged — lớp cuối cùng, bắt mọi trường hợp còn lại
 Player.AncestryChanged:Connect(function(_, parent)
     if not parent then
-        OnKickDetected(_sessionKickReason or "Disconnected (no message captured)")
+        OnKickDetected(_sessionKickReason or "Disconnected (AncestryChanged)")
     end
 end)
 
-task.spawn(function()
-    local function ScanGui(gui)
-        if _kickFired then return end
-        pcall(function()
-            for _, v in ipairs(gui:GetDescendants()) do
-                if v:IsA("TextLabel") and v.Text then
-                    local t = v.Text:lower()
-                    -- [FIX-1] Bỏ "restart" khỏi filter — game dùng UI "restart" bình thường
-                    -- Chỉ bắt các keyword thực sự là kick/ban
-                    if t:match("you have been kicked") or t:match("you were kicked")
-                    or t:match("banned") or t:match("error code")
-                    or (t:match("disconnect") and not t:match("headset"))
-                    or t:match("moderation") then
-                        OnKickDetected(CollectKickMessage(gui))
-                        return
-                    end
-                end
-            end
-        end)
-        pcall(function()
-            gui.DescendantAdded:Connect(function(inst)
-                if not _kickFired and inst:IsA("TextLabel") then
-                    task.defer(function() ScanGui(gui) end)
-                end
-            end)
-        end)
-    end
 
-    -- Scan CoreGui (custom game UI)
-    for _, child in ipairs(CoreGui:GetChildren()) do task.spawn(ScanGui, child) end
-    CoreGui.ChildAdded:Connect(function(child) task.spawn(ScanGui, child) end)
-
-    -- [FIX-V30] Scan RobloxGui — dialog kick native "Error Code: 267" nằm ở đây
-    -- KHÔNG nằm trong CoreGui children thông thường
-    pcall(function()
-        local robloxGui = CoreGui:FindFirstChild("RobloxGui")
-        if robloxGui then
-            for _, child in ipairs(robloxGui:GetChildren()) do task.spawn(ScanGui, child) end
-            robloxGui.ChildAdded:Connect(function(child) task.spawn(ScanGui, child) end)
-        end
-    end)
-
-    -- Fallback: gethui() — Synapse X, KRNL, Fluxus hỗ trợ
-    pcall(function()
-        if gethui then
-            local hui = gethui()
-            if hui then
-                for _, child in ipairs(hui:GetChildren()) do task.spawn(ScanGui, child) end
-                hui.ChildAdded:Connect(function(child) task.spawn(ScanGui, child) end)
-            end
-        end
-    end)
-
-    -- Poll fallback 2s — đảm bảo không bỏ sót nếu dialog xuất hiện muộn
-    task.spawn(function()
-        while not _kickFired do
-            pcall(function()
-                local rGui = CoreGui:FindFirstChild("RobloxGui")
-                if rGui then ScanGui(rGui) end
-            end)
-            task.wait(2)
-        end
-    end)
-end)
-
--- [NOTE] takestam loop đã được chuyển xuống SAU dòng khai báo currentScriptID
--- Xem phần "TAKESTAM LOOP" bên dưới
 
 -- Auto equip title
 task.spawn(function()
@@ -534,43 +526,31 @@ _G.AutoDungeon  = true
 _G.ForceReblock = false
 
 -- ==========================================
--- TAKESTAM LOOP
--- PHẢI đặt SAU "local currentScriptID" — nếu đặt trước,
--- currentScriptID = nil → while condition false ngay → loop chết
+-- TAKESTAM LOOP  (V31 — theo pattern _G.SpamStamina)
+-- - Dùng _G.SpamStamina thay currentScriptID → chạy cả lobby lẫn dungeon
+-- - CFrame lấy từ HumanoidRootPart thực tế mỗi tick để qua mặt server
+-- - Fallback CFrame.new() nếu char chưa spawn (giữa các zone, respawn, v.v.)
 -- ==========================================
+_G.SpamStamina = true
 task.spawn(function()
-    local staminaCost = 1.075
-    local actionType  = "dash"
-    local spamSpeed   = 0.05
-
-    local eventsFolder = ReplicatedStorage:WaitForChild("Events", 15)
-    if not eventsFolder then
-        warn("[TakeStam] Không tìm thấy Events folder — dừng")
-        return
-    end
-    local Remote = eventsFolder:WaitForChild("takestam", 15)
+    local Events   = ReplicatedStorage:WaitForChild("Events", 30)
+    local Remote   = Events and Events:WaitForChild("takestam", 30)
     if not Remote then
-        warn("[TakeStam] Không tìm thấy takestam remote — dừng")
+        warn("[TakeStam] Không tìm thấy takestam — dừng")
         return
     end
-    Remote = cloneref(Remote)
 
-    while _G.DungeonScriptID == currentScriptID do
-        if not Remote or not Remote.Parent then
-            local r = eventsFolder:FindFirstChild("takestam")
-            if r then Remote = cloneref(r) else task.wait(1) end
-        else
-            pcall(function()
-                local char = Player.Character
-                local root = char and char:FindFirstChild("HumanoidRootPart")
-                local cf   = root and root.CFrame
-                          or CFrame.new(5913.02685546875, 5.307063102722168, -9723.68359375)
-                Remote:FireServer(staminaCost, actionType, cf)
-            end)
-        end
-        task.wait(spamSpeed)
+    while _G.SpamStamina do
+        pcall(function()
+            local char = Player.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            local cf   = (root and root.CFrame) or CFrame.new()
+            Remote:FireServer(1.075, "dash", cf)
+        end)
+        task.wait(0.05)
     end
 end)
+print("[TakeStam] Đã bật Auto Take Stamina!")
 
 local MoveSpeed     = 95
 local AttackOffset  = 10.2
