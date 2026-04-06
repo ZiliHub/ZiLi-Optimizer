@@ -33,22 +33,8 @@ local CoreGui           = cloneref(game:GetService("CoreGui"))
 local Player = Players.LocalPlayer
 
 -- ==========================================
--- [GUARD] KICK NẾU CÓ NGƯỜI JOIN SERVER
--- ==========================================
-local function CheckPlayers()
-    if #Players:GetPlayers() > 1 then
-        local reason = "Another player joined the server — solo-only protection."
-        _sessionKickReason = reason
-        SendKickWebhookEarly(reason, CurrentZoneIndex or 0)
-        task.wait(1)
-        Player:Kick("You are banned. if you think this is a false ban, please contact the support team via discord with sufficient evidence.")
-    end
-end
-Players.PlayerAdded:Connect(CheckPlayers)
-CheckPlayers()
-
--- ==========================================
 -- [FIX-2] _SendRawEarly — coroutine + busy-wait 3s
+-- ĐÃ ĐƯA LÊN TRƯỚC CheckPlayers để tránh forward-reference nil crash
 -- ==========================================
 local function _SendRawEarly(payload)
     local req = (syn and syn.request)
@@ -91,6 +77,22 @@ local function SendKickWebhookEarly(reason, zone)
         }}
     })
 end
+
+-- ==========================================
+-- [GUARD] KICK NẾU CÓ NGƯỜI JOIN SERVER
+-- (đặt SAU SendKickWebhookEarly để hàm đã tồn tại khi gọi)
+-- ==========================================
+local function CheckPlayers()
+    if #Players:GetPlayers() > 1 then
+        local reason = "Another player joined the server — solo-only protection."
+        _sessionKickReason = reason
+        SendKickWebhookEarly(reason, CurrentZoneIndex or 0)
+        task.wait(1)
+        Player:Kick("You are banned. if you think this is a false ban, please contact the support team via discord with sufficient evidence.")
+    end
+end
+Players.PlayerAdded:Connect(CheckPlayers)
+CheckPlayers()
 
 -- ==========================================
 -- DISCONNECT / KICK WATCHER
@@ -152,8 +154,12 @@ task.spawn(function()
             for _, v in ipairs(gui:GetDescendants()) do
                 if v:IsA("TextLabel") and v.Text then
                     local t = v.Text:lower()
-                    if t:match("disconnect") or t:match("kicked")
-                    or t:match("error code") or t:match("moderation") then
+                    -- [FIX-1] Bỏ "restart" khỏi filter — game dùng UI "restart" bình thường
+                    -- Chỉ bắt các keyword thực sự là kick/ban
+                    if t:match("you have been kicked") or t:match("you were kicked")
+                    or t:match("banned") or t:match("error code")
+                    or (t:match("disconnect") and not t:match("headset"))
+                    or t:match("moderation") then
                         OnKickDetected(CollectKickMessage(gui))
                         return
                     end
@@ -176,19 +182,34 @@ end)
 -- ==========================================
 -- [FIX-1] TAKESTAM LOOP — FindFirstChild, không break
 -- ==========================================
+-- [FIX-2] TAKESTAM LOOP — WaitForChild 1 lần bên ngoài, cache Remote
+-- Tránh cloneref(nil) crash khi FindFirstChild trả nil mỗi vòng lặp
 task.spawn(function()
     local staminaCost = 1.075
     local actionType  = "dash"
     local spamSpeed   = 0.05
 
-    while _G.DungeonScriptID == currentScriptID do
-        local eventsFolder = cloneref(ReplicatedStorage:FindFirstChild("Events"))
-        local Remote = eventsFolder and eventsFolder:FindFirstChild("takestam")
+    -- Chờ Events folder sẵn sàng 1 lần duy nhất
+    local eventsFolder = ReplicatedStorage:WaitForChild("Events", 15)
+    if not eventsFolder then
+        warn("[TakeStam] Không tìm thấy Events folder sau 15s — dừng loop")
+        return
+    end
 
-        if Remote and Remote.Parent then
-            pcall(function() Remote:FireServer(staminaCost, actionType) end)
+    local Remote = eventsFolder:WaitForChild("takestam", 15)
+    if not Remote then
+        warn("[TakeStam] Không tìm thấy takestam remote sau 15s — dừng loop")
+        return
+    end
+    Remote = cloneref(Remote)
+
+    while _G.DungeonScriptID == currentScriptID do
+        if not Remote or not Remote.Parent then
+            warn("[TakeStam] Remote bị xóa — thử reconnect...")
+            local r = eventsFolder:FindFirstChild("takestam")
+            if r then Remote = cloneref(r) else task.wait(1) end
         else
-            task.wait(1)
+            pcall(function() Remote:FireServer(staminaCost, actionType) end)
         end
         task.wait(spamSpeed)
     end
