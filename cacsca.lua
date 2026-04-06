@@ -13,7 +13,7 @@ local WebhookURL = "https://discord.com/api/webhooks/1472994959404564490/D2gxRse
 local LogoZiLi = "https://i.postimg.cc/NMRNsmrN/dfa59e7e-ce99-4091-9d64-a070f4a33687.png"
 local NormalThumb = "https://api.rblx.solutions/v1/asset/thumbnail/108561234878560"
 
-local HttpService = game:GetService("HttpService")
+local HttpService = cloneref(game:GetService("HttpService"))
 local Players = game:GetService("Players")
 local Player = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -35,6 +35,40 @@ local function CheckPlayers()
 end
 Players.PlayerAdded:Connect(CheckPlayers)
 CheckPlayers()
+
+-- Khai báo các dịch vụ và tham số
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+-- Đường dẫn đến RemoteEvent (bọc trong pcall để tránh văng lỗi nếu không tìm thấy)
+local success, Remote = pcall(function()
+    return ReplicatedStorage:WaitForChild("Events"):WaitForChild("takestam")
+end)
+
+if success and Remote then
+    print("--- [Hệ thống]: Đã kết nối tới takestam ---")
+
+    -- Sử dụng task.spawn để không làm treo Script chính
+    task.spawn(function()
+        -- Bạn có thể chỉnh sửa các giá trị ở đây
+        local staminaCost = 1.075
+        local actionType = "dash"
+        local spamSpeed = 0.05 -- Giây (Càng nhỏ càng nhanh)
+
+        while task.wait(spamSpeed) do
+            -- Kiểm tra xem Remote có còn tồn tại không trước khi gửi
+            if not Remote or not Remote.Parent then 
+                break 
+            end
+
+            -- Thực hiện gửi dữ liệu
+            pcall(function()
+                Remote:FireServer(staminaCost, actionType)
+            end)
+        end
+    end)
+else
+end
 
 -- ==========================================
 -- DISCONNECT / KICK WATCHER  (v3 — sync, no BindToClose)
