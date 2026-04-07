@@ -518,7 +518,6 @@ __modules["Config/ConfigManager"] = function()
     return ConfigManager
 end
 
-
 -- 📦 MODULE: IslandData.lua
 __modules["Island/IslandData"] = function()
     local IslandData = {
@@ -4707,74 +4706,62 @@ function ServerModule.Join(code, hubArg, seaArg)
                         task.wait(0.6)
                         pcall(function() remote:FireServer(hubArg) end)
                         pcall(function() chooseTypeUI.Enabled = false end)
+
+                        -- Sea selection AFTER hub is fired — dialog appears now
+                        if seaArg then
+                            local wantText = (seaArg == "Sea 2") and "Second Sea" or "First Sea"
+                            local wantPartial = (seaArg == "Sea 2") and "second" or "first"
+
+                            local function tryClick(btn)
+                                pcall(function() firebutton(btn) end)
+                                pcall(function() btn:activate() end)
+                                pcall(function()
+                                    local vim = game:GetService("VirtualInputManager")
+                                    local abs = btn.AbsolutePosition
+                                    local sz  = btn.AbsoluteSize
+                                    vim:SendMouseButtonEvent(math.floor(abs.X+sz.X/2), math.floor(abs.Y+sz.Y/2), 0, true,  game, 1)
+                                    task.wait(0.05)
+                                    vim:SendMouseButtonEvent(math.floor(abs.X+sz.X/2), math.floor(abs.Y+sz.Y/2), 0, false, game, 1)
+                                end)
+                            end
+
+                            local function matchesSea(btn)
+                                local nm = btn.Name or ""
+                                local tx = (btn:IsA("TextButton") and btn.Text) or ""
+                                if nm == wantText or tx == wantText then return true end
+                                return nm:lower():find(wantPartial,1,true) ~= nil
+                                    or tx:lower():find(wantPartial,1,true) ~= nil
+                            end
+
+                            local function searchRoot(root)
+                                for _, desc in ipairs(root:GetDescendants()) do
+                                    if (desc:IsA("TextButton") or desc:IsA("ImageButton")) and matchesSea(desc) then
+                                        tryClick(desc)
+                                        return true
+                                    end
+                                end
+                                return false
+                            end
+
+                            -- Poll up to 25s; sea dialog appears shortly after hub fire
+                            task.spawn(function()
+                                local deadline = tick() + 25
+                                local clicked  = false
+                                task.wait(0.4)
+                                while not clicked and tick() < deadline do
+                                    local pg2 = Player_L:FindFirstChild("PlayerGui")
+                                    if pg2 and searchRoot(pg2) then clicked = true; break end
+                                    pcall(function()
+                                        if searchRoot(game:GetService("CoreGui")) then clicked = true end
+                                    end)
+                                    if not clicked then task.wait(0.3) end
+                                end
+                            end)
+                        end
                     end
                 end
             end
 
-            -- Sea selection — only for Regular (hubArg == true)
-            if hubArg == true and seaArg then
-                task.spawn(function()
-                    local wantSea = (seaArg == "Sea 2") and "Second Sea" or "First Sea"
-                    -- Also accept short names the game might use
-                    local altName = (seaArg == "Sea 2") and "Second" or "First"
-
-                    -- Helper: try all click methods on a button
-                    local function tryClick(btn)
-                        pcall(function() firebutton(btn) end)
-                        pcall(function() btn:activate() end)
-                        pcall(function()
-                            local vim = game:GetService("VirtualInputManager")
-                            local abs = btn.AbsolutePosition
-                            local sz  = btn.AbsoluteSize
-                            local cx  = math.floor(abs.X + sz.X/2)
-                            local cy  = math.floor(abs.Y + sz.Y/2)
-                            vim:SendMouseButtonEvent(cx, cy, 0, true,  game, 1)
-                            task.wait(0.05)
-                            vim:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
-                        end)
-                    end
-
-                    -- Broad search: scan ALL of PlayerGui (and CoreGui) for any
-                    -- TextButton/ImageButton whose .Name or .Text matches the sea we want.
-                    -- This is independent of whatever ScreenGui hierarchy the game uses.
-                    local function searchAndClick(root)
-                        for _, desc in ipairs(root:GetDescendants()) do
-                            if desc:IsA("TextButton") or desc:IsA("ImageButton") then
-                                local nm = desc.Name or ""
-                                local tx = (desc:IsA("TextButton") and desc.Text) or ""
-                                local nmMatch = nm == wantSea or nm == altName
-                                              or nm:lower():find(altName:lower(), 1, true)
-                                local txMatch = tx == wantSea
-                                              or tx:lower():find(altName:lower(), 1, true)
-                                if nmMatch or txMatch then
-                                    tryClick(desc)
-                                    return true
-                                end
-                            end
-                        end
-                        return false
-                    end
-
-                    -- Poll every 0.25s for up to 25s — covers slow lobby loads
-                    local deadline = tick() + 25
-                    local clicked  = false
-                    task.wait(0.8)  -- small initial wait for UI to appear
-                    while not clicked and tick() < deadline do
-                        local pg = Player_L:FindFirstChild("PlayerGui")
-                        if pg and searchAndClick(pg) then
-                            clicked = true
-                        end
-                        -- Also check CoreGui (some games put dialogs there)
-                        if not clicked then
-                            pcall(function()
-                                local cg = game:GetService("CoreGui")
-                                if searchAndClick(cg) then clicked = true end
-                            end)
-                        end
-                        if not clicked then task.wait(0.25) end
-                    end
-                end)
-            end
         end)
     end
 end
@@ -4802,48 +4789,56 @@ function AutoRejoinModule._saveSession()
     end)
 end
 
--- Start watching for kick: saves session every 25s, teleports to lobby on kick
+-- Start watching for kick: save session + go to lobby on kick
 function AutoRejoinModule.Start()
     if AutoRejoinModule._running then return end
     AutoRejoinModule._running = true
     AutoRejoinModule._saveSession()
 
-    -- Hook PlayerRemoving once (fires on kick/shutdown, saves fresh session)
+    -- Hook PlayerRemoving once — fires when player is removed (kick/shutdown)
     if not AutoRejoinModule._hooked then
         AutoRejoinModule._hooked = true
         pcall(function()
             game:GetService("Players").PlayerRemoving:Connect(function(p)
-                if p == Player_L then
-                    AutoRejoinModule._saveSession()
+                if p ~= Player_L then return end
+                AutoRejoinModule._saveSession()
+                -- This fires BEFORE the disconnect screen, so we can teleport
+                if AutoRejoinModule._running then
+                    pcall(function() TeleportService_L:Teleport(PLACE_LOBBY, Player_L) end)
+                end
+            end)
+        end)
+
+        -- OnTeleport: if teleport fails or is in-progress, we were kicked
+        pcall(function()
+            Player_L.OnTeleport:Connect(function(state)
+                if not AutoRejoinModule._running then return end
+                if state == Enum.TeleportState.Failed then
+                    -- Teleport failed → retry going to lobby
+                    task.wait(3)
+                    pcall(function() TeleportService_L:Teleport(PLACE_LOBBY, Player_L) end)
                 end
             end)
         end)
     end
 
+    -- Background thread: refresh session file + secondary kick detection
     AutoRejoinModule._thread = task.spawn(function()
-        -- Keep session file fresh + detect kick via char watch
-        local hadChar = (Player_L.Character ~= nil)
+        -- Track consecutive ticks without a character
+        local noCharTicks = 0
         while AutoRejoinModule._running do
-            task.wait(4)
-            -- Refresh session file every ~25 ticks (~100s)
+            task.wait(5)
             AutoRejoinModule._saveSession()
-            -- Character watch: death restores char within ~5s; kick does not
-            local hasChar = (Player_L.Character ~= nil)
-            if hadChar and not hasChar then
-                -- Lost character — wait to see if it respawns (death) or stays gone (kick)
-                local deadline = os.clock() + 8
-                repeat task.wait(0.5) until Player_L.Character or os.clock() > deadline
-                if not Player_L.Character then
-                    -- Still no character after 8s → kicked
-                    AutoRejoinModule._saveSession()
-                    task.wait(math.random(2, 4))
-                    if AutoRejoinModule._running then
-                        pcall(function() TeleportService_L:Teleport(PLACE_LOBBY, Player_L) end)
-                    end
+            -- Character watch: if no char for >15s (3 ticks × 5s), try to rejoin
+            if Player_L.Character then
+                noCharTicks = 0
+            else
+                noCharTicks = noCharTicks + 1
+                if noCharTicks >= 3 and AutoRejoinModule._running then
+                    pcall(function() TeleportService_L:Teleport(PLACE_LOBBY, Player_L) end)
                     break
                 end
             end
-            hadChar = (Player_L.Character ~= nil)
         end
     end)
 end
@@ -4949,6 +4944,304 @@ else
     ScreenGui.Parent = CoreGui:FindFirstChild("RobloxGui") or CoreGui
 end
 if gethui then ScreenGui.Parent = gethui() else ScreenGui.Parent = game.CoreGui end
+
+-- =====================================================================
+-- ██ ZILI HUB — LOADING SCREEN ██
+-- =====================================================================
+do
+    local _LS_C  = Color3.fromRGB
+    local _LS_TS = game:GetService("TweenService")
+    local _LS_TI = TweenInfo.new
+    local _LS_UD = UDim2.new
+    local function _N(cls, p, par)
+        local o = Instance.new(cls)
+        for k,v in pairs(p) do o[k]=v end
+        if par then o.Parent=par end
+        return o
+    end
+    local function _R(r,p) _N("UICorner",{CornerRadius=UDim.new(0,r)},p) end
+    local function _TW(o,t,pr)
+        _LS_TS:Create(o,_LS_TI(t,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),pr):Play()
+    end
+    local function _TW_BACK(o,t,pr)
+        _LS_TS:Create(o,_LS_TI(t,Enum.EasingStyle.Back,Enum.EasingDirection.Out),pr):Play()
+    end
+
+    -- Blur hậu cảnh
+    local _blur = Instance.new("BlurEffect")
+    _blur.Size   = 0
+    _blur.Parent = game:GetService("Lighting")
+    _TW(_blur, 0.5, {Size=28})
+
+    -- Gui container (high DisplayOrder, trên tất cả)
+    local _lGui = _N("ScreenGui", {
+        Name="ZiliLoader", IgnoreGuiInset=true,
+        ResetOnSpawn=false, DisplayOrder=9999,
+        ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
+    }, gethui and gethui() or game:GetService("CoreGui"))
+
+    -- Full-screen overlay tối
+    local _bg = _N("Frame", {
+        Size=_LS_UD(1,0,1,0), BackgroundColor3=_LS_C(3,2,10),
+        BackgroundTransparency=0, BorderSizePixel=0, ZIndex=1,
+    }, _lGui)
+
+    -- Radial glow phát sáng ở center
+    _N("ImageLabel", {
+        Size=_LS_UD(0,780,0,780), Position=_LS_UD(0.5,-390,0.5,-390),
+        BackgroundTransparency=1, ZIndex=2,
+        Image="rbxassetid://6401561088",
+        ImageColor3=_LS_C(90,60,10), ImageTransparency=0.78,
+    }, _bg)
+
+    -- Glass panel trung tâm
+    local _panel = _N("Frame", {
+        Size=_LS_UD(0,360,0,390), Position=_LS_UD(0.5,-180,0.5,-195),
+        BackgroundColor3=_LS_C(9,7,20), BackgroundTransparency=0.08,
+        BorderSizePixel=0, ZIndex=3,
+    }, _lGui)
+    _R(22, _panel)
+    -- Viền vàng
+    local _pBorder = _N("UIStroke", {
+        Color=_LS_C(220,172,68), Thickness=1.4, Transparency=0.25,
+    }, _panel)
+    -- Accent line trên cùng (gradient cam→vàng→teal)
+    local _topLine = _N("Frame", {
+        Size=_LS_UD(0.72,0,0,2), Position=_LS_UD(0.14,0,0,0),
+        BackgroundColor3=_LS_C(255,215,85), BorderSizePixel=0, ZIndex=4,
+    }, _panel)
+    _R(2, _topLine)
+    local _tlG = Instance.new("UIGradient")
+    _tlG.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,   _LS_C(255,130,40)),
+        ColorSequenceKeypoint.new(0.5, _LS_C(255,215,115)),
+        ColorSequenceKeypoint.new(1,   _LS_C(45,225,218)),
+    })
+    _tlG.Parent = _topLine
+
+    -- Logo ring
+    local _logoRing = _N("Frame", {
+        Size=_LS_UD(0,90,0,90), Position=_LS_UD(0.5,-45,0,24),
+        BackgroundColor3=_LS_C(13,9,26), BorderSizePixel=0, ZIndex=4,
+    }, _panel)
+    _R(45, _logoRing)
+    local _logoStroke = _N("UIStroke", {
+        Color=_LS_C(220,172,68), Thickness=2.2, Transparency=0.1,
+    }, _logoRing)
+    -- Inner glow
+    _N("ImageLabel", {
+        Size=_LS_UD(1,0,1,0), BackgroundTransparency=1, ZIndex=4,
+        Image="rbxassetid://6401561088",
+        ImageColor3=_LS_C(220,172,68), ImageTransparency=0.55,
+    }, _logoRing)
+    -- Logo Zili
+    _N("ImageLabel", {
+        Size=_LS_UD(0,60,0,60), Position=_LS_UD(0.5,-30,0.5,-30),
+        BackgroundTransparency=1, ZIndex=5,
+        Image="rbxassetid://108561234878560",
+    }, _logoRing)
+
+    -- Tiêu đề ZILI HUB
+    _N("TextLabel", {
+        Size=_LS_UD(1,-24,0,30), Position=_LS_UD(0,12,0,124),
+        BackgroundTransparency=1, ZIndex=4,
+        Text="ZILI HUB", TextColor3=_LS_C(255,215,115),
+        Font=Enum.Font.GothamBlack, TextSize=24,
+        TextXAlignment=Enum.TextXAlignment.Center,
+    }, _panel)
+    -- Sub-title
+    _N("TextLabel", {
+        Size=_LS_UD(1,-24,0,18), Position=_LS_UD(0,12,0,155),
+        BackgroundTransparency=1, ZIndex=4,
+        Text="GET BETTER OUT  ·  Premium Build",
+        TextColor3=_LS_C(140,135,165),
+        Font=Enum.Font.GothamMedium, TextSize=11,
+        TextXAlignment=Enum.TextXAlignment.Center,
+    }, _panel)
+
+    -- Divider mỏng
+    local _div = _N("Frame", {
+        Size=_LS_UD(0.76,0,0,1), Position=_LS_UD(0.12,0,0,183),
+        BackgroundColor3=_LS_C(38,32,78), BorderSizePixel=0, ZIndex=4,
+    }, _panel)
+
+    -- Status text
+    local _statusLbl = _N("TextLabel", {
+        Size=_LS_UD(1,-24,0,20), Position=_LS_UD(0,12,0,194),
+        BackgroundTransparency=1, ZIndex=4,
+        Text="Đang khởi động hệ thống...",
+        TextColor3=_LS_C(148,143,168),
+        Font=Enum.Font.GothamMedium, TextSize=11,
+        TextXAlignment=Enum.TextXAlignment.Center,
+    }, _panel)
+
+    -- Loading dots
+    local _dotsFrame = _N("Frame", {
+        Size=_LS_UD(0,64,0,12), Position=_LS_UD(0.5,-32,0,220),
+        BackgroundTransparency=1, ZIndex=4,
+    }, _panel)
+    local _dots = {}
+    for i=1,3 do
+        _dots[i] = _N("Frame", {
+            Size=_LS_UD(0,8,0,8),
+            Position=_LS_UD(0,(i-1)*24,0.5,-4),
+            BackgroundColor3=_LS_C(220,172,68),
+            BorderSizePixel=0, ZIndex=5,
+        }, _dotsFrame)
+        _R(4, _dots[i])
+    end
+
+    -- Progress bar track
+    local _barTrack = _N("Frame", {
+        Size=_LS_UD(1,-48,0,8), Position=_LS_UD(0,24,0,250),
+        BackgroundColor3=_LS_C(16,13,34), BorderSizePixel=0, ZIndex=4,
+    }, _panel)
+    _R(4, _barTrack)
+    _N("UIStroke",{Color=_LS_C(38,32,78),Thickness=1,Transparency=0},_barTrack)
+
+    -- Progress fill (gradient cam→vàng→teal)
+    local _barFill = _N("Frame", {
+        Size=_LS_UD(0,0,1,0), BackgroundColor3=_LS_C(255,215,85),
+        BorderSizePixel=0, ZIndex=5,
+    }, _barTrack)
+    _R(4, _barFill)
+    local _fillGrad = Instance.new("UIGradient")
+    _fillGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,   _LS_C(255,120,40)),
+        ColorSequenceKeypoint.new(0.5, _LS_C(255,215,115)),
+        ColorSequenceKeypoint.new(1,   _LS_C(45,225,218)),
+    })
+    _fillGrad.Parent = _barFill
+
+    -- Percent label
+    local _pctLbl = _N("TextLabel", {
+        Size=_LS_UD(1,-24,0,20), Position=_LS_UD(0,12,0,264),
+        BackgroundTransparency=1, ZIndex=4,
+        Text="0%", TextColor3=_LS_C(255,215,115),
+        Font=Enum.Font.GothamBold, TextSize=13,
+        TextXAlignment=Enum.TextXAlignment.Center,
+    }, _panel)
+
+    -- Footer version
+    _N("TextLabel", {
+        Size=_LS_UD(1,-24,0,18), Position=_LS_UD(0,12,0,342),
+        BackgroundTransparency=1, ZIndex=4,
+        Text="v2.5.0  ·  Đang tải, vui lòng đợi...",
+        TextColor3=_LS_C(55,50,78),
+        Font=Enum.Font.Gotham, TextSize=10,
+        TextXAlignment=Enum.TextXAlignment.Center,
+    }, _panel)
+
+    -- Pop-in animation lúc xuất hiện
+    _panel.Position = _LS_UD(0.5,-180,0.6,-195)
+    _panel.BackgroundTransparency = 1
+    _TW_BACK(_panel, 0.65, {
+        Position=_LS_UD(0.5,-180,0.5,-195),
+        BackgroundTransparency=0.08,
+    })
+
+    -- ── Stages load (label + phần trăm) ──────────────────────────────
+    local _STAGES = {
+        {pct=8,  label="Đang khởi động hệ thống...",    delay=0.22},
+        {pct=20, label="Đang load module Bypass...",     delay=0.32},
+        {pct=34, label="Đang load ESP & Island data...", delay=0.28},
+        {pct=46, label="Đang load Auto Farm...",         delay=0.30},
+        {pct=58, label="Đang load Auto Fishing...",      delay=0.26},
+        {pct=70, label="Đang khởi tạo giao diện...",    delay=0.32},
+        {pct=80, label="Đang dựng các trang tab...",     delay=0.28},
+        {pct=89, label="Đang cấu hình tính năng...",     delay=0.24},
+        {pct=95, label="Đang hoàn thiện...",             delay=0.18},
+    }
+    local _barW = 360 - 48  -- pixel width của track
+
+    local function _setProgress(pct, label)
+        -- Fill bar
+        local fillPx = math.max(0, math.floor(_barW * (pct / 100)))
+        _TW(_barFill, 0.38, {Size=_LS_UD(0,fillPx,1,0)})
+        -- Percent counter (flicker effect)
+        _TW(_pctLbl, 0.12, {TextTransparency=0.7})
+        task.delay(0.12, function()
+            if not _pctLbl.Parent then return end
+            _pctLbl.Text = tostring(pct).."%"
+            _TW(_pctLbl, 0.18, {TextTransparency=0})
+        end)
+        -- Status
+        if label then
+            _TW(_statusLbl, 0.1, {TextTransparency=0.8})
+            task.delay(0.1, function()
+                if not _statusLbl.Parent then return end
+                _statusLbl.Text = label
+                _TW(_statusLbl, 0.2, {TextTransparency=0})
+            end)
+        end
+    end
+
+    -- Dot bounce loop
+    task.spawn(function()
+        local offsets = {0, 0.2, 0.4}
+        while _lGui and _lGui.Parent do
+            for i=1,3 do
+                task.delay(offsets[i], function()
+                    if not (_dots[i] and _dots[i].Parent) then return end
+                    _TW(_dots[i], 0.2, {BackgroundTransparency=0, Size=_LS_UD(0,9,0,9)})
+                    task.delay(0.2, function()
+                        if not (_dots[i] and _dots[i].Parent) then return end
+                        _TW(_dots[i], 0.2, {BackgroundTransparency=0.7, Size=_LS_UD(0,6,0,6)})
+                    end)
+                end)
+            end
+            task.wait(0.88)
+        end
+    end)
+
+    -- Logo ring pulse
+    task.spawn(function()
+        local cols = {_LS_C(255,215,115), _LS_C(255,130,40), _LS_C(45,225,218)}
+        local ci = 1
+        while _lGui and _lGui.Parent do
+            _TW(_logoStroke, 1.0, {Transparency=0.0, Color=cols[ci]})
+            task.wait(1.0)
+            ci = ci % #cols + 1
+            _TW(_logoStroke, 1.0, {Transparency=0.6, Color=cols[ci]})
+            task.wait(1.0)
+        end
+    end)
+
+    -- Progress driver chính
+    _G._ZiliLoadReady = false
+    _G._ZiliShowMain  = false
+    task.spawn(function()
+        task.wait(0.3)  -- đợi pop-in animation xong trước
+        for _, s in ipairs(_STAGES) do
+            _setProgress(s.pct, s.label)
+            task.wait(s.delay)
+        end
+        -- Đợi script load xong (set _G._ZiliLoadReady = true ở cuối file)
+        local waited = 0
+        while not _G._ZiliLoadReady and waited < 20 do
+            task.wait(0.1); waited = waited + 0.1
+        end
+        -- Hoàn tất 100%
+        _setProgress(100, "✓  Hoàn tất!  Chào mừng trở lại!")
+        _TW(_pctLbl, 0.3, {TextColor3=_LS_C(72,225,135)})
+        _TW(_statusLbl, 0.3, {TextColor3=_LS_C(72,225,135)})
+        _TW(_pBorder, 0.3, {Color=_LS_C(72,225,135)})
+        task.wait(0.65)
+
+        -- ── Dismiss: fade out loading GUI ──
+        _TW(_blur, 0.55, {Size=0})
+        task.delay(0.55, function() pcall(function() _blur:Destroy() end) end)
+        _TW(_panel, 0.4, {BackgroundTransparency=1})
+        _TW(_pBorder, 0.4, {Transparency=1})
+        task.wait(0.25)
+        _TW(_bg, 0.45, {BackgroundTransparency=1})
+        task.wait(0.45)
+        pcall(function() _lGui:Destroy() end)
+
+        -- Trigger hiện MainFrame
+        _G._ZiliShowMain = true
+    end)
+end
 
 -- =====================================================================
 -- HELPERS
@@ -5467,13 +5760,17 @@ local MainFrame = NEW("CanvasGroup",{
 CORNER(14, MainFrame)
 STROKE(GOLD, 1.8, 0.06, MainFrame)
 
--- Entrance animation
-MainFrame.Visible = true
+-- Entrance animation — chờ loading screen xong mới hiện
+MainFrame.Visible = false
 task.spawn(function()
-    task.wait(0.05)
-    MainFrame.Size = UDim2.new(0,680,0,490)
+    local waited = 0
+    while not _G._ZiliShowMain and waited < 25 do
+        task.wait(0.05); waited = waited + 0.05
+    end
+    MainFrame.Visible  = true
+    MainFrame.Size     = UDim2.new(0,680,0,490)
     MainFrame.Position = UDim2.new(0.5,-340,0.5,-245)
-    TweenService:Create(MainFrame, TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+    TweenService:Create(MainFrame, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
         Size=UDim2.new(0,720,0,520),
         Position=UDim2.new(0.5,-360,0.5,-260),
         GroupTransparency=0
@@ -6390,16 +6687,7 @@ if IS_LOBBY then
         end
     end, GOLD2)
 
-    -- ── PRIVATE SERVER ────────────────────────────────────────────────
-    getgenv().PSCode       = ""
-    getgenv().SelectedHub  = "Regular"
-    getgenv().SelectedSea  = "Sea 1"
-
-    local HubArgs = {["Regular"]=true,["Trade Hub"]="tradeHub",["Universe Hub"]="universeHub",["Fish Hub"]="fishHub"}
-    local HubButtons = {}
-    local UpdateUIState  -- forward decl
-
-    -- ── PS page layout ────────────────────────────────────────────────
+    -- Private Server page is built separately below (PrivateServerPage)
     PageLayout(PrivateServerPage, 14, 10)
 
     -- ══ SHARED state ═══════════════════════════════════════════════════════
@@ -6498,7 +6786,7 @@ if IS_LOBBY then
         Font=Enum.Font.GothamBold, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left
     }, psCard)
     NEW("TextLabel",{
-        Text="Để trống = public",
+        Text="Leave empty for public",
         Size=UDim2.new(1,-24,0,12), Position=UDim2.new(1,-150,0,37),
         BackgroundTransparency=1, TextColor3=TEXT3,
         Font=Enum.Font.Gotham, TextSize=9, TextXAlignment=Enum.TextXAlignment.Right
@@ -6675,7 +6963,7 @@ if IS_LOBBY then
         Font=Enum.Font.GothamBold, TextSize=13, TextXAlignment=Enum.TextXAlignment.Left
     }, ajCard)
     NEW("TextLabel",{
-        Text="Khi ON: lobby tự join PS mỗi lần start. Toggle chỉ lưu preference, không thoát lobby.",
+        Text="When ON: lobby auto-joins PS on start. Toggle only saves preference — never exits lobby.",
         Size=UDim2.new(1,-24,0,22), Position=UDim2.new(0,14,0,58),
         BackgroundTransparency=1, TextColor3=TEXT3,
         Font=Enum.Font.Gotham, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left, TextWrapped=true
@@ -6725,7 +7013,7 @@ if IS_LOBBY then
         Font=Enum.Font.GothamBold, TextSize=13, TextXAlignment=Enum.TextXAlignment.Left
     }, arCard)
     NEW("TextLabel",{
-        Text="Bị kick → về lobby → lobby tự join PS (cần Auto Join ON)",
+        Text="Kicked → returns to lobby → lobby auto-joins PS (needs Auto Join ON)",
         Size=UDim2.new(1,-24,0,22), Position=UDim2.new(0,14,0,58),
         BackgroundTransparency=1, TextColor3=TEXT3,
         Font=Enum.Font.Gotham, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left, TextWrapped=true
@@ -6840,7 +7128,7 @@ if IS_LOBBY then
     local lbMaccCard = MakeCard(PrivateServerPage, 10, 4)
     CardHeader(lbMaccCard, "user", "MULTI-ACCOUNT", PURPLE)
     NEW("TextLabel",{
-        Text="Slots được cài trong game world  ·  Lobby đọc khi start",
+        Text="Slots managed in game world  ·  Lobby reads on startup",
         Size=UDim2.new(1,-24,0,22), Position=UDim2.new(0,12,0,34),
         BackgroundTransparency=1, TextColor3=C(150,120,200),
         Font=Enum.Font.GothamSemibold, TextSize=9,
@@ -6912,7 +7200,7 @@ if IS_LOBBY then
         end
         if idx==0 then
             NEW("TextLabel",{
-                Text="Chưa có slot · cài trong game world",
+                Text="No slots yet  ·  add them in game world",
                 Size=UDim2.new(1,-8,0,40), LayoutOrder=1,
                 BackgroundTransparency=1, TextColor3=C(100,85,140),
                 Font=Enum.Font.GothamSemibold, TextSize=10, TextXAlignment=Enum.TextXAlignment.Center
@@ -6923,7 +7211,7 @@ if IS_LOBBY then
             mySlotLbl.Text = "Slot: "..(mySlot.hub or "Regular").." · "..(mySlot.sea or "Sea 1").." · cfg:"..(mySlot.config or "—")
             mySlotLbl.TextColor3 = GREEN
         else
-            mySlotLbl.Text = "Không có slot cho account này"
+            mySlotLbl.Text = "No slot configured for this account"
             mySlotLbl.TextColor3 = TEXT3
         end
     end
@@ -7184,7 +7472,7 @@ else
         Font=Enum.Font.GothamBold, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left
     }, gwCfgCard)
     NEW("TextLabel",{
-        Text="Để trống = public",
+        Text="Leave empty for public",
         Size=UDim2.new(1,-24,0,12), Position=UDim2.new(1,-148,0,37),
         BackgroundTransparency=1, TextColor3=TEXT3,
         Font=Enum.Font.Gotham, TextSize=9, TextXAlignment=Enum.TextXAlignment.Right
@@ -7337,8 +7625,8 @@ else
     RowLabel(gwCtrlCard, "Auto Join PS", nil, 36)
     local gwAjSubLbl = NEW("TextLabel",{
         Text = isInPS
-            and "Đang trong PS  ·  toggle ON = lưu session để rejoin sau kick"
-            or  "Toggle ON = lưu session → về lobby → lobby tự join PS",
+            and "In PS  ·  toggle ON = saves session for rejoin after kick"
+            or  "Toggle ON = saves session → goes to lobby → lobby joins PS",
         Size=UDim2.new(1,-24,0,14), Position=UDim2.new(0,14,0,57),
         BackgroundTransparency=1, TextColor3=TEXT3,
         Font=Enum.Font.Gotham, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left, TextWrapped=true
@@ -7366,14 +7654,27 @@ else
         if on then
             -- Always save session file (needed by lobby to auto-join)
             AutoRejoinModule._saveSession()
-            -- ONLY go to lobby if currently in a PUBLIC server
-            if game.PrivateServerId == "" then
-                task.spawn(function()
-                    task.wait(0.5)
-                    pcall(function() TeleportService_L:Teleport(PLACE_LOBBY, Player_L) end)
-                end)
+            -- Determine if actually in a private server.
+            -- Primary: reservedCode in ReplicatedStorage (most reliable).
+            -- Fallback: PrivateServerId (set by Roblox, sometimes delayed).
+            local inPS = false
+            pcall(function()
+                local rc = game:GetService("ReplicatedStorage"):FindFirstChild("reservedCode")
+                if rc and rc.Value and rc.Value ~= "" then inPS = true end
+            end)
+            if not inPS then
+                inPS = (game.PrivateServerId ~= "")
             end
-            -- If in PS → session saved, nothing else to do
+
+            if inPS then
+                -- Already in PS — just keep session saved; never teleport
+                return
+            end
+            -- In public server → go to lobby so lobby auto-joins
+            task.spawn(function()
+                task.wait(0.5)
+                pcall(function() TeleportService_L:Teleport(PLACE_LOBBY, Player_L) end)
+            end)
         end
     end
 
@@ -7404,7 +7705,7 @@ else
         Font=Enum.Font.GothamBold, TextSize=13, TextXAlignment=Enum.TextXAlignment.Left
     }, gwJoinBtn)
     NEW("TextLabel",{
-        Text=isInPS and "Lưu session + set auto join" or "Lưu session → về lobby → lobby join PS",
+        Text=isInPS and "Save session + set auto join" or "Save session → to lobby → lobby joins PS",
         Size=UDim2.new(1,-46,0,12), Position=UDim2.new(0,40,0,25),
         BackgroundTransparency=1, TextColor3=C(160,60,130),
         Font=Enum.Font.Gotham, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left
@@ -7422,7 +7723,7 @@ else
     RowDivider(gwCtrlCard, 124)
 
     -- ── AUTO REJOIN row ────────────────────────────────────────────────────
-    RowLabel(gwCtrlCard, "Auto Rejoin", "Bị kick → về lobby → lobby tự join PS", 130)
+    RowLabel(gwCtrlCard, "Auto Rejoin", "Kicked → goes to lobby → lobby auto-joins PS", 130)
 
     local gwArPill = NEW("TextButton",{
         Size=UDim2.new(0,48,0,26), Position=UDim2.new(1,-60,0,134),
@@ -7453,7 +7754,7 @@ else
 
     RowDivider(gwCtrlCard, 166)
     NEW("TextLabel",{
-        Text="Auto Rejoin chỉ hoạt động khi Auto Join PS cũng ON",
+        Text="Auto Rejoin only works when Auto Join PS is also ON",
         Size=UDim2.new(1,-24,0,14), Position=UDim2.new(0,14,0,170),
         BackgroundTransparency=1, TextColor3=C(80,65,120),
         Font=Enum.Font.Gotham, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left, TextWrapped=true
@@ -7493,7 +7794,7 @@ else
     local maccCard = MakeCard(PrivateServerPage, maccCardH, 3)
     CardHeader(maccCard, "user", "MULTI-ACCOUNT", PURPLE)
     NEW("TextLabel",{
-        Text="Mỗi acc tự join PS + config riêng khi lobby start  ·  Chỉ join nếu Auto Join ON",
+        Text="Each account auto-joins its own PS on lobby start  ·  Only joins if Auto Join is ON",
         Size=UDim2.new(1,-24,0,22), Position=UDim2.new(0,12,0,34),
         BackgroundTransparency=1, TextColor3=C(150,120,200),
         Font=Enum.Font.GothamSemibold, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left, TextWrapped=true
@@ -7593,7 +7894,7 @@ else
         end
         if idx==0 then
             NEW("TextLabel",{
-                Text="Chưa có slot · nhập bên dưới và nhấn ADD",
+                Text="No slots yet  ·  fill in below and press ADD",
                 Size=UDim2.new(1,-8,0,40), LayoutOrder=1,
                 BackgroundTransparency=1, TextColor3=C(100,85,140),
                 Font=Enum.Font.GothamSemibold, TextSize=10, TextXAlignment=Enum.TextXAlignment.Center
@@ -7619,7 +7920,7 @@ else
     }, maccCard); CORNER(6,mnBg); STROKE(C(80,50,120),1.5,0.2,mnBg)
     maccNameBox = NEW("TextBox",{
         Size=UDim2.new(1,-10,1,0), Position=UDim2.new(0,5,0,0),
-        BackgroundTransparency=1, Text="", PlaceholderText="Tên account...",
+        BackgroundTransparency=1, Text="", PlaceholderText="Account name...",
         TextColor3=C(235,225,255), PlaceholderColor3=C(90,75,120),
         Font=Enum.Font.GothamSemibold, TextSize=11, ClearTextOnFocus=false
     }, mnBg)
@@ -7630,7 +7931,7 @@ else
     }, maccCard); CORNER(6,mcBg); STROKE(C(80,50,120),1.5,0.2,mcBg)
     maccCodeBox = NEW("TextBox",{
         Size=UDim2.new(1,-10,1,0), Position=UDim2.new(0,5,0,0),
-        BackgroundTransparency=1, Text="", PlaceholderText="PS code (trống=public)...",
+        BackgroundTransparency=1, Text="", PlaceholderText="PS code (empty = public)...",
         TextColor3=C(235,225,255), PlaceholderColor3=C(90,75,120),
         Font=Enum.Font.Gotham, TextSize=10, ClearTextOnFocus=false
     }, mcBg)
@@ -7664,7 +7965,7 @@ else
     }, maccCard); CORNER(6,mcfBg); STROKE(C(80,50,120),1.5,0.2,mcfBg)
     maccCfgBox = NEW("TextBox",{
         Size=UDim2.new(1,-10,1,0), Position=UDim2.new(0,5,0,0),
-        BackgroundTransparency=1, Text="", PlaceholderText="Tên config...",
+        BackgroundTransparency=1, Text="", PlaceholderText="Config name...",
         TextColor3=C(235,225,255), PlaceholderColor3=C(90,75,120),
         Font=Enum.Font.Gotham, TextSize=10, ClearTextOnFocus=false
     }, mcfBg)
@@ -8052,11 +8353,10 @@ StartFishToggle.MouseButton1Click:Connect(function()
     if d.Callback then d.Callback(on) end
 end)
 
--- Live stats row - 6 stats in a 2x3 grid
-local fsH = 130
+-- Live stats card -- 2x2 grid: MYTHIC | LEG BAIT / PELI | BAIT
+local fsH = 132
 local fsCard = MakeCard(FishingPage, fsH, 2)
 fsCard.BackgroundColor3 = C(8, 9, 18)
--- Override the stroke color from MakeCard
 local fsStroke = fsCard:FindFirstChildOfClass("UIStroke")
 if fsStroke then fsStroke.Color = C(30,28,52); fsStroke.Transparency = 0.3 end
 
@@ -8066,34 +8366,28 @@ local fsHeader = NEW("Frame",{
 }, fsCard)
 CORNER(8, fsHeader)
 NEW("Frame",{Size=UDim2.new(1,0,0,12),Position=UDim2.new(0,0,1,-12),BackgroundColor3=BG_HDR,BorderSizePixel=0},fsHeader)
--- header left accent bar
 local fsAccBar = NEW("Frame",{Size=UDim2.new(0,2,0.55,0),Position=UDim2.new(0,0,0.225,0),BackgroundColor3=ORANGE,BorderSizePixel=0},fsHeader)
 CORNER(1,fsAccBar)
--- header icon
 local fsIconBg = NEW("Frame",{Size=UDim2.new(0,16,0,16),Position=UDim2.new(0,7,0,4),BackgroundColor3=C(28,14,4)},fsHeader)
 CORNER(4,fsIconBg)
 DrawIcon(fsIconBg,"chart",2,2,12,ORANGE)
 NEW("TextLabel",{
     Text="LIVE STATS",
-    Size=UDim2.new(0,120,1,0),Position=UDim2.new(0,30,0,0),
+    Size=UDim2.new(0,100,1,0),Position=UDim2.new(0,30,0,0),
     BackgroundTransparency=1,TextColor3=ORANGE,Font=Enum.Font.GothamBold,
     TextSize=9,TextXAlignment=Enum.TextXAlignment.Left
 },fsHeader)
--- header bottom line
-local fsHdrLine = NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=ORANGE,BorderSizePixel=0,BackgroundTransparency=0.7},fsHeader)
+NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=ORANGE,BorderSizePixel=0,BackgroundTransparency=0.7},fsHeader)
 
--- ── MINI toggle on the right of header ──
-local compactActive = false
-local CompactWidget  -- forward ref
-
--- "MINI" label
+-- MINI toggle
 NEW("TextLabel",{
     Text="MINI",
-    Size=UDim2.new(0,26,1,0),Position=UDim2.new(1,-72,0,0),
+    Size=UDim2.new(0,28,1,0),Position=UDim2.new(1,-74,0,0),
     BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,
     TextSize=8,TextXAlignment=Enum.TextXAlignment.Right
 },fsHeader)
-
+local compactActive = false
+local CompactWidget  -- forward ref
 local compactPill = NEW("TextButton",{
     Size=UDim2.new(0,40,0,16), Position=UDim2.new(1,-46,0,4),
     BackgroundColor3=BG5, Text="", AutoButtonColor=false
@@ -8106,89 +8400,94 @@ local compactThumb = NEW("Frame",{
 },compactPill)
 CORNER(20,compactThumb)
 
--- Session tracking globals (reset on fishing start)
-local _fishSession = { casts=0, sells=0, beliEarned=0 }
-getgenv().GBO_FishSession = _fishSession
-
--- ── 6 stat cells: 3 per row, 2 rows ──
--- Row 1: Chest | LegBait | Peli
--- Row 2: Bait  | Casts   | Sells
+-- 4 stat cells: 2 cols x 2 rows
+-- Row 1: MYTHIC  | LEG BAIT
+-- Row 2: PELI    | BAIT
 local FISH_STAT_DEF = {
-    -- { iconName, label, initVal, key, color, row, col }
     { "chest",  "MYTHIC",   "—",  "MythicChest", AMBER,  1, 0 },
-    { "arrows", "LEG.BAIT", "—",  "LegBait",     PURPLE, 1, 1 },
-    { "coin",   "PELI",     "0",  "Peli",        CYAN,   1, 2 },
-    { "bottle", "BAIT",     "—",  "Bait",        ORANGE, 2, 0 },
-    { "fish",   "CASTS",    "0",  "Casts",       GREEN,  2, 1 },
-    { "wave",   "SELLS",    "0",  "Sells",       COL_TRAVEL, 2, 2 },
+    { "arrows", "LEG BAIT", "—",  "LegBait",     PURPLE, 1, 1 },
+    { "coin",   "PELI",     "0",  "Peli",        CYAN,   2, 0 },
+    { "bottle", "BAIT",     "—",  "Bait",        ORANGE, 2, 1 },
 }
 local FishStatValues = {}
 
-local CELL_COLS = 3
-local CELL_W = 1/CELL_COLS   -- ~0.333 scale
+-- Center dividers (one vertical, one horizontal)
+NEW("Frame",{
+    Size=UDim2.new(0,1,0,90),
+    Position=UDim2.new(0.5,0,0,24),
+    BackgroundColor3=C(28,26,48), BorderSizePixel=0
+}, fsCard)
+NEW("Frame",{
+    Size=UDim2.new(1,0,0,1),
+    Position=UDim2.new(0,0,0,78),
+    BackgroundColor3=C(28,26,48), BorderSizePixel=0
+}, fsCard)
 
-for i, def in ipairs(FISH_STAT_DEF) do
+for _, def in ipairs(FISH_STAT_DEF) do
     local iconName,lbl,val,key,accentC,row,col = def[1],def[2],def[3],def[4],def[5],def[6],def[7]
+    local rowY   = (row == 1) and 26 or 80
+    local xScale = col * 0.5
+    local cellMid = xScale + 0.25  -- center of cell
 
-    -- Row Y offsets: row1 starts at 26, row2 starts at 78
-    local rowY = (row == 1) and 26 or 78
-    local xScale = col * CELL_W
-
-    -- Vertical dividers (between cols, skip col 0)
-    if col > 0 then
-        NEW("Frame",{
-            Size=UDim2.new(0,1, 0,44),
-            Position=UDim2.new(xScale, 0, 0, rowY),
-            BackgroundColor3=C(28,26,48), BorderSizePixel=0
-        }, fsCard)
-    end
-
-    -- Horizontal divider between rows
-    if row == 2 and col == 0 then
-        NEW("Frame",{
-            Size=UDim2.new(1,0,0,1),
-            Position=UDim2.new(0,0,0,74),
-            BackgroundColor3=C(28,26,48), BorderSizePixel=0
-        }, fsCard)
-    end
-
-    -- Icon (small, centered in cell)
+    -- Icon: 26x26 centered in cell
     local iconCell = NEW("Frame",{
-        Size=UDim2.new(0,20,0,20),
-        Position=UDim2.new(xScale + CELL_W/2, -10, 0, rowY+2),
+        Size=UDim2.new(0,26,0,26),
+        Position=UDim2.new(cellMid, -13, 0, rowY+2),
         BackgroundColor3=C(
-            math.min(255,math.floor(accentC.R*255*0.12+8)),
-            math.min(255,math.floor(accentC.G*255*0.12+8)),
-            math.min(255,math.floor(accentC.B*255*0.12+8))
+            math.min(255,math.floor(accentC.R*255*0.14+8)),
+            math.min(255,math.floor(accentC.G*255*0.14+8)),
+            math.min(255,math.floor(accentC.B*255*0.14+8))
         ),
         BorderSizePixel=0
     }, fsCard)
-    CORNER(5, iconCell)
-    DrawIcon(iconCell, iconName, 2, 2, 16, accentC)
+    CORNER(6, iconCell)
+    DrawIcon(iconCell, iconName, 3, 3, 20, accentC)
 
-    -- Value number
+    -- Value: bigger text
     local valLbl = NEW("TextLabel",{
         Text=val,
-        Size=UDim2.new(CELL_W,-4,0,16),
-        Position=UDim2.new(xScale,2, 0, rowY+23),
-        BackgroundTransparency=1, TextColor3=GOLD2,
-        Font=Enum.Font.GothamBold, TextSize=12,
+        Size=UDim2.new(0.5,-4,0,20),
+        Position=UDim2.new(xScale,2, 0, rowY+30),
+        BackgroundTransparency=1, TextColor3=TEXT1,
+        Font=Enum.Font.GothamBold, TextSize=16,
         TextXAlignment=Enum.TextXAlignment.Center,
         TextScaled=false
     }, fsCard)
-    NEW("UITextSizeConstraint",{MaxTextSize=13,MinTextSize=7},valLbl)
+    NEW("UITextSizeConstraint",{MaxTextSize=17,MinTextSize=9},valLbl)
 
     -- Label
     NEW("TextLabel",{
         Text=lbl,
-        Size=UDim2.new(CELL_W,-4,0,10),
-        Position=UDim2.new(xScale,2, 0, rowY+40),
+        Size=UDim2.new(0.5,-4,0,11),
+        Position=UDim2.new(xScale,2, 0, rowY+52),
         BackgroundTransparency=1, TextColor3=accentC,
-        Font=Enum.Font.GothamBold, TextSize=7,
+        Font=Enum.Font.GothamBold, TextSize=8,
         TextXAlignment=Enum.TextXAlignment.Center
     }, fsCard)
 
     FishStatValues[key] = valLbl
+end
+
+-- Status label at bottom
+local fsStatusLbl = NEW("TextLabel",{
+    Text="Status: Idle",
+    Size=UDim2.new(1,-8,0,12),
+    Position=UDim2.new(0,4,0,118),
+    BackgroundTransparency=1, TextColor3=TEXT3,
+    Font=Enum.Font.GothamBold, TextSize=9,
+    TextXAlignment=Enum.TextXAlignment.Center
+}, fsCard)
+-- Export so AutoFishMerchant module can update status
+getgenv().GBO_SetFishStatus = function(msg)
+    pcall(function()
+        if fsStatusLbl and fsStatusLbl.Parent then
+            fsStatusLbl.Text = "Status: " .. (msg or "Idle")
+        end
+        -- Also update compact widget status dot
+        if cwStatusDot and cwStatusDot.Parent then
+            cwStatusDot.Text = msg or "Idle"
+        end
+    end)
 end
 
 -- ══════════════════════════════════════════════════════════════════════
@@ -8292,24 +8591,15 @@ NEW("TextLabel",{
     TextXAlignment=Enum.TextXAlignment.Left
 },cwTopBar)
 
--- Auto Fish status dot
+-- Status text: updated by GBO_SetFishStatus from AutoFishMerchant module
 local cwStatusDot = NEW("TextLabel",{
-    Text="⬤  IDLE",
-    Size=UDim2.new(0.3,0,1,0),Position=UDim2.new(0.38,0,0,0),
-    BackgroundTransparency=1,TextColor3=COL_FARM,
-    Font=Enum.Font.GothamBold,TextSize=8,
-    TextXAlignment=Enum.TextXAlignment.Center
+    Text="Idle",
+    Size=UDim2.new(0.44,0,1,0), Position=UDim2.new(0.28,0,0,0),
+    BackgroundTransparency=1, TextColor3=COL_FISH,
+    Font=Enum.Font.GothamBold, TextSize=8,
+    TextXAlignment=Enum.TextXAlignment.Center,
+    TextTruncate=Enum.TextTruncate.AtEnd
 },cwTopBar)
-task.spawn(function()
-    while CompactWidget and CompactWidget.Parent do
-        if compactActive then
-            local on = TogglesData["AutoFishMerchant"] and TogglesData["AutoFishMerchant"].Active
-            TWEEN(cwStatusDot, 0.6, {TextColor3 = on and GREEN or COL_FARM})
-            cwStatusDot.Text = on and "⬤  FISHING" or "⬤  IDLE"
-        end
-        task.wait(1.0)
-    end
-end)
 
 -- Close button
 local cwClose = NEW("TextButton",{
@@ -8327,12 +8617,10 @@ cwClose.MouseLeave:Connect(function() TWEEN(cwClose,0.1,{BackgroundColor3=C(32,8
 -- All cells positioned relative to cwContent so they ALWAYS fill the
 -- space between topbar and bottombar, at any screen size including 150×150.
 local STAT_GRID = {
-    { "chest",  "MYTHIC",  "MythicChest", AMBER      },
-    { "arrows", "LEG.BAIT","LegBait",     PURPLE     },
-    { "coin",   "PELI",    "Peli",        CYAN       },
-    { "bottle", "BAIT",    "Bait",        ORANGE     },
-    { "fish",   "CASTS",   "Casts",       GREEN      },
-    { "wave",   "SELLS",   "Sells",       COL_TRAVEL },
+    { "chest",  "MYTHIC",   "MythicChest", AMBER  },
+    { "arrows", "LEG BAIT", "LegBait",     PURPLE },
+    { "coin",   "PELI",     "Peli",        CYAN   },
+    { "bottle", "BAIT",     "Bait",        ORANGE },
 }
 local cwValues = {}
 local CW_PAD = 3  -- uniform cell gap
@@ -8347,8 +8635,8 @@ local cwContent = NEW("Frame",{
 for idx, item in ipairs(STAT_GRID) do
   do
     local iconN,lbl,key,aCol = item[1],item[2],item[3],item[4]
-    local col = (idx-1) % 3       -- 0,1,2
-    local row = math.floor((idx-1) / 3)  -- 0,1
+    local col = (idx-1) % 2       -- 0,1  (2 columns)
+    local row = math.floor((idx-1) / 2)  -- 0,1  (2 rows)
     local aColD = C(
         math.min(255,math.floor(aCol.R*255*0.12+4)),
         math.min(255,math.floor(aCol.G*255*0.12+4)),
@@ -8356,10 +8644,10 @@ for idx, item in ipairs(STAT_GRID) do
     )
     local P = CW_PAD
 
-    -- Pure scale: 3 cols × 2 rows inside cwContent
+    -- Pure scale: 2 cols x 2 rows inside cwContent
     local cell = NEW("Frame",{
-        Size     = UDim2.new(1/3, -P,  0.5, -P),
-        Position = UDim2.new(col/3, col==0 and 0 or P/2,
+        Size     = UDim2.new(0.5, -P,  0.5, -P),
+        Position = UDim2.new(col/2, col==0 and 0 or P/2,
                              row/2,  row==0 and 0 or P/2),
         BackgroundColor3 = aColD,
         BorderSizePixel  = 0
@@ -8548,8 +8836,6 @@ task.spawn(function()
                 LegBait     = tostring(inv["Legendary Fish Bait"] or 0),
                 Peli        = peliVal,
                 Bait        = tostring(inv[bait] or 0),
-                Casts       = tostring(_fishSession.casts or 0),
-                Sells       = tostring(_fishSession.sells or 0),
             }
 
             for key, val in pairs(updates) do
@@ -8563,7 +8849,7 @@ task.spawn(function()
 end)
 
 -- Config card
-local fcH = 428
+local fcH = 530
 local ConfigFishFrame = MakeCard(FishingPage, fcH, 3)
 CardHeader(ConfigFishFrame, "gear", "CONFIGURATION", GOLD)
 
@@ -8938,19 +9224,95 @@ do
     end)
 end
 
--- ── CRAFT BAIT (multi, no default) ──
-local craftOpts={"Rare Fish Bait","Legendary Fish Bait"}
-CreateDropdown(ConfigFishFrame,"Auto Craft Bait",craftOpts,nil,318,"Config_CraftBait",true,false)
+-- ── CRAFT BAIT ──────────────────────────────────────────────────────────
+-- Legendary: single mode only (safe)
+-- Rare: user can choose "Single" (loop Count=1) or "All" (1 call, Count=floor/2)
+CreateDropdown(ConfigFishFrame,"Auto Craft Bait",{"Rare Fish Bait","Legendary Fish Bait"},nil,318,"Config_CraftBait",true,false)
+
+-- Craft Rare Bait Mode selector
+NEW("TextLabel",{
+    Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,358),
+    BackgroundTransparency=1,Text="Rare Bait Craft Mode",TextColor3=TEXT1,
+    Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left
+},ConfigFishFrame)
+NEW("TextLabel",{
+    Size=UDim2.new(1,-170,0,12),Position=UDim2.new(0,12,0,376),
+    BackgroundTransparency=1,
+    Text="Single = craft 1-by-1 (safe)  ·  All = craft all at once (fast)",
+    TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=9,
+    TextXAlignment=Enum.TextXAlignment.Left,TextWrapped=true
+},ConfigFishFrame)
+
+-- Mode radio buttons
+local rareModeActive = "single"  -- default
+local rmBtns = {}
+
+local RM_OPTS = {
+    {id="single", label="Single (Safe)", col=CYAN},
+    {id="all",    label="All at Once",   col=AMBER},
+}
+
+local function UpdateRareMode()
+    for _,rd in ipairs(RM_OPTS) do
+        local d = rmBtns[rd.id]; if not d then continue end
+        local sel = (rareModeActive == rd.id)
+        local ac  = rd.col
+        local acd = C(math.min(255,math.floor(ac.R*255*0.14+5)),
+                      math.min(255,math.floor(ac.G*255*0.14+5)),
+                      math.min(255,math.floor(ac.B*255*0.14+5)))
+        TWEEN(d.Btn,  0.15, {BackgroundColor3=sel and acd or BG5, BackgroundTransparency=sel and 0 or 0})
+        TWEEN(d.Strk, 0.15, {Color=sel and ac or GOLD3, Transparency=sel and 0.1 or 0.5})
+        TWEEN(d.Lbl,  0.15, {TextColor3=sel and ac or TEXT2})
+        d.Lbl.Font = sel and Enum.Font.GothamBold or Enum.Font.GothamMedium
+    end
+    if TogglesData["Config_CraftRareMode"] then
+        TogglesData["Config_CraftRareMode"].Value = rareModeActive
+    end
+    -- Export so AutoFishMerchant reads it
+    _G.CraftRareMode = rareModeActive
+end
+
+for mi, rd in ipairs(RM_OPTS) do
+    local mbtn = NEW("TextButton",{
+        Size=UDim2.new(0.5,-8,0,28),
+        Position=UDim2.new((mi-1)*0.5, mi==1 and 5 or 3, 0, 390),
+        BackgroundColor3=BG5, Text="", AutoButtonColor=false
+    }, ConfigFishFrame)
+    CORNER(7,mbtn)
+    local mstrk = STROKE(GOLD3,1,0.5,mbtn)
+    local mlbl = NEW("TextLabel",{
+        Text=rd.label, Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+        TextColor3=TEXT2, Font=Enum.Font.GothamMedium, TextSize=11,
+        TextXAlignment=Enum.TextXAlignment.Center
+    }, mbtn)
+    rmBtns[rd.id] = {Btn=mbtn, Strk=mstrk, Lbl=mlbl}
+    mbtn.MouseButton1Click:Connect(function()
+        rareModeActive = rd.id
+        UpdateRareMode()
+    end)
+end
+
+TogglesData["Config_CraftRareMode"] = {
+    Value   = "single",
+    HeadBtn = nil,
+    Callback = function(val)
+        rareModeActive = (val == "all") and "all" or "single"
+        _G.CraftRareMode = rareModeActive
+        UpdateRareMode()
+    end,
+}
+
+task.spawn(function() task.wait(0.1); UpdateRareMode() end)
 
 -- ── BAIT BUY AMOUNT ──
 _G.FishBuyAmount = 50
 NEW("TextLabel",{
-    Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,354),
+    Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,428),
     BackgroundTransparency=1,Text="Bait Buy Amount",TextColor3=TEXT1,
     Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left
 },ConfigFishFrame)
 local buyAmtFrame = NEW("Frame",{
-    Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,352),
+    Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,426),
     BackgroundColor3=BG5
 },ConfigFishFrame)
 CORNER(5,buyAmtFrame)
@@ -8990,13 +9352,13 @@ TogglesData["Config_BaitAmount"] = {
 -- Ô NHẬP DISCORD WEBHOOK (Dùng chuẩn UI mới)
 -- ==========================================
 NEW("TextLabel",{
-    Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,392),
+    Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,466),
     BackgroundTransparency=1,Text="Discord Webhook",TextColor3=TEXT1,
     Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left
 }, ConfigFishFrame)
 
 local boxFrameWH = NEW("Frame",{
-    Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,390),
+    Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,464),
     BackgroundColor3=BG5
 }, ConfigFishFrame)
 CORNER(5, boxFrameWH)
@@ -9596,3 +9958,6 @@ local function RunExecutorDiagnostics()
 end
 
 task.spawn(RunExecutorDiagnostics)
+
+-- Báo loading screen rằng script đã load xong
+_G._ZiliLoadReady = true
