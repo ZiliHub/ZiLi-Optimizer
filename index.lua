@@ -4618,10 +4618,9 @@ __modules["Stats/addStats"] = function()
 end
 
 -- =====================================================================
--- GET BETTER OUT | MAIN HUB  (Optimized Build v2.7.0)
--- Changes: Deferred requires, no BlurEffect, chunked page build,
---          auto-hide fix (only MiniLogo reopens), custom hide delay 1-60s,
---          lightning ⚡ COMPATIBILITY header, logo unified.
+-- GET BETTER OUT | MAIN HUB  (Optimized Build v2.8.0)
+-- Changes: Real blur (size 8, pcall-safe), lazy page build via _pageBuildFns,
+--          deferred requires, auto-hide 10-60s clamp, hide-on-loading toggle.
 -- Upload your logo image to Roblox and replace LOGO_ASSET_ID below.
 -- Source image: https://i.postimg.cc/NMRNsmrN/dfa59e7e_ce99_4091_9d64_a070f4a33687.png
 -- =====================================================================
@@ -4882,11 +4881,20 @@ do
     local function _TWBACK(o,t,pr) TS:Create(o,TweenInfo.new(t,Enum.EasingStyle.Back,Enum.EasingDirection.Out),pr):Play() end
     local C3 = Color3.fromRGB
 
-    -- BlurEffect removed: expensive GPU pass causes 1-2s freeze on low-end devices
-    local _blur = {Size=0} -- lightweight stub so cleanup code below still works safely
+    -- Real blur: BlurEffect size 8 blurs the 3D game world behind the UI.
+    -- Size 8 is ~4× cheaper than size 24 (was crashing). Wrapped in pcall
+    -- so it fails gracefully on executors that block Lighting access.
+    local _blur = nil
+    pcall(function()
+        _blur = Instance.new("BlurEffect")
+        _blur.Size = 0
+        _blur.Parent = game:GetService("Lighting")
+        _TW(_blur, 0.45, {Size=8})
+    end)
     local _lGui = _N("ScreenGui",{Name="ZiliLoader",IgnoreGuiInset=true,ResetOnSpawn=false,DisplayOrder=9999,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},gethui and gethui() or game:GetService("CoreGui"))
-    local _bg = _N("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=C3(3,2,10),ZIndex=1},_lGui)
-    _N("ImageLabel",{Size=UDim2.new(0,680,0,680),Position=UDim2.new(0.5,-340,0.5,-340),BackgroundTransparency=1,ZIndex=2,Image="rbxassetid://6401561088",ImageColor3=C3(90,60,10),ImageTransparency=0.80},_bg)
+    -- Semi-transparent dark overlay: lets the blurred game world show through (not solid black)
+    local _bg = _N("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=C3(3,2,10),BackgroundTransparency=0.25,ZIndex=1},_lGui)
+    _N("ImageLabel",{Size=UDim2.new(0,680,0,680),Position=UDim2.new(0.5,-340,0.5,-340),BackgroundTransparency=1,ZIndex=2,Image="rbxassetid://6401561088",ImageColor3=C3(90,60,10),ImageTransparency=0.88},_bg)
     local _panel = _N("Frame",{Size=UDim2.new(0,340,0,370),Position=UDim2.new(0.5,-170,0.6,-185),BackgroundColor3=C3(9,7,20),BackgroundTransparency=0.08,ZIndex=3},_lGui)
     _R(20,_panel)
     local _pBorder = _N("UIStroke",{Color=C3(220,172,68),Thickness=1.4,Transparency=0.25},_panel)
@@ -4941,7 +4949,8 @@ do
         _setProgress(100,"Done!  Welcome back!")
         _TW(_pctLbl,0.25,{TextColor3=C3(72,225,135)}); _TW(_statusLbl,0.25,{TextColor3=C3(72,225,135)}); _TW(_pBorder,0.25,{Color=C3(72,225,135)})
         task.wait(0.55)
-        -- blur stub: nothing to tween or destroy
+        -- fade out blur then destroy
+        if _blur then pcall(function() _TW(_blur,0.45,{Size=0}) end); task.delay(0.5,function() pcall(function() _blur:Destroy() end) end) end
         _TW(_panel,0.35,{BackgroundTransparency=1}); task.wait(0.2); _TW(_bg,0.4,{BackgroundTransparency=1}); task.wait(0.4)
         pcall(function() _lGui:Destroy() end); _G._ZiliShowMain=true
     end)
@@ -5124,10 +5133,13 @@ local CloseBtn=MakeCtrlBtn("X",-32,RED)
 -- Hides hub after AUTO_HIDE_DELAY seconds of no mouse movement.
 -- Any mouse movement restores it automatically.
 -- =====================================================================
-local AUTO_HIDE_DELAY  = 30   -- seconds; increase or decrease as needed
+local AUTO_HIDE_DELAY  = 30   -- seconds (10–60); player-configurable in Config tab
+local AUTO_HIDE_MIN    = 10
+local AUTO_HIDE_MAX    = 60
 local _autoHideTimer   = 0
 local _autoHideEnabled = false
 local _autoHideHidden  = false
+local _autoHideOnLoad  = false  -- hide hub automatically while loading screen is up
 
 -- Restore & hide functions (forward declared, filled in after ToggleHub is defined)
 _G._GBO_HideHub = function() end
@@ -5206,6 +5218,14 @@ local function TabSep(label)
     NEW("TextLabel",{Text=label,Size=UDim2.new(0.44,0,1,0),Position=UDim2.new(0.28,0,0,0),BackgroundTransparency=1,TextColor3=col,Font=Enum.Font.GothamBold,TextSize=8,TextXAlignment=Enum.TextXAlignment.Center},f)
 end
 
+-- =====================================================================
+-- LAZY PAGE BUILD SYSTEM
+-- Heavy tab pages (AutoFarm, Travel, Fishing, Stats) are NOT built at
+-- startup. Their build functions are stored here and called only when
+-- the player first clicks that tab. This is the single biggest crash fix.
+-- =====================================================================
+local _pageBuildFns = {}
+
 local function AddTab(name)
     local iconName=TAB_ICONS[name] or "home"; local tabColor=TAB_COLS[name] or GOLD2
     local tabColorD=C(math.min(255,math.floor(tabColor.R*255*0.14+4)),math.min(255,math.floor(tabColor.G*255*0.14+4)),math.min(255,math.floor(tabColor.B*255*0.14+4)))
@@ -5240,6 +5260,11 @@ local function AddTab(name)
     btn.MouseEnter:Connect(function() if SelectedTab~=btn then TWEEN(btn,0.15,{BackgroundColor3=tabColorD,BackgroundTransparency=0.6});TWEEN(nameLbl,0.15,{TextColor3=TEXT1}) end end)
     btn.MouseLeave:Connect(function() if SelectedTab~=btn then TWEEN(btn,0.15,{BackgroundTransparency=1});TWEEN(nameLbl,0.15,{TextColor3=TEXT3}) end end)
     btn.MouseButton1Click:Connect(function()
+        -- LAZY BUILD: if a build function is registered for this tab, run it once
+        if _pageBuildFns[name] then
+            local fn=_pageBuildFns[name]; _pageBuildFns[name]=nil
+            task.spawn(fn)  -- build in background; content appears after 1 frame
+        end
         if SelectedTab and SelectedTab~=btn then for _,td in pairs(Tabs) do if td.btn==SelectedTab then td.setInactive();break end end;if SelectedPage then SelectedPage.Visible=false end end
         SelectedTab=btn; SelectedPage=page; setActive()
     end)
@@ -5618,15 +5643,16 @@ end -- end IS_LOBBY / else
 
 -- =====================================================================
 -- AUTO FARM / TRAVEL / FISHING / STATS (game world only)
--- Built inside a task.spawn so each page yields between construction
--- phases — prevents the executor from hanging for 1-2s at startup.
+-- LAZY BUILD: each page is registered as a function in _pageBuildFns.
+-- Content is built ONLY when the player first clicks that tab.
+-- This eliminates the startup freeze entirely — 0 heavy instances on boot.
 -- =====================================================================
-local FishMasterBar
+local FishMasterBar  -- forward-declared; assigned inside Fishing lazy build
+local AutoStatsData  -- forward-declared; assigned inside Stats lazy build
 if not IS_LOBBY then
-    task.spawn(function()
-    -- yield so main-frame tween plays first before heavy UI work
-    task.wait(0)
-    -- AUTO FARM PAGE
+
+-- ── AUTO FARM ──────────────────────────────────────────────────────────
+_pageBuildFns["Auto Farm"] = function()
     PageLayout(AutoFarmPage,14,10)
     local lfCard=MakeCard(AutoFarmPage,144,1); CardHeader(lfCard,"sword","LEVEL FARM",AMBER)
     RowLabel(lfCard,"Start Level Farm","Auto kills enemies · respawns",34)
@@ -5660,9 +5686,10 @@ if not IS_LOBBY then
             end
         end
     end
+end -- _pageBuildFns["Auto Farm"]
 
-    -- TRAVEL PAGE
-    task.wait(0) -- yield: breathe before building Travel page
+-- ── TRAVEL ─────────────────────────────────────────────────────────────
+_pageBuildFns["Travel"] = function()
     PageLayout(TravelPage,14,10)
     local tpCard=MakeCard(TravelPage,148,1); tpCard.ZIndex=5; CardHeader(tpCard,"globe","ISLAND TELEPORT",CYAN)
     RowLabel(tpCard,"Target Island","Select destination",36)
@@ -5695,9 +5722,10 @@ if not IS_LOBBY then
     local sea2Card=MakeCard(TravelPage,90,2); CardHeader(sea2Card,"wave","AUTO 2ND SEA",BLUE_A)
     RowLabel(sea2Card,"Auto Enter 2nd Sea","Auto travel to 2nd sea portal",32); CardToggle(sea2Card,40,"Auto2ndSea",function(state) _G.Auto2ndSea=state end,COL_TRAVEL); RowDivider(sea2Card,72)
     NEW("TextLabel",{Text="Requires Level 700+  ·  Finish all quests",Size=UDim2.new(1,-24,0,14),Position=UDim2.new(0,14,0,76),BackgroundTransparency=1,TextColor3=GOLD3,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},sea2Card)
+end -- _pageBuildFns["Travel"]
 
-    -- FISHING + MERCHANT PAGE
-    task.wait(0) -- yield: give Roblox a frame to breathe before building Fishing page
+-- ── FISHING + MERCHANT ─────────────────────────────────────────────────
+_pageBuildFns["Fishing + Merchant"] = function()
     PageLayout(FishingPage,14,10)
     local fmCard=MakeCard(FishingPage,80,1); CardHeader(fmCard,"fish","FISHING + MERCHANT FARM",ORANGE)
     FishMasterBar=NEW("Frame",{Size=UDim2.new(0,3,1,0),BackgroundColor3=GOLD,BorderSizePixel=0},fmCard); CORNER(2,FishMasterBar)
@@ -5825,11 +5853,13 @@ if not IS_LOBBY then
     RowDivider(fruitCard,132)
     CreateDropdown(fruitCard,"Fruit Rarity Filter",{"Common","Rare","Epic","Legendary","Mythic"},"Common",138,"Config_FruitRarity",true,false)
     CreateDropdown(fruitCard,"Select Fruit",{"Bari Bari no Mi","Bomu Bomu no Mi","Doku Doku no Mi","Gomu Gomu no Mi","Gura Gura no Mi","Hie Hie no Mi","Magu Magu no Mi","Mero Mero no Mi","Ope Ope no Mi","Pika Pika no Mi","Suna Suna no Mi","Yami Yami no Mi","Zushi Zushi no Mi"},"",186,"Config_FruitSelect",false,true)
+    task.spawn(function() pcall(function() local FM=require("Farm/AutoFruitManager");if FM and FM.Start then FM.Start(TogglesData) end end) end)
+end -- _pageBuildFns["Fishing + Merchant"]
 
-    -- STATS PAGE
-    task.wait(0) -- yield: give Roblox a frame before building Stats page
+-- ── STATS ───────────────────────────────────────────────────────────────
+_pageBuildFns["Stats"] = function()
     PageLayout(StatsPage,14,8)
-    local AutoStatsData={}
+    AutoStatsData={}
     local function CreateStatRow(statName,layoutOrder)
         local row=MakeCard(StatsPage,52,layoutOrder)
         NEW("TextLabel",{Text=statName,Size=UDim2.new(0.52,0,1,0),Position=UDim2.new(0,14,0,0),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamBold,TextSize=14,TextXAlignment=Enum.TextXAlignment.Left},row)
@@ -5842,12 +5872,12 @@ if not IS_LOBBY then
     local StatList={"Strength","Stamina","Defense","Gun Mastery","Sword Mastery","Devil Fruit","Fighting Style Mastery"}
     for idx,sName in ipairs(StatList) do CreateStatRow(sName,idx) end
     if AutoStats and AutoStats.Start then AutoStats.Start(AutoStatsData) end
+end -- _pageBuildFns["Stats"]
 
-    task.spawn(function() pcall(function() local FM=require("Farm/AutoFruitManager");if FM and FM.Start then FM.Start(TogglesData) end end) end)
-    end) -- end task.spawn for heavy game-world page builds
 end -- end if not IS_LOBBY
 
-local AutoStatsData = AutoStatsData or {}
+-- AutoStatsData accessible from Config (empty table until Stats tab opened)
+AutoStatsData = AutoStatsData or {}
 
 -- =====================================================================
 -- CONFIG PAGE  (both lobby and game world)
@@ -5855,28 +5885,46 @@ local AutoStatsData = AutoStatsData or {}
 PageLayout(ConfigPage,14,10)
 
 -- Auto-hide card (at top of Config page)
-local cfgAutoHideCard=MakeCard(ConfigPage,116,0); CardHeader(cfgAutoHideCard,"eye","AUTO HIDE UI",COL_CFG)
-local _ahDelayLbl=NEW("TextLabel",{Text=string.format("Hides hub after %ds of inactivity",AUTO_HIDE_DELAY),Size=UDim2.new(0.72,0,0,13),Position=UDim2.new(0,14,0,52),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},cfgAutoHideCard)
+local cfgAutoHideCard=MakeCard(ConfigPage,162,0); CardHeader(cfgAutoHideCard,"eye","AUTO HIDE UI",COL_CFG)
+
+-- Row 1: Auto Hide toggle
 NEW("TextLabel",{Text="Auto Hide",Size=UDim2.new(0.62,0,0,22),Position=UDim2.new(0,14,0,32),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left},cfgAutoHideCard)
+local _ahDelayLbl=NEW("TextLabel",{Text=string.format("Hides after %ds of inactivity (10–60s)",AUTO_HIDE_DELAY),Size=UDim2.new(1,-80,0,13),Position=UDim2.new(0,14,0,52),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},cfgAutoHideCard)
 CardToggle(cfgAutoHideCard,36,"AutoHide",function(state) _autoHideEnabled=state;_autoHideTimer=0 end,COL_CFG)
--- Delay input row
-RowDivider(cfgAutoHideCard,72)
-NEW("TextLabel",{Text="Hide Delay (1–60s)",Size=UDim2.new(0.62,0,0,20),Position=UDim2.new(0,14,0,80),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},cfgAutoHideCard)
-local _ahBoxFrame=NEW("Frame",{Size=UDim2.new(0,72,0,26),Position=UDim2.new(1,-82,0,78),BackgroundColor3=BG5},cfgAutoHideCard); CORNER(6,_ahBoxFrame); local _ahBoxStroke=STROKE(GOLD3,1,0,_ahBoxFrame)
+
+RowDivider(cfgAutoHideCard,70)
+
+-- Row 2: Custom delay input 10-60s
+NEW("TextLabel",{Text="Hide Delay (10–60s)",Size=UDim2.new(0.62,0,0,20),Position=UDim2.new(0,14,0,78),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},cfgAutoHideCard)
+local _ahBoxFrame=NEW("Frame",{Size=UDim2.new(0,72,0,26),Position=UDim2.new(1,-82,0,76),BackgroundColor3=BG5},cfgAutoHideCard); CORNER(6,_ahBoxFrame); local _ahBoxStroke=STROKE(GOLD3,1,0,_ahBoxFrame)
 local _ahBox=NEW("TextBox",{Size=UDim2.new(1,-10,1,0),Position=UDim2.new(0,5,0,0),BackgroundTransparency=1,Text=tostring(AUTO_HIDE_DELAY),PlaceholderText="30",TextColor3=GOLD2,Font=Enum.Font.GothamBold,TextSize=12,ClearTextOnFocus=false},_ahBoxFrame)
 _ahBox.Focused:Connect(function() TWEEN(_ahBoxStroke,0.15,{Color=COL_CFG}) end)
 _ahBox.FocusLost:Connect(function()
     TWEEN(_ahBoxStroke,0.15,{Color=GOLD3})
     local v=tonumber(_ahBox.Text)
     if v then
-        AUTO_HIDE_DELAY=math.clamp(math.floor(v),1,60)
-        _ahBox.Text=tostring(AUTO_HIDE_DELAY)
-        _ahDelayLbl.Text=string.format("Hides hub after %ds of inactivity",AUTO_HIDE_DELAY)
-        _autoHideTimer=0
-    else
-        _ahBox.Text=tostring(AUTO_HIDE_DELAY)
+        AUTO_HIDE_DELAY=math.clamp(math.floor(v),AUTO_HIDE_MIN,AUTO_HIDE_MAX)
     end
+    -- always snap display to valid range regardless of what was typed
+    _ahBox.Text=tostring(AUTO_HIDE_DELAY)
+    _ahDelayLbl.Text=string.format("Hides after %ds of inactivity (10–60s)",AUTO_HIDE_DELAY)
+    _autoHideTimer=0
 end)
+
+RowDivider(cfgAutoHideCard,112)
+
+-- Row 3: Hide on Loading toggle
+NEW("TextLabel",{Text="Auto Hide on Loading",Size=UDim2.new(0.62,0,0,22),Position=UDim2.new(0,14,0,120),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left},cfgAutoHideCard)
+NEW("TextLabel",{Text="Hides hub while loading screen is active",Size=UDim2.new(1,-80,0,13),Position=UDim2.new(0,14,0,142),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},cfgAutoHideCard)
+CardToggle(cfgAutoHideCard,124,"AutoHideOnLoad",function(state)
+    _autoHideOnLoad=state
+    -- if loading screen is still up (ZiliShowMain not set yet), hide/show hub now
+    if state and not _G._ZiliShowMain then
+        if MainFrame then MainFrame.Visible=false end
+    elseif not state and not _G._ZiliShowMain then
+        if MainFrame then MainFrame.Visible=true end
+    end
+end,C(45,225,218))
 
 -- Header card
 local cfgHeaderCard=MakeCard(ConfigPage,38,1); cfgHeaderCard.BackgroundColor3=C(9,10,22)
