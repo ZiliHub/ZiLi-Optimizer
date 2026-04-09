@@ -42,7 +42,6 @@ end
 -- =====================================================================
 
 
-
 -- 📦 MODULE: Config/ConfigManager  (GET BETTER OUT · Zili Hub) 
 __modules["Config/ConfigManager"] = function()
     local ConfigManager = {}
@@ -666,13 +665,15 @@ __modules["BYPASS ANTICHEAT"] = function()
     -- ==========================================
     local AsyncQueue = {}
 
+    -- [FIX 2] Thêm nil-check + pcall: nếu remote bị destroy giữa chừng thì không crash
     RunService.Heartbeat:Connect(function(deltaTime)
         for i = #AsyncQueue, 1, -1 do
             local taskObj = AsyncQueue[i]
             taskObj.timer = taskObj.timer - deltaTime
-            
             if taskObj.timer <= 0 then
-                taskObj.remote:FireServer(unpack(taskObj.args))
+                if taskObj.remote and taskObj.remote.Parent then
+                    pcall(function() taskObj.remote:FireServer(table.unpack(taskObj.args)) end)
+                end
                 table.remove(AsyncQueue, i)
             end
         end
@@ -765,20 +766,25 @@ __modules["Island/TWEEN TO ISLAND"] = function()
     local Events   = ReplicatedStorage:WaitForChild("Events", 5)
     local TakeStam = Events and Events:WaitForChild("takestam", 5)
 
+    -- [FIX 3] StaminaSpoof singleton: dùng _G._ZiliStaminaSpoofing để chỉ có 1 loop trên toàn script
+    -- Tránh 3 module (TweenToIsland / AutoFarmLevel / AutoGetBuso) spam server ~60 req/s
     local isSpoofingStamina = false
     local function StartStaminaSpoof()
-        if isSpoofingStamina then return end
+        if _G._ZiliStaminaSpoofing then return end
+        _G._ZiliStaminaSpoofing = true
         isSpoofingStamina = true
         task.spawn(function()
-            while isSpoofingStamina and task.wait(0.05) do
+            while isSpoofingStamina and _G._ZiliStaminaSpoofing and task.wait(0.05) do
                 if TakeStam and TakeStam.Parent then
                     pcall(function() TakeStam:FireServer(0.545, "dash") end)
                 else break end
             end
+            _G._ZiliStaminaSpoofing = false
         end)
     end
     local function StopStaminaSpoof()
         isSpoofingStamina = false
+        _G._ZiliStaminaSpoofing = false
     end
 
     -- =====================================================================
@@ -824,7 +830,7 @@ __modules["Island/TWEEN TO ISLAND"] = function()
             for _, v in pairs(root:GetChildren()) do 
                 if v.Name == "ZILI_AntiGravity" then v:Destroy() end 
             end
-            root.Velocity = VEC_ZERO
+            pcall(function() root.Velocity = VEC_ZERO end)
         end
         if Tween.FakeFloor then Tween.FakeFloor:Destroy(); Tween.FakeFloor = nil end
     end
@@ -910,11 +916,20 @@ __modules["Island/TWEEN TO ISLAND"] = function()
                 Tween.FakeFloor.Parent = Workspace
             end
 
-            local antiGravity = root:FindFirstChild("ZILI_AntiGravity") or Instance.new("BodyVelocity")
-            antiGravity.Name = "ZILI_AntiGravity"
-            antiGravity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-            antiGravity.Velocity = VEC_ZERO
-            antiGravity.Parent = root
+            -- [FIX 6] BodyVelocity deprecated → LinearVelocity (Roblox constraint mới)
+            local antiGravity = root:FindFirstChild("ZILI_AntiGravity")
+            if not antiGravity then
+                antiGravity = Instance.new("LinearVelocity")
+                antiGravity.Name = "ZILI_AntiGravity"
+                antiGravity.MaxForce = math.huge
+                antiGravity.VectorVelocity = Vector3.zero
+                antiGravity.RelativeTo = Enum.ActuatorRelativeTo.World
+                local attachment = Instance.new("Attachment")
+                attachment.Name = "ZILI_AntiGravityAttach"
+                attachment.Parent = root
+                antiGravity.Attachment0 = attachment
+                antiGravity.Parent = root
+            end
 
             local targetPos = stepData.pos
 
@@ -922,7 +937,7 @@ __modules["Island/TWEEN TO ISLAND"] = function()
                 if not Tween.IsTeleporting or not root.Parent then Tween.Stop(); return end
 
                 if Tween.FakeFloor then Tween.FakeFloor.CFrame = root.CFrame * OFFSET_FAKEFLOOR end
-                root.Velocity = VEC_ZERO
+                pcall(function() root.Velocity = VEC_ZERO end)
 
                 local currentPos = root.Position
                 local distXZ = (Vector2.new(targetPos.X, targetPos.Z) - Vector2.new(currentPos.X, currentPos.Z)).Magnitude
@@ -1027,7 +1042,18 @@ __modules["Farm/AutoFarmLevel"] = function()
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Player = Players.LocalPlayer
 
-    local QuestFunc = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("NPCInteractions"):WaitForChild("QuestFunctions"))
+    -- [FIX 1] Nguyên nhân insta-crash: original_require() trên server-sided ModuleScript bị Roblox block
+    -- AutoGetBuso đã làm đúng, AutoFarmLevel chưa — fix để đồng bộ
+    local QuestFunc = nil
+    pcall(function()
+        local mods = ReplicatedStorage:WaitForChild("Modules", 5)
+        if not mods then return end
+        local npc = mods:WaitForChild("NPCInteractions", 5)
+        if not npc then return end
+        local qf = npc:WaitForChild("QuestFunctions", 5)
+        if not qf then return end
+        QuestFunc = require(qf)
+    end)
     local TweenToIsland = require("Island/TWEEN TO ISLAND")
 
     _G.LureFarm = false
@@ -1064,18 +1090,20 @@ __modules["Farm/AutoFarmLevel"] = function()
 
     local isSpoofingStamina = false
     local function StartStaminaSpoof()
-        if isSpoofingStamina then return end
+        if _G._ZiliStaminaSpoofing then return end
+        _G._ZiliStaminaSpoofing = true
         isSpoofingStamina = true
         task.spawn(function()
-            while isSpoofingStamina and task.wait(0.05) do
+            while isSpoofingStamina and _G._ZiliStaminaSpoofing and task.wait(0.05) do
                 if TakeStam and TakeStam.Parent then
                     pcall(function() TakeStam:FireServer(0.545, "dash") end)
                 else break end
             end
+            _G._ZiliStaminaSpoofing = false
         end)
     end
     
-    local function StopStaminaSpoof() isSpoofingStamina = false end
+    local function StopStaminaSpoof() isSpoofingStamina = false; _G._ZiliStaminaSpoofing = false end
 
     local function UnequipWeapons()
         pcall(function()
@@ -1150,10 +1178,16 @@ __modules["Farm/AutoFarmLevel"] = function()
     end
 
     task.spawn(function()
-        local CombatRegister = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
+        -- [FIX 5] WaitForChild có timeout, tránh treo nếu Events chưa load
+        local eventsFolder = ReplicatedStorage:WaitForChild("Events", 10)
+        if not eventsFolder then return end
+        local CombatRegister = eventsFolder:WaitForChild("CombatRegister", 10)
+        if not CombatRegister then return end
         local currentCombo = 1 
         
         while true do
+            -- [FIX 5] Khi farm tắt: nghỉ 0.5s rồi tiếp tục kiểm tra, không burn CPU
+            if not _G.LureFarm then task.wait(0.5); continue end
             local attackDelay = 0.3 -- Tốc độ mặc định giữa các nhát chém
             
             if _G.LureFarm and not isTakingQuest and not isInteracting and IsReadyToAttack then
@@ -1396,8 +1430,8 @@ __modules["Farm/AutoFarmLevel"] = function()
                             
                             while tick() - waitForNpc < 15 do
                                 root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                root.Velocity = Vector3.new(0,0,0)
-                                root.RotVelocity = Vector3.new(0,0,0)
+                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                pcall(function() root.RotVelocity = Vector3.new(0,0,0) end)
                                 
                                 for _, prompt in pairs(workspace:GetDescendants()) do
                                     if prompt:IsA("ProximityPrompt") and prompt.Parent and prompt.Parent:IsA("BasePart") then
@@ -1417,7 +1451,7 @@ __modules["Farm/AutoFarmLevel"] = function()
                                 local waitAppear = tick()
                                 while tick() - waitAppear < 3 do
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    root.Velocity = Vector3.new(0,0,0)
+                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                     if Player.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                     task.wait(0.2)
                                 end
@@ -1425,7 +1459,7 @@ __modules["Farm/AutoFarmLevel"] = function()
                                 local waitChatClose = tick()
                                 while tick() - waitChatClose < 8 do 
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    root.Velocity = Vector3.new(0,0,0)
+                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                     
                                     local chatGui = Player.PlayerGui:FindFirstChild("NPCCHAT")
                                     if not chatGui then break end 
@@ -1488,7 +1522,7 @@ __modules["Farm/AutoFarmLevel"] = function()
                             local waitAppear = tick()
                             while tick() - waitAppear < 2 do
                                 root.CFrame = CFrame.new(standPos, Vector3.new(QuestNPC_Pos.X, standPos.Y, QuestNPC_Pos.Z))
-                                root.Velocity = Vector3.new(0,0,0)
+                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                 if Player.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                 task.wait(0.2)
                             end
@@ -1496,7 +1530,7 @@ __modules["Farm/AutoFarmLevel"] = function()
                             local waitChatClose = tick()
                             while tick() - waitChatClose < 8 do 
                                 root.CFrame = CFrame.new(standPos, Vector3.new(QuestNPC_Pos.X, standPos.Y, QuestNPC_Pos.Z))
-                                root.Velocity = Vector3.new(0,0,0)
+                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                 
                                 local chatGui = Player.PlayerGui:FindFirstChild("NPCCHAT")
                                 if not chatGui then break end 
@@ -1610,11 +1644,14 @@ __modules["Farm/AutoFarmLevel"] = function()
                     hum.PlatformStand = true 
                     local bv = root:FindFirstChild("FloatForce")
                     if not bv then
-                        bv = Instance.new("BodyVelocity")
-                        bv.Name = "FloatForce"
-                        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-                        bv.Velocity = Vector3.new(0, 0, 0)
-                        bv.Parent = root
+                        -- [FIX 7] LinearVelocity thay BodyVelocity deprecated
+                        local attach = root:FindFirstChild("FloatForceAttach") or Instance.new("Attachment")
+                        attach.Name = "FloatForceAttach"; attach.Parent = root
+                        bv = Instance.new("LinearVelocity")
+                        bv.Name = "FloatForce"; bv.MaxForce = math.huge
+                        bv.VectorVelocity = Vector3.zero
+                        bv.RelativeTo = Enum.ActuatorRelativeTo.World
+                        bv.Attachment0 = attach; bv.Parent = root
                     end
                 end
 
@@ -1780,17 +1817,19 @@ end)
 
     local isSpoofingStamina = false
     local function StartStaminaSpoof()
-        if isSpoofingStamina then return end
+        if _G._ZiliStaminaSpoofing then return end
+        _G._ZiliStaminaSpoofing = true
         isSpoofingStamina = true
         task.spawn(function()
-            while isSpoofingStamina and task.wait(0.05) do
+            while isSpoofingStamina and _G._ZiliStaminaSpoofing and task.wait(0.05) do
                 if TakeStam and TakeStam.Parent then
                     pcall(function() TakeStam:FireServer(0.545, "dash") end)
                 else break end
             end
+            _G._ZiliStaminaSpoofing = false
         end)
     end
-    local function StopStaminaSpoof() isSpoofingStamina = false end
+    local function StopStaminaSpoof() isSpoofingStamina = false; _G._ZiliStaminaSpoofing = false end
 
     -- =====================================================================
     -- ANTI-AFK & ANTI-SIT
@@ -2034,7 +2073,7 @@ end)
                                     Fishman_Portal.Y,
                                     Fishman_Portal.Z + toggle
                                 )
-                                root.Velocity = Vector3.new(0, 0, 0)
+                                pcall(function() pcall(function() root.Velocity = Vector3.new(0,0,0) end) end)
                                 toggle = toggle * -1
                                 task.wait(0.3)
                                 waited = waited + 0.3
@@ -2082,8 +2121,8 @@ end)
                             
                             while tick() - waitForNpc < 15 do
                                 root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                root.Velocity = Vector3.new(0,0,0)
-                                root.RotVelocity = Vector3.new(0,0,0)
+                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                pcall(function() root.RotVelocity = Vector3.new(0,0,0) end)
                                 
                                 if targetRobo then
                                     for _, prompt in pairs(targetRobo:GetDescendants()) do
@@ -2119,7 +2158,7 @@ end)
                                 local waitAppear = tick()
                                 while tick() - waitAppear < 3 do
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    root.Velocity = Vector3.new(0,0,0)
+                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                     if Player.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                     task.wait(0.2)
                                 end
@@ -2127,7 +2166,7 @@ end)
                                 local waitChatClose = tick()
                                 while tick() - waitChatClose < 8 do 
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    root.Velocity = Vector3.new(0,0,0)
+                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                     local chatGui = Player.PlayerGui:FindFirstChild("NPCCHAT")
                                     if not chatGui then break end 
                                     AutoClickUI(chatGui)
@@ -2187,8 +2226,8 @@ end)
                             
                             while tick() - waitForNpc < 15 do
                                 root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                root.Velocity = Vector3.new(0,0,0)
-                                root.RotVelocity = Vector3.new(0,0,0)
+                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                pcall(function() root.RotVelocity = Vector3.new(0,0,0) end)
                                 
                                 if targetRobo then
                                     for _, prompt in pairs(targetRobo:GetDescendants()) do
@@ -2223,7 +2262,7 @@ end)
                                 local waitAppear = tick()
                                 while tick() - waitAppear < 3 do
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    root.Velocity = Vector3.new(0,0,0)
+                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                     if Player.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                     task.wait(0.2)
                                 end
@@ -2231,7 +2270,7 @@ end)
                                 local waitChatClose = tick()
                                 while tick() - waitChatClose < 8 do 
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    root.Velocity = Vector3.new(0,0,0)
+                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                     local chatGui = Player.PlayerGui:FindFirstChild("NPCCHAT")
                                     if not chatGui then break end 
                                     AutoClickUI(chatGui)
@@ -2305,7 +2344,7 @@ end)
                             local waitAppear = tick()
                             while tick() - waitAppear < 2 do
                                 root.CFrame = CFrame.new(standPos, Vector3.new(QuestNPC_Pos.X, standPos.Y, QuestNPC_Pos.Z))
-                                root.Velocity = Vector3.new(0,0,0)
+                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                 if Player.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                 task.wait(0.2)
                             end
@@ -2313,7 +2352,7 @@ end)
                             local waitChatClose = tick()
                             while tick() - waitChatClose < 8 do 
                                 root.CFrame = CFrame.new(standPos, Vector3.new(QuestNPC_Pos.X, standPos.Y, QuestNPC_Pos.Z))
-                                root.Velocity = Vector3.new(0,0,0)
+                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                 
                                 local chatGui = Player.PlayerGui:FindFirstChild("NPCCHAT")
                                 if not chatGui then break end 
@@ -2503,11 +2542,13 @@ end)
                     hum.PlatformStand = true 
                     local bv = root:FindFirstChild("FloatForce")
                     if not bv then
-                        bv = Instance.new("BodyVelocity")
-                        bv.Name = "FloatForce"
-                        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-                        bv.Velocity = Vector3.new(0, 0, 0)
-                        bv.Parent = root
+                        local attach = root:FindFirstChild("FloatForceAttach") or Instance.new("Attachment")
+                        attach.Name = "FloatForceAttach"; attach.Parent = root
+                        bv = Instance.new("LinearVelocity")
+                        bv.Name = "FloatForce"; bv.MaxForce = math.huge
+                        bv.VectorVelocity = Vector3.zero
+                        bv.RelativeTo = Enum.ActuatorRelativeTo.World
+                        bv.Attachment0 = attach; bv.Parent = root
                     end
                 end
 
@@ -2695,7 +2736,7 @@ __modules["Farm/AutoGeppo"] = function()
             for _, v in pairs(root:GetChildren()) do 
                 if v.Name == "ZILI_AntiGravity" then v:Destroy() end 
             end
-            root.Velocity = Vector3.new(0, 0, 0)
+            pcall(function() pcall(function() root.Velocity = Vector3.new(0,0,0) end) end)
         end
         if FakeFloor.Parent then FakeFloor.Parent = nil end
     end
@@ -2710,11 +2751,16 @@ __modules["Farm/AutoGeppo"] = function()
         StartStaminaSpoof() -- ▶️ Bắt đầu spoof khi bắt đầu tween
         FakeFloor.Parent = Workspace
 
-        local antiGravity = root:FindFirstChild("ZILI_AntiGravity") or Instance.new("BodyVelocity")
-        antiGravity.Name = "ZILI_AntiGravity"
-        antiGravity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-        antiGravity.Velocity = Vector3.new(0, 0, 0)
-        antiGravity.Parent = root
+        local antiGravity = root:FindFirstChild("ZILI_AntiGravity")
+        if not antiGravity then
+            local attach = root:FindFirstChild("ZILI_AntiGravityAttach") or Instance.new("Attachment")
+            attach.Name = "ZILI_AntiGravityAttach"; attach.Parent = root
+            antiGravity = Instance.new("LinearVelocity")
+            antiGravity.Name = "ZILI_AntiGravity"; antiGravity.MaxForce = math.huge
+            antiGravity.VectorVelocity = Vector3.zero
+            antiGravity.RelativeTo = Enum.ActuatorRelativeTo.World
+            antiGravity.Attachment0 = attach; antiGravity.Parent = root
+        end
 
         local MAX_SPEED = 90
         local flyTarget = Vector3.new(targetPos.X, targetPos.Y + 30, targetPos.Z)
@@ -2730,7 +2776,7 @@ __modules["Farm/AutoGeppo"] = function()
             end
 
             FakeFloor.CFrame = root.CFrame * CFrame.new(0, -3.2, 0) 
-            root.Velocity = Vector3.new(0, 0, 0)
+            pcall(function() pcall(function() root.Velocity = Vector3.new(0,0,0) end) end)
 
             local currentPos = root.Position
             local activeTarget = isDiving and targetPos or flyTarget
@@ -2762,7 +2808,7 @@ __modules["Farm/AutoGeppo"] = function()
                             while waited < 4 do
                                 if not root or not root.Parent or not _G.AutoGeppo then break end
                                 root.CFrame = root.CFrame * CFrame.new(0, -0.5, 0)
-                                root.Velocity = Vector3.new(0, 0, 0)
+                                pcall(function() pcall(function() root.Velocity = Vector3.new(0,0,0) end) end)
                                 task.wait(0.5)
                                 waited = waited + 0.5
                             end
@@ -2861,7 +2907,7 @@ __modules["Farm/AutoGeppo"] = function()
                                 local waitAppear = tick()
                                 while tick() - waitAppear < 2 and _G.AutoGeppo do
                                     root.CFrame = CFrame.lookAt(standPos, lookAtPos)
-                                    root.Velocity = Vector3.new(0,0,0)
+                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                     if LocalPlayer.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                     task.wait(0.2)
                                 end
@@ -2869,7 +2915,7 @@ __modules["Farm/AutoGeppo"] = function()
                                 local waitChatClose = tick()
                                 while tick() - waitChatClose < 8 and _G.AutoGeppo do 
                                     root.CFrame = CFrame.lookAt(standPos, lookAtPos)
-                                    root.Velocity = Vector3.new(0,0,0)
+                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
                                     
                                     local chatGui = LocalPlayer.PlayerGui:FindFirstChild("NPCCHAT")
                                     if not chatGui then break end 
@@ -2882,7 +2928,7 @@ __modules["Farm/AutoGeppo"] = function()
                                 
                                 pcall(function()
                                     local args = { [1] = "skyWalkTrainer" }
-                                    ReplicatedStorage:WaitForChild("Events"):WaitForChild("learnStyle"):FireServer(unpack(args))
+                                    ReplicatedStorage:WaitForChild("Events"):WaitForChild("learnStyle"):FireServer(table.unpack(args))
                                 end)
                                 
                                 AutoGeppoModule.Toggle(false)
@@ -3190,7 +3236,7 @@ __modules["Farm/AutoFishMerchant"] = function()
             for _, v in pairs(root:GetChildren()) do
                 if v.Name == "ZILI_AntiGravity" then v:Destroy() end
             end
-            root.Velocity = VEC_ZERO
+            pcall(function() root.Velocity = VEC_ZERO end)
         end
         if Tween.FakeFloor then Tween.FakeFloor:Destroy(); Tween.FakeFloor = nil end
     end
@@ -3288,11 +3334,16 @@ __modules["Farm/AutoFishMerchant"] = function()
                 Tween.FakeFloor.Parent      = workspace
             end
 
-            local ag       = root:FindFirstChild("ZILI_AntiGravity") or Instance.new("BodyVelocity")
-            ag.Name        = "ZILI_AntiGravity"
-            ag.MaxForce    = Vector3.new(9e9, 9e9, 9e9)
-            ag.Velocity    = VEC_ZERO
-            ag.Parent      = root
+            local ag = root:FindFirstChild("ZILI_AntiGravity")
+            if not ag then
+                local attach = root:FindFirstChild("ZILI_AntiGravityAttach") or Instance.new("Attachment")
+                attach.Name = "ZILI_AntiGravityAttach"; attach.Parent = root
+                ag = Instance.new("LinearVelocity")
+                ag.Name = "ZILI_AntiGravity"; ag.MaxForce = math.huge
+                ag.VectorVelocity = Vector3.zero
+                ag.RelativeTo = Enum.ActuatorRelativeTo.World
+                ag.Attachment0 = attach; ag.Parent = root
+            end
             local targetPos = stepData.pos
 
             local flyY
@@ -3332,9 +3383,9 @@ __modules["Farm/AutoFishMerchant"] = function()
                         if Tween.FakeFloor then
                             Tween.FakeFloor.CFrame = curRoot.CFrame * OFFSET_FAKEFLOOR
                         end
-                        -- Reset BodyVelocity để xóa inertia cũ sau snap
+                        -- Reset LinearVelocity để xóa inertia cũ sau snap
                         local ag2 = curRoot:FindFirstChild("ZILI_AntiGravity")
-                        if ag2 then ag2.Velocity = VEC_ZERO end
+                        if ag2 and ag2:IsA("LinearVelocity") then ag2.VectorVelocity = VEC_ZERO end
                     end
                     _watchLastPos = curRoot.Position
                 end
@@ -3345,7 +3396,7 @@ __modules["Farm/AutoFishMerchant"] = function()
                 local dt = math.min(rawDt, DT_CAP)
 
                 if Tween.FakeFloor then Tween.FakeFloor.CFrame = root.CFrame * OFFSET_FAKEFLOOR end
-                root.Velocity = VEC_ZERO
+                pcall(function() root.Velocity = VEC_ZERO end)
 
                 local cur    = root.Position
                 local distXZ = (Vector2.new(targetPos.X, targetPos.Z) - Vector2.new(cur.X, cur.Z)).Magnitude
@@ -3496,7 +3547,7 @@ __modules["Farm/AutoFishMerchant"] = function()
                     -- [OPTIMIZE] Dùng cached FishingShopRemoteR thay vì WaitForChild mỗi lần
                     if FishingShopRemoteR then
                         pcall(function()
-                            FishingShopRemoteR:InvokeServer(unpack({{
+                            FishingShopRemoteR:InvokeServer(table.unpack({{
                                 ["Fish"]=fishName, ["All"]=false, ["Method"]="SellFish"
                             }}))
                         end)
@@ -3551,7 +3602,7 @@ __modules["Farm/AutoFishMerchant"] = function()
                     -- Ví dụ: 30 Fangfish, countPerCraft=2 → Count=15 → server deduct 30 cá
                     if CraftingRemoteR then
                         pcall(function()
-                            CraftingRemoteR:InvokeServer(unpack({{
+                            CraftingRemoteR:InvokeServer(table.unpack({{
                                 ["BlueprintItem"] = blueprintType,
                                 ["Method"]        = "Craft",
                                 ["ExtraData"]     = {[fishName] = extraDataKey},
@@ -3567,7 +3618,7 @@ __modules["Farm/AutoFishMerchant"] = function()
                         if not _G.AutoFishing then return false end
                         if CraftingRemoteR then
                             pcall(function()
-                                CraftingRemoteR:InvokeServer(unpack({{
+                                CraftingRemoteR:InvokeServer(table.unpack({{
                                     ["BlueprintItem"] = blueprintType,
                                     ["Method"]        = "Craft",
                                     ["ExtraData"]     = {[fishName] = extraDataKey},
