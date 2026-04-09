@@ -4618,8 +4618,10 @@ __modules["Stats/addStats"] = function()
 end
 
 -- =====================================================================
--- GET BETTER OUT | MAIN HUB  (Optimized Build v2.6.0)
--- Changes: Full English, lighter rendering, auto-hide, drag-fix, new logo
+-- GET BETTER OUT | MAIN HUB  (Optimized Build v2.7.0)
+-- Changes: Deferred requires, no BlurEffect, chunked page build,
+--          auto-hide fix (only MiniLogo reopens), custom hide delay 1-60s,
+--          lightning ⚡ COMPATIBILITY header, logo unified.
 -- Upload your logo image to Roblox and replace LOGO_ASSET_ID below.
 -- Source image: https://i.postimg.cc/NMRNsmrN/dfa59e7e_ce99_4091_9d64_a070f4a33687.png
 -- =====================================================================
@@ -4645,20 +4647,35 @@ end
 local Bypass, Esp, TweenSys, IslandData
 local AutoFarmLevel, AutoGetBuso, AutoGeppoFunc, AutoFishMerchantModule, AutoStats
 
-if not IS_LOBBY then
-    pcall(function() Bypass        = require("BYPASS ANTICHEAT") end)
-    pcall(function() Esp           = require("Island/Esp") end)
-    pcall(function() TweenSys      = require("Island/TWEEN TO ISLAND") end)
-    pcall(function() IslandData    = require("Island/IslandData") end)
-    pcall(function() AutoFarmLevel = require("Farm/AutoFarmLevel") end)
-    pcall(function() AutoGetBuso   = require("Farm/AutoGetBuso") end)
-    pcall(function() AutoGeppoFunc = require("Farm/AutoGeppo") end)
-    pcall(function() AutoFishMerchantModule = require("Farm/AutoFishMerchant") end)
-    pcall(function() AutoStats     = require("Stats/addStats") end)
-end
-
-pcall(function() if Bypass and Bypass.Init then Bypass.Init() end end)
-pcall(function() if TweenSys then TweenSys.Notify = function() end end end)
+-- =====================================================================
+-- DEFERRED REQUIRES  (loaded in background after loading screen)
+-- Splitting into small task.spawns prevents the executor from
+-- freezing the main thread for 1-2s on startup.
+-- =====================================================================
+local _requiresDone = false
+task.spawn(function()
+    if not IS_LOBBY then
+        task.wait(0)
+        pcall(function() Bypass        = require("BYPASS ANTICHEAT") end)
+        pcall(function() if Bypass and Bypass.Init then Bypass.Init() end end)
+        task.wait(0)
+        pcall(function() Esp           = require("Island/Esp") end)
+        pcall(function() TweenSys      = require("Island/TWEEN TO ISLAND") end)
+        pcall(function() if TweenSys then TweenSys.Notify = function() end end end)
+        task.wait(0)
+        pcall(function() IslandData    = require("Island/IslandData") end)
+        task.wait(0)
+        pcall(function() AutoFarmLevel = require("Farm/AutoFarmLevel") end)
+        task.wait(0)
+        pcall(function() AutoGetBuso   = require("Farm/AutoGetBuso") end)
+        pcall(function() AutoGeppoFunc = require("Farm/AutoGeppo") end)
+        task.wait(0)
+        pcall(function() AutoFishMerchantModule = require("Farm/AutoFishMerchant") end)
+        task.wait(0)
+        pcall(function() AutoStats     = require("Stats/addStats") end)
+    end
+    _requiresDone = true
+end)
 
 -- =====================================================================
 -- SERVICES & LOCALS
@@ -4865,7 +4882,8 @@ do
     local function _TWBACK(o,t,pr) TS:Create(o,TweenInfo.new(t,Enum.EasingStyle.Back,Enum.EasingDirection.Out),pr):Play() end
     local C3 = Color3.fromRGB
 
-    local _blur = Instance.new("BlurEffect"); _blur.Size=0; _blur.Parent=game:GetService("Lighting"); _TW(_blur,0.5,{Size=24})
+    -- BlurEffect removed: expensive GPU pass causes 1-2s freeze on low-end devices
+    local _blur = {Size=0} -- lightweight stub so cleanup code below still works safely
     local _lGui = _N("ScreenGui",{Name="ZiliLoader",IgnoreGuiInset=true,ResetOnSpawn=false,DisplayOrder=9999,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},gethui and gethui() or game:GetService("CoreGui"))
     local _bg = _N("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=C3(3,2,10),ZIndex=1},_lGui)
     _N("ImageLabel",{Size=UDim2.new(0,680,0,680),Position=UDim2.new(0.5,-340,0.5,-340),BackgroundTransparency=1,ZIndex=2,Image="rbxassetid://6401561088",ImageColor3=C3(90,60,10),ImageTransparency=0.80},_bg)
@@ -4923,7 +4941,7 @@ do
         _setProgress(100,"Done!  Welcome back!")
         _TW(_pctLbl,0.25,{TextColor3=C3(72,225,135)}); _TW(_statusLbl,0.25,{TextColor3=C3(72,225,135)}); _TW(_pBorder,0.25,{Color=C3(72,225,135)})
         task.wait(0.55)
-        _TW(_blur,0.5,{Size=0}); task.delay(0.5,function() pcall(function() _blur:Destroy() end) end)
+        -- blur stub: nothing to tween or destroy
         _TW(_panel,0.35,{BackgroundTransparency=1}); task.wait(0.2); _TW(_bg,0.4,{BackgroundTransparency=1}); task.wait(0.4)
         pcall(function() _lGui:Destroy() end); _G._ZiliShowMain=true
     end)
@@ -5043,14 +5061,14 @@ BgGrad.Rotation=145; BgGrad.Parent=BgBase
 local GLOW_DATA={{COL_MAIN,-0.12,-0.12},{COL_TRAVEL,1.08,-0.08},{COL_STATS,-0.08,1.08},{COL_PS,1.10,1.10}}
 local cornerGlows={}
 for i,gd in ipairs(GLOW_DATA) do local g=NEW("Frame",{Size=UDim2.new(0,160,0,160),Position=UDim2.new(gd[2],-80,gd[3],-80),BackgroundColor3=gd[1],BackgroundTransparency=0.93,ZIndex=0,BorderSizePixel=0},MainFrame);CORNER(80,g);table.insert(cornerGlows,g) end
-task.spawn(function() local t=0;while MainFrame and MainFrame.Parent do t+=0.03;for i,g in ipairs(cornerGlows) do TWEEN(g,0.8,{BackgroundTransparency=0.94-0.035*math.sin(t+i*1.57)}) end;task.wait(0.8) end end)
+task.spawn(function() local t=0;while MainFrame and MainFrame.Parent do t+=0.03;for i,g in ipairs(cornerGlows) do TWEEN(g,1.6,{BackgroundTransparency=0.94-0.035*math.sin(t+i*1.57)}) end;task.wait(1.6) end end)
 
 local sh1=NEW("Frame",{Size=UDim2.new(0,2,1.8,0),Position=UDim2.new(-0.12,0,-0.4,0),BackgroundColor3=GOLD2,BackgroundTransparency=0.91,ZIndex=0,BorderSizePixel=0,Rotation=16},MainFrame)
 task.spawn(function() while MainFrame and MainFrame.Parent do sh1.Position=UDim2.new(-0.12,0,-0.4,0);TweenService:Create(sh1,TweenInfo.new(5.5,Enum.EasingStyle.Quad),{Position=UDim2.new(1.15,0,-0.4,0)}):Play();task.wait(10) end end)
 
 local PARTICLE_COLORS={GOLD,GOLD2,COL_TRAVEL,COL_STATS,COL_FISH}
 task.spawn(function()
-    while MainFrame and MainFrame.Parent do task.wait(2.5);if not MainFrame or not MainFrame.Parent then break end
+    while MainFrame and MainFrame.Parent do task.wait(4);if not MainFrame or not MainFrame.Parent then break end
         local col=PARTICLE_COLORS[math.random(#PARTICLE_COLORS)];local sz=math.random(2,4);local xs=math.random(4,96)/100
         local p=NEW("Frame",{Size=UDim2.new(0,sz,0,sz),Position=UDim2.new(xs,0,1.04,0),BackgroundColor3=col,BackgroundTransparency=0.7,ZIndex=0,BorderSizePixel=0},MainFrame);CORNER(sz,p)
         local dur=math.random(7,13);TweenService:Create(p,TweenInfo.new(dur,Enum.EasingStyle.Linear),{Position=UDim2.new(xs,math.random(-30,30),-0.05,0),BackgroundTransparency=1}):Play()
@@ -5116,12 +5134,20 @@ _G._GBO_HideHub = function() end
 _G._GBO_ShowHub = function() end
 
 task.spawn(function()
+    -- FIX: Mouse movement / screen clicks only RESET the idle timer.
+    -- They must NOT reopen the hub automatically — that is exclusively
+    -- handled by clicking the MiniLogo button below.
     UIS.InputChanged:Connect(function(inp)
         if inp.UserInputType==Enum.UserInputType.MouseMovement then
+            _autoHideTimer=0   -- reset idle counter; do NOT call ShowHub here
+        end
+    end)
+    -- Also reset timer on any mouse button (prevents instant rehide after user
+    -- opens via mini logo and immediately interacts with the hub)
+    UIS.InputBegan:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1
+        or inp.UserInputType==Enum.UserInputType.MouseButton2 then
             _autoHideTimer=0
-            if _autoHideHidden and _autoHideEnabled and MainFrame and not MainFrame.Visible then
-                _autoHideHidden=false; _G._GBO_ShowHub()
-            end
         end
     end)
     while true do
@@ -5592,9 +5618,14 @@ end -- end IS_LOBBY / else
 
 -- =====================================================================
 -- AUTO FARM / TRAVEL / FISHING / STATS (game world only)
+-- Built inside a task.spawn so each page yields between construction
+-- phases — prevents the executor from hanging for 1-2s at startup.
 -- =====================================================================
 local FishMasterBar
 if not IS_LOBBY then
+    task.spawn(function()
+    -- yield so main-frame tween plays first before heavy UI work
+    task.wait(0)
     -- AUTO FARM PAGE
     PageLayout(AutoFarmPage,14,10)
     local lfCard=MakeCard(AutoFarmPage,144,1); CardHeader(lfCard,"sword","LEVEL FARM",AMBER)
@@ -5631,6 +5662,7 @@ if not IS_LOBBY then
     end
 
     -- TRAVEL PAGE
+    task.wait(0) -- yield: breathe before building Travel page
     PageLayout(TravelPage,14,10)
     local tpCard=MakeCard(TravelPage,148,1); tpCard.ZIndex=5; CardHeader(tpCard,"globe","ISLAND TELEPORT",CYAN)
     RowLabel(tpCard,"Target Island","Select destination",36)
@@ -5665,6 +5697,7 @@ if not IS_LOBBY then
     NEW("TextLabel",{Text="Requires Level 700+  ·  Finish all quests",Size=UDim2.new(1,-24,0,14),Position=UDim2.new(0,14,0,76),BackgroundTransparency=1,TextColor3=GOLD3,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},sea2Card)
 
     -- FISHING + MERCHANT PAGE
+    task.wait(0) -- yield: give Roblox a frame to breathe before building Fishing page
     PageLayout(FishingPage,14,10)
     local fmCard=MakeCard(FishingPage,80,1); CardHeader(fmCard,"fish","FISHING + MERCHANT FARM",ORANGE)
     FishMasterBar=NEW("Frame",{Size=UDim2.new(0,3,1,0),BackgroundColor3=GOLD,BorderSizePixel=0},fmCard); CORNER(2,FishMasterBar)
@@ -5794,6 +5827,7 @@ if not IS_LOBBY then
     CreateDropdown(fruitCard,"Select Fruit",{"Bari Bari no Mi","Bomu Bomu no Mi","Doku Doku no Mi","Gomu Gomu no Mi","Gura Gura no Mi","Hie Hie no Mi","Magu Magu no Mi","Mero Mero no Mi","Ope Ope no Mi","Pika Pika no Mi","Suna Suna no Mi","Yami Yami no Mi","Zushi Zushi no Mi"},"",186,"Config_FruitSelect",false,true)
 
     -- STATS PAGE
+    task.wait(0) -- yield: give Roblox a frame before building Stats page
     PageLayout(StatsPage,14,8)
     local AutoStatsData={}
     local function CreateStatRow(statName,layoutOrder)
@@ -5810,6 +5844,7 @@ if not IS_LOBBY then
     if AutoStats and AutoStats.Start then AutoStats.Start(AutoStatsData) end
 
     task.spawn(function() pcall(function() local FM=require("Farm/AutoFruitManager");if FM and FM.Start then FM.Start(TogglesData) end end) end)
+    end) -- end task.spawn for heavy game-world page builds
 end -- end if not IS_LOBBY
 
 local AutoStatsData = AutoStatsData or {}
@@ -5820,9 +5855,28 @@ local AutoStatsData = AutoStatsData or {}
 PageLayout(ConfigPage,14,10)
 
 -- Auto-hide card (at top of Config page)
-local cfgAutoHideCard=MakeCard(ConfigPage,68,0); CardHeader(cfgAutoHideCard,"eye","AUTO HIDE UI",COL_CFG)
-RowLabel(cfgAutoHideCard,"Auto Hide",string.format("Hides hub after %ds of inactivity",AUTO_HIDE_DELAY),36)
-CardToggle(cfgAutoHideCard,40,"AutoHide",function(state) _autoHideEnabled=state;_autoHideTimer=0 end,COL_CFG)
+local cfgAutoHideCard=MakeCard(ConfigPage,116,0); CardHeader(cfgAutoHideCard,"eye","AUTO HIDE UI",COL_CFG)
+local _ahDelayLbl=NEW("TextLabel",{Text=string.format("Hides hub after %ds of inactivity",AUTO_HIDE_DELAY),Size=UDim2.new(0.72,0,0,13),Position=UDim2.new(0,14,0,52),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},cfgAutoHideCard)
+NEW("TextLabel",{Text="Auto Hide",Size=UDim2.new(0.62,0,0,22),Position=UDim2.new(0,14,0,32),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left},cfgAutoHideCard)
+CardToggle(cfgAutoHideCard,36,"AutoHide",function(state) _autoHideEnabled=state;_autoHideTimer=0 end,COL_CFG)
+-- Delay input row
+RowDivider(cfgAutoHideCard,72)
+NEW("TextLabel",{Text="Hide Delay (1–60s)",Size=UDim2.new(0.62,0,0,20),Position=UDim2.new(0,14,0,80),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},cfgAutoHideCard)
+local _ahBoxFrame=NEW("Frame",{Size=UDim2.new(0,72,0,26),Position=UDim2.new(1,-82,0,78),BackgroundColor3=BG5},cfgAutoHideCard); CORNER(6,_ahBoxFrame); local _ahBoxStroke=STROKE(GOLD3,1,0,_ahBoxFrame)
+local _ahBox=NEW("TextBox",{Size=UDim2.new(1,-10,1,0),Position=UDim2.new(0,5,0,0),BackgroundTransparency=1,Text=tostring(AUTO_HIDE_DELAY),PlaceholderText="30",TextColor3=GOLD2,Font=Enum.Font.GothamBold,TextSize=12,ClearTextOnFocus=false},_ahBoxFrame)
+_ahBox.Focused:Connect(function() TWEEN(_ahBoxStroke,0.15,{Color=COL_CFG}) end)
+_ahBox.FocusLost:Connect(function()
+    TWEEN(_ahBoxStroke,0.15,{Color=GOLD3})
+    local v=tonumber(_ahBox.Text)
+    if v then
+        AUTO_HIDE_DELAY=math.clamp(math.floor(v),1,60)
+        _ahBox.Text=tostring(AUTO_HIDE_DELAY)
+        _ahDelayLbl.Text=string.format("Hides hub after %ds of inactivity",AUTO_HIDE_DELAY)
+        _autoHideTimer=0
+    else
+        _ahBox.Text=tostring(AUTO_HIDE_DELAY)
+    end
+end)
 
 -- Header card
 local cfgHeaderCard=MakeCard(ConfigPage,38,1); cfgHeaderCard.BackgroundColor3=C(9,10,22)
@@ -5918,13 +5972,18 @@ local function RunExecutorDiagnostics()
     local sup=0; for _,v in ipairs(deps) do if type(env[v])=="function" or (v=="request" and (type(env.request)=="function" or type(env.http)=="table")) then sup+=1 end end
     local pct=math.floor((sup/#deps)*100); local scoreCol=pct>=80 and C(72,225,135) or pct>=50 and AMBER or RED
     local sg=NEW("ScreenGui",{Name="ZiliDiag"},game:GetService("CoreGui") or LocalPlayer:WaitForChild("PlayerGui"))
-    local frame=NEW("Frame",{Size=UDim2.new(0,260,0,80),Position=UDim2.new(1,20,1,-150),BackgroundColor3=BG1,BorderSizePixel=0},sg); CORNER(10,frame); STROKE(GOLD,1.5,0.1,frame)
-    NEW("TextLabel",{Text="ZILI  ·  "..name.."  ·  Score: "..pct.."%  ("..sup.."/"..#deps..")",Size=UDim2.new(1,-16,0,24),Position=UDim2.new(0,8,0,28),BackgroundTransparency=1,TextColor3=scoreCol,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},frame)
-    local barBg=NEW("Frame",{Size=UDim2.new(1,-20,0,5),Position=UDim2.new(0,10,0,56),BackgroundColor3=C(12,10,26)},frame); CORNER(3,barBg)
+    local frame=NEW("Frame",{Size=UDim2.new(0,260,0,104),Position=UDim2.new(1,20,1,-170),BackgroundColor3=BG1,BorderSizePixel=0},sg); CORNER(10,frame); STROKE(GOLD,1.5,0.1,frame)
+    -- Header: lightning icon + COMPATIBILITY label
+    local diagHdr=NEW("Frame",{Size=UDim2.new(1,0,0,28),BackgroundColor3=BG_HDR},frame); CORNER(10,diagHdr)
+    NEW("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=BG_HDR,BorderSizePixel=0},diagHdr)
+    local _litBg=NEW("Frame",{Size=UDim2.new(0,16,0,16),Position=UDim2.new(0,8,0.5,-8),BackgroundTransparency=1},diagHdr); DrawIcon(_litBg,"lightning",0,0,16,scoreCol)
+    NEW("TextLabel",{Text="COMPATIBILITY CHECK",Size=UDim2.new(1,-34,1,0),Position=UDim2.new(0,30,0,0),BackgroundTransparency=1,TextColor3=scoreCol,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},diagHdr)
+    NEW("TextLabel",{Text="ZILI  ·  "..name.."  ·  Score: "..pct.."%  ("..sup.."/"..#deps..")",Size=UDim2.new(1,-16,0,24),Position=UDim2.new(0,8,0,30),BackgroundTransparency=1,TextColor3=scoreCol,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},frame)
+    local barBg=NEW("Frame",{Size=UDim2.new(1,-20,0,5),Position=UDim2.new(0,10,0,58),BackgroundColor3=C(12,10,26)},frame); CORNER(3,barBg)
     local barFill=NEW("Frame",{Size=UDim2.new(0,0,1,0),BackgroundColor3=scoreCol},barBg); CORNER(3,barFill)
-    TweenService:Create(frame,TweenInfo.new(0.5,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Position=UDim2.new(1,-280,1,-150)}):Play()
+    TweenService:Create(frame,TweenInfo.new(0.5,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Position=UDim2.new(1,-280,1,-170)}):Play()
     task.wait(0.5); TweenService:Create(barFill,TweenInfo.new(1.0,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),{Size=UDim2.new(pct/100,0,1,0)}):Play()
-    task.delay(7,function() TweenService:Create(frame,TweenInfo.new(0.4,Enum.EasingStyle.Back,Enum.EasingDirection.In),{Position=UDim2.new(1,20,1,-150)}):Play();task.wait(0.4);sg:Destroy() end)
+    task.delay(7,function() TweenService:Create(frame,TweenInfo.new(0.4,Enum.EasingStyle.Back,Enum.EasingDirection.In),{Position=UDim2.new(1,20,1,-170)}):Play();task.wait(0.4);sg:Destroy() end)
 end
 task.spawn(RunExecutorDiagnostics)
 
@@ -5932,4 +5991,3 @@ task.spawn(RunExecutorDiagnostics)
 -- SIGNAL READY
 -- =====================================================================
 _G._ZiliLoadReady = true
-
