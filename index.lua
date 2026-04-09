@@ -4618,14 +4618,19 @@ __modules["Stats/addStats"] = function()
 end
 
 -- =====================================================================
--- GET BETTER OUT | MAIN HUB  (Optimized Build v2.8.0)
--- Changes: Real blur (size 8, pcall-safe), lazy page build via _pageBuildFns,
---          deferred requires, auto-hide 10-60s clamp, hide-on-loading toggle.
--- Upload your logo image to Roblox and replace LOGO_ASSET_ID below.
--- Source image: https://i.postimg.cc/NMRNsmrN/dfa59e7e_ce99_4091_9d64_a070f4a33687.png
+-- GET BETTER OUT | MAIN HUB  (Optimized Build v2.9.0)
+-- New: Toast notifications, keybind toggle (RightShift), session timer,
+--      active-feature counter, global search, tooltips, collapsible cards,
+--      tab badges, color theme picker, load optimization, logo unified.
+-- =====================================================================
+-- HOW TO SET YOUR LOGO:
+--   1. Upload the PNG to Roblox (Creator Dashboard → Development Items → Images)
+--   2. Copy the numeric asset ID (e.g. 12345678901)
+--   3. Replace the number below:  rbxassetid://YOUR_ID_HERE
+-- Source PNG: https://i.postimg.cc/NMRNsmrN/dfa59e7e_ce99_4091_9d64_a070f4a33687.png
 -- =====================================================================
 
-local LOGO_ASSET_ID = "rbxassetid://108561234878560" -- << REPLACE with your uploaded asset ID
+local LOGO_ASSET_ID = "rbxassetid://108561234878560" -- << REPLACE with your uploaded Roblox asset ID
 
 -- =====================================================================
 -- PLACE DETECTION  (must run before all requires)
@@ -4871,87 +4876,116 @@ ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = gethui and gethui() or game:GetService("CoreGui")
 
 -- =====================================================================
--- LOADING SCREEN  (lightweight)
+-- LOADING SCREEN  (v2.9 — lighter build)
+-- Key optimisations:
+--   • Removed heavy 680×680 ImageLabel (was forcing a texture decode stall)
+--   • BlurEffect size capped at 6 (cheaper, still visible)
+--   • Dot animation uses task.delay chain instead of while-loop tween spam
+--   • Panel slide-in deferred one frame so Roblox can render first
 -- =====================================================================
 do
     local TS = TweenService
     local function _N(cls,p,par) local o=Instance.new(cls); for k,v in pairs(p) do o[k]=v end; if par then o.Parent=par end; return o end
     local function _R(r,p) _N("UICorner",{CornerRadius=UDim.new(0,r)},p) end
     local function _TW(o,t,pr) TS:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),pr):Play() end
-    local function _TWBACK(o,t,pr) TS:Create(o,TweenInfo.new(t,Enum.EasingStyle.Back,Enum.EasingDirection.Out),pr):Play() end
     local C3 = Color3.fromRGB
 
-    -- Real blur: BlurEffect size 8 blurs the 3D game world behind the UI.
-    -- Size 8 is ~4× cheaper than size 24 (was crashing). Wrapped in pcall
-    -- so it fails gracefully on executors that block Lighting access.
+    -- Blur: size 6 (lighter than 8, still blurs game world nicely). pcall-safe.
     local _blur = nil
     pcall(function()
-        _blur = Instance.new("BlurEffect")
-        _blur.Size = 0
+        _blur = Instance.new("BlurEffect"); _blur.Size=0
         _blur.Parent = game:GetService("Lighting")
-        _TW(_blur, 0.45, {Size=8})
+        _TW(_blur,0.4,{Size=6})
     end)
+
     local _lGui = _N("ScreenGui",{Name="ZiliLoader",IgnoreGuiInset=true,ResetOnSpawn=false,DisplayOrder=9999,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},gethui and gethui() or game:GetService("CoreGui"))
-    -- Semi-transparent dark overlay: lets the blurred game world show through (not solid black)
-    local _bg = _N("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=C3(3,2,10),BackgroundTransparency=0.25,ZIndex=1},_lGui)
-    _N("ImageLabel",{Size=UDim2.new(0,680,0,680),Position=UDim2.new(0.5,-340,0.5,-340),BackgroundTransparency=1,ZIndex=2,Image="rbxassetid://6401561088",ImageColor3=C3(90,60,10),ImageTransparency=0.88},_bg)
-    local _panel = _N("Frame",{Size=UDim2.new(0,340,0,370),Position=UDim2.new(0.5,-170,0.6,-185),BackgroundColor3=C3(9,7,20),BackgroundTransparency=0.08,ZIndex=3},_lGui)
+    -- Semi-transparent overlay — game world shows through the blur
+    local _bg = _N("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=C3(4,3,12),BackgroundTransparency=0.22,ZIndex=1},_lGui)
+
+    -- Panel (starts off-screen below, slides up after first frame)
+    local _panel = _N("Frame",{Size=UDim2.new(0,340,0,370),Position=UDim2.new(0.5,-170,0.7,-185),BackgroundColor3=C3(9,7,20),BackgroundTransparency=0.06,ZIndex=3},_lGui)
     _R(20,_panel)
     local _pBorder = _N("UIStroke",{Color=C3(220,172,68),Thickness=1.4,Transparency=0.25},_panel)
+
+    -- Gradient top line
     local _topLine = _N("Frame",{Size=UDim2.new(0.72,0,0,2),Position=UDim2.new(0.14,0,0,0),BackgroundColor3=C3(255,215,85),ZIndex=4},_panel); _R(2,_topLine)
     local _tlG = Instance.new("UIGradient")
-    _tlG.Color = ColorSequence.new({ColorSequenceKeypoint.new(0,C3(255,130,40)),ColorSequenceKeypoint.new(0.5,C3(255,215,115)),ColorSequenceKeypoint.new(1,C3(45,225,218))}); _tlG.Parent=_topLine
+    _tlG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,C3(255,130,40)),ColorSequenceKeypoint.new(0.5,C3(255,215,115)),ColorSequenceKeypoint.new(1,C3(45,225,218))}); _tlG.Parent=_topLine
+
+    -- Logo ring
     local _logoRing = _N("Frame",{Size=UDim2.new(0,80,0,80),Position=UDim2.new(0.5,-40,0,20),BackgroundColor3=C3(13,9,26),ZIndex=4},_panel); _R(40,_logoRing)
     local _logoStroke = _N("UIStroke",{Color=C3(220,172,68),Thickness=2,Transparency=0.1},_logoRing)
-    _N("ImageLabel",{Size=UDim2.new(0,52,0,52),Position=UDim2.new(0.5,-26,0.5,-26),BackgroundTransparency=1,ZIndex=5,Image=LOGO_ASSET_ID},_logoRing)
+    _N("ImageLabel",{Size=UDim2.new(0,56,0,56),Position=UDim2.new(0.5,-28,0.5,-28),BackgroundTransparency=1,ZIndex=5,Image=LOGO_ASSET_ID,ScaleType=Enum.ScaleType.Fit},_logoRing)
+
     _N("TextLabel",{Size=UDim2.new(1,-24,0,28),Position=UDim2.new(0,12,0,112),BackgroundTransparency=1,ZIndex=4,Text="ZILI HUB",TextColor3=C3(255,215,115),Font=Enum.Font.GothamBlack,TextSize=22,TextXAlignment=Enum.TextXAlignment.Center},_panel)
     _N("TextLabel",{Size=UDim2.new(1,-24,0,16),Position=UDim2.new(0,12,0,142),BackgroundTransparency=1,ZIndex=4,Text="GET BETTER OUT  ·  Premium Build",TextColor3=C3(140,135,165),Font=Enum.Font.GothamMedium,TextSize=10,TextXAlignment=Enum.TextXAlignment.Center},_panel)
     _N("Frame",{Size=UDim2.new(0.76,0,0,1),Position=UDim2.new(0.12,0,0,170),BackgroundColor3=C3(38,32,78),ZIndex=4},_panel)
-    local _statusLbl = _N("TextLabel",{Size=UDim2.new(1,-24,0,18),Position=UDim2.new(0,12,0,180),BackgroundTransparency=1,ZIndex=4,Text="Starting system...",TextColor3=C3(148,143,168),Font=Enum.Font.GothamMedium,TextSize=10,TextXAlignment=Enum.TextXAlignment.Center},_panel)
-    local _dotsFrame = _N("Frame",{Size=UDim2.new(0,56,0,10),Position=UDim2.new(0.5,-28,0,206),BackgroundTransparency=1,ZIndex=4},_panel)
-    local _dots = {}
-    for i=1,3 do _dots[i]=_N("Frame",{Size=UDim2.new(0,7,0,7),Position=UDim2.new(0,(i-1)*21,0.5,-3.5),BackgroundColor3=C3(220,172,68),ZIndex=5},_dotsFrame); _R(4,_dots[i]) end
-    local _barTrack = _N("Frame",{Size=UDim2.new(1,-44,0,6),Position=UDim2.new(0,22,0,226),BackgroundColor3=C3(16,13,34),ZIndex=4},_panel); _R(3,_barTrack)
-    _N("UIStroke",{Color=C3(38,32,78),Thickness=1,Transparency=0},_barTrack)
-    local _barFill = _N("Frame",{Size=UDim2.new(0,0,1,0),BackgroundColor3=C3(255,215,85),ZIndex=5},_barTrack); _R(3,_barFill)
-    local _fg = Instance.new("UIGradient"); _fg.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,C3(255,120,40)),ColorSequenceKeypoint.new(0.5,C3(255,215,115)),ColorSequenceKeypoint.new(1,C3(45,225,218))}); _fg.Parent=_barFill
-    local _pctLbl = _N("TextLabel",{Size=UDim2.new(1,-24,0,18),Position=UDim2.new(0,12,0,238),BackgroundTransparency=1,ZIndex=4,Text="0%",TextColor3=C3(255,215,115),Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center},_panel)
-    _N("TextLabel",{Size=UDim2.new(1,-24,0,16),Position=UDim2.new(0,12,0,316),BackgroundTransparency=1,ZIndex=4,Text="v2.6.0  ·  Loading, please wait...",TextColor3=C3(55,50,78),Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Center},_panel)
-    _TWBACK(_panel,0.55,{Position=UDim2.new(0.5,-170,0.5,-185),BackgroundTransparency=0.08})
+    local _statusLbl = _N("TextLabel",{Size=UDim2.new(1,-24,0,18),Position=UDim2.new(0,12,0,180),BackgroundTransparency=1,ZIndex=4,Text="Starting...",TextColor3=C3(148,143,168),Font=Enum.Font.GothamMedium,TextSize=10,TextXAlignment=Enum.TextXAlignment.Center},_panel)
 
-    local STAGES={{10,"Starting system...",0.20},{22,"Loading Bypass module...",0.28},{36,"Loading ESP & Island data...",0.26},{50,"Loading Auto Farm...",0.28},{62,"Loading Auto Fishing...",0.24},{72,"Initializing UI...",0.30},{82,"Building tab pages...",0.26},{91,"Configuring features...",0.22},{96,"Finalizing...",0.16}}
-    local _barW = 340-44
-    local function _setProgress(pct,label)
-        _TW(_barFill,0.35,{Size=UDim2.new(0,math.max(0,math.floor(_barW*(pct/100))),1,0)})
-        task.delay(0.08,function() if _pctLbl.Parent then _pctLbl.Text=tostring(pct).."%" end end)
-        if label and _statusLbl.Parent then _statusLbl.Text=label end
-    end
-    task.spawn(function()
-        while _lGui and _lGui.Parent do
-            for i=1,3 do task.delay((i-1)*0.18,function()
+    -- Dots
+    local _dotsFrame = _N("Frame",{Size=UDim2.new(0,56,0,10),Position=UDim2.new(0.5,-28,0,206),BackgroundTransparency=1,ZIndex=4},_panel)
+    local _dots={}
+    for i=1,3 do _dots[i]=_N("Frame",{Size=UDim2.new(0,6,0,6),Position=UDim2.new(0,(i-1)*20,0.5,-3),BackgroundColor3=C3(220,172,68),BackgroundTransparency=0.5,ZIndex=5},_dotsFrame); _R(3,_dots[i]) end
+
+    -- Progress bar
+    local _barTrack = _N("Frame",{Size=UDim2.new(1,-44,0,5),Position=UDim2.new(0,22,0,226),BackgroundColor3=C3(14,11,30),ZIndex=4},_panel); _R(3,_barTrack)
+    local _barFill = _N("Frame",{Size=UDim2.new(0,0,1,0),BackgroundColor3=C3(255,215,85),ZIndex=5},_barTrack); _R(3,_barFill)
+    local _fg=Instance.new("UIGradient"); _fg.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,C3(255,120,40)),ColorSequenceKeypoint.new(0.5,C3(255,215,115)),ColorSequenceKeypoint.new(1,C3(45,225,218))}); _fg.Parent=_barFill
+    local _pctLbl = _N("TextLabel",{Size=UDim2.new(1,-24,0,18),Position=UDim2.new(0,12,0,238),BackgroundTransparency=1,ZIndex=4,Text="0%",TextColor3=C3(255,215,115),Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center},_panel)
+    _N("TextLabel",{Size=UDim2.new(1,-24,0,16),Position=UDim2.new(0,12,0,316),BackgroundTransparency=1,ZIndex=4,Text="v2.9.0  ·  Loading, please wait...",TextColor3=C3(55,50,78),Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Center},_panel)
+
+    -- Slide panel in AFTER one frame (prevents first-frame stall)
+    task.defer(function()
+        TS:Create(_panel,TweenInfo.new(0.45,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Position=UDim2.new(0.5,-170,0.5,-185),BackgroundTransparency=0.06}):Play()
+    end)
+
+    -- Dot animation: task.delay chain (no while-loop tween spam)
+    local _dotRunning = true
+    local function _animDots()
+        if not _dotRunning then return end
+        for i=1,3 do
+            task.delay((i-1)*0.16,function()
                 if not(_dots[i] and _dots[i].Parent) then return end
-                _TW(_dots[i],0.18,{BackgroundTransparency=0,Size=UDim2.new(0,8,0,8)})
-                task.delay(0.18,function() if _dots[i] and _dots[i].Parent then _TW(_dots[i],0.18,{BackgroundTransparency=0.65,Size=UDim2.new(0,5,0,5)}) end end)
-            end) end
-            task.wait(0.82)
+                _TW(_dots[i],0.16,{BackgroundTransparency=0,Size=UDim2.new(0,8,0,8)})
+                task.delay(0.18,function() if _dots[i] and _dots[i].Parent then _TW(_dots[i],0.18,{BackgroundTransparency=0.55,Size=UDim2.new(0,6,0,6)}) end end)
+            end)
         end
-    end)
-    task.spawn(function()
-        local cols={C3(255,215,115),C3(45,225,218),C3(255,130,40)}; local ci=1
-        while _lGui and _lGui.Parent do _TW(_logoStroke,1.0,{Color=cols[ci],Transparency=0.0}); task.wait(1.2); ci=ci%#cols+1 end
-    end)
+        task.delay(0.75,_animDots)
+    end
+    task.delay(0.1,_animDots)
+
+    -- Logo stroke pulse (2-color, slower = fewer tweens)
+    local _lsCols={C3(255,215,115),C3(45,225,218)}; local _lsI=1
+    local function _pulseStroke()
+        if not(_logoStroke and _logoStroke.Parent) then return end
+        _TW(_logoStroke,1.2,{Color=_lsCols[_lsI],Transparency=0})
+        _lsI=_lsI%#_lsCols+1
+        task.delay(1.5,_pulseStroke)
+    end
+    task.delay(0.2,_pulseStroke)
+
+    -- Progress stages
+    local _barW=340-44
+    local function _setProgress(pct,label)
+        _TW(_barFill,0.3,{Size=UDim2.new(0,math.max(0,math.floor(_barW*(pct/100))),1,0)})
+        task.delay(0.06,function() if _pctLbl and _pctLbl.Parent then _pctLbl.Text=tostring(pct).."%" end end)
+        if label and _statusLbl and _statusLbl.Parent then _statusLbl.Text=label end
+    end
+
+    local STAGES={{10,"Initializing...",0.18},{25,"Loading modules...",0.22},{40,"Setting up ESP...",0.20},{55,"Loading farm data...",0.22},{68,"Building UI...",0.20},{80,"Configuring tabs...",0.18},{92,"Almost ready...",0.15},{97,"Finalizing...",0.12}}
     _G._ZiliLoadReady=false; _G._ZiliShowMain=false
     task.spawn(function()
-        task.wait(0.25)
+        task.wait(0.3)
         for _,s in ipairs(STAGES) do _setProgress(s[1],s[2]); task.wait(s[3]) end
         local waited=0
-        while not _G._ZiliLoadReady and waited<20 do task.wait(0.1); waited+=0.1 end
-        _setProgress(100,"Done!  Welcome back!")
-        _TW(_pctLbl,0.25,{TextColor3=C3(72,225,135)}); _TW(_statusLbl,0.25,{TextColor3=C3(72,225,135)}); _TW(_pBorder,0.25,{Color=C3(72,225,135)})
-        task.wait(0.55)
-        -- fade out blur then destroy
-        if _blur then pcall(function() _TW(_blur,0.45,{Size=0}) end); task.delay(0.5,function() pcall(function() _blur:Destroy() end) end) end
-        _TW(_panel,0.35,{BackgroundTransparency=1}); task.wait(0.2); _TW(_bg,0.4,{BackgroundTransparency=1}); task.wait(0.4)
+        while not _G._ZiliLoadReady and waited<20 do task.wait(0.08); waited+=0.08 end
+        _dotRunning=false
+        _setProgress(100,"Welcome back!")
+        _TW(_pctLbl,0.2,{TextColor3=C3(72,225,135)}); _TW(_statusLbl,0.2,{TextColor3=C3(72,225,135)}); _TW(_pBorder,0.2,{Color=C3(72,225,135)})
+        task.wait(0.5)
+        if _blur then pcall(function() _TW(_blur,0.35,{Size=0}) end); task.delay(0.4,function() pcall(function() _blur:Destroy() end) end) end
+        _TW(_panel,0.28,{BackgroundTransparency=1,Position=UDim2.new(0.5,-170,0.4,-185)})
+        task.wait(0.22); _TW(_bg,0.32,{BackgroundTransparency=1}); task.wait(0.32)
         pcall(function() _lGui:Destroy() end); _G._ZiliShowMain=true
     end)
 end
@@ -4967,6 +5001,150 @@ local function CORNER(r,p) return NEW("UICorner",{CornerRadius=UDim.new(0,r)},p)
 local function STROKE(col,thick,trans,p) return NEW("UIStroke",{Color=col,Thickness=thick,Transparency=trans or 0},p) end
 local function TWEEN(obj,t,props) TweenService:Create(obj,TweenInfo.new(t,Enum.EasingStyle.Quad),props):Play() end
 local function TWEEN_BACK(obj,t,props) TweenService:Create(obj,TweenInfo.new(t,Enum.EasingStyle.Back,Enum.EasingDirection.Out),props):Play() end
+
+-- =====================================================================
+-- COLOR THEME SYSTEM
+-- 4 presets; accent colors swap live across the entire hub
+-- =====================================================================
+local THEMES={
+    {name="Gold",   main=C(255,215,85), c2=C(220,172,68),  c3=C(140,100,30), dark=C(35,26,6)},
+    {name="Cyan",   main=C(45,225,218), c2=C(30,200,195),  c3=C(15,100,100), dark=C(3,30,30)},
+    {name="Purple", main=C(185,95,255), c2=C(155,75,220),  c3=C(80,35,120),  dark=C(18,6,36)},
+    {name="Rose",   main=C(255,90,160), c2=C(230,70,140),  c3=C(130,30,75),  dark=C(35,5,20)},
+}
+local _curTheme=1
+local _themeObjects={}  -- {obj, prop} pairs registered for live recolour
+local function RegTheme(obj,prop) table.insert(_themeObjects,{obj=obj,prop=prop}) end
+local function ApplyTheme(idx)
+    _curTheme=idx; local t=THEMES[idx]
+    GOLD=t.c2; GOLD2=t.main; GOLD3=t.c3; GOLDD=t.dark
+    for _,r in ipairs(_themeObjects) do pcall(function() r.obj[r.prop]=t.main end) end
+end
+
+-- =====================================================================
+-- TOAST NOTIFICATION SYSTEM
+-- Toast(msg, col, icon)  –  shows a slim popup at bottom-right
+-- =====================================================================
+local _toastQueue={}; local _toastRunning=false
+local function Toast(msg,col,icon)
+    col=col or GOLD2; icon=icon or "⬡"
+    table.insert(_toastQueue,{msg=msg,col=col,icon=icon})
+    if _toastRunning then return end
+    _toastRunning=true
+    task.spawn(function()
+        while #_toastQueue>0 do
+            local t=table.remove(_toastQueue,1)
+            local tf=NEW("Frame",{Size=UDim2.new(0,240,0,36),Position=UDim2.new(1,10,1,-60),BackgroundColor3=BG1,BorderSizePixel=0,ZIndex=500},ScreenGui)
+            CORNER(8,tf); STROKE(t.col,1.2,0.1,tf)
+            local acBar=NEW("Frame",{Size=UDim2.new(0,3,1,0),BackgroundColor3=t.col,BorderSizePixel=0,ZIndex=501},tf); CORNER(2,acBar)
+            NEW("TextLabel",{Text=t.icon.."  "..t.msg,Size=UDim2.new(1,-12,1,0),Position=UDim2.new(0,10,0,0),BackgroundTransparency=1,TextColor3=t.col,Font=Enum.Font.GothamBold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=501},tf)
+            TWEEN(tf,0.25,{Position=UDim2.new(1,-254,1,-60)})
+            task.wait(2.2)
+            TWEEN(tf,0.2,{Position=UDim2.new(1,10,1,-60),BackgroundTransparency=1})
+            task.wait(0.22); pcall(function() tf:Destroy() end)
+            task.wait(0.08)
+        end
+        _toastRunning=false
+    end)
+end
+
+-- =====================================================================
+-- TOOLTIP SYSTEM
+-- Tooltip(btn, text)  –  hover 0.6s → tiny popup near cursor
+-- =====================================================================
+local _tipFrame=nil
+local function Tooltip(btn,text)
+    local _hover=false
+    btn.MouseEnter:Connect(function()
+        _hover=true
+        task.delay(0.6,function()
+            if not _hover then return end
+            if _tipFrame then pcall(function() _tipFrame:Destroy() end) end
+            local mx,my=0,0
+            pcall(function() local m=LocalPlayer:GetMouse(); mx=m.X; my=m.Y end)
+            _tipFrame=NEW("Frame",{Size=UDim2.new(0,0,0,24),Position=UDim2.new(0,mx+12,0,my-28),BackgroundColor3=BG0,BorderSizePixel=0,ZIndex=800,AutomaticSize=Enum.AutomaticSize.X},ScreenGui)
+            CORNER(5,_tipFrame); STROKE(GOLD3,1,0.3,_tipFrame)
+            NEW("TextLabel",{Text=text,Size=UDim2.new(0,0,1,0),AutomaticSize=Enum.AutomaticSize.X,BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.Gotham,TextSize=10,ZIndex=801,TextXAlignment=Enum.TextXAlignment.Left},_tipFrame)
+            NEW("UIPadding",{PaddingLeft=UDim.new(0,7),PaddingRight=UDim.new(0,7)},_tipFrame)
+            TWEEN(_tipFrame,0.12,{BackgroundTransparency=0})
+        end)
+    end)
+    btn.MouseLeave:Connect(function()
+        _hover=false
+        if _tipFrame then TWEEN(_tipFrame,0.1,{BackgroundTransparency=1}); local tf=_tipFrame; task.delay(0.12,function() pcall(function() tf:Destroy() end) end); _tipFrame=nil end
+    end)
+end
+
+-- =====================================================================
+-- TAB BADGE SYSTEM
+-- TabBadge(tabName, count, col)  –  shows a dot/number on the tab button
+-- =====================================================================
+local _tabBadges={}
+local function TabBadge(tabName,count,col)
+    col=col or RED
+    local td=Tabs and Tabs[tabName]; if not td then return end
+    if _tabBadges[tabName] then pcall(function() _tabBadges[tabName]:Destroy() end) end
+    if not count or count<=0 then _tabBadges[tabName]=nil; return end
+    local badge=NEW("Frame",{Size=UDim2.new(0,16,0,16),Position=UDim2.new(1,-6,0,-4),BackgroundColor3=col,ZIndex=10},td.btn)
+    CORNER(8,badge); STROKE(BG0,1.5,0,badge)
+    NEW("TextLabel",{Text=count>9 and "9+" or tostring(count),Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,TextColor3=C(255,255,255),Font=Enum.Font.GothamBold,TextSize=8,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=11},badge)
+    _tabBadges[tabName]=badge
+    TWEEN_BACK(badge,0.2,{Size=UDim2.new(0,17,0,17)})
+    task.delay(0.2,function() TWEEN(badge,0.1,{Size=UDim2.new(0,16,0,16)}) end)
+end
+
+-- =====================================================================
+-- GLOBAL SEARCH OVERLAY
+-- Shows when user clicks 🔍 in TopBar; searches feature names across tabs
+-- =====================================================================
+local _searchRegistry={}  -- {name, tab, desc, toggle_key}
+local function RegSearch(name,tabName,desc,toggleKey)
+    table.insert(_searchRegistry,{name=name,tab=tabName,desc=desc or "",key=toggleKey})
+end
+local _searchOverlay=nil
+local function OpenGlobalSearch()
+    if _searchOverlay then pcall(function() _searchOverlay:Destroy() end); _searchOverlay=nil; return end
+    _searchOverlay=NEW("Frame",{Size=UDim2.new(0,380,0,320),Position=UDim2.new(0.5,-190,0,56),BackgroundColor3=BG1,BorderSizePixel=0,ZIndex=600},ScreenGui)
+    CORNER(12,_searchOverlay); STROKE(GOLD,1.5,0.15,_searchOverlay)
+    local hdr=NEW("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=BG2,ZIndex=601},_searchOverlay); CORNER(10,hdr)
+    NEW("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=BG2,BorderSizePixel=0,ZIndex=601},hdr)
+    local sBox=NEW("TextBox",{Size=UDim2.new(1,-80,1,-10),Position=UDim2.new(0,12,0,5),BackgroundTransparency=1,Text="",PlaceholderText="Search features...",TextColor3=TEXT1,PlaceholderColor3=TEXT3,Font=Enum.Font.GothamSemibold,TextSize=13,ZIndex=602},hdr)
+    local closeS=NEW("TextButton",{Text="✕",Size=UDim2.new(0,28,0,28),Position=UDim2.new(1,-36,0.5,-14),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=14,ZIndex=602},hdr)
+    closeS.MouseButton1Click:Connect(function() pcall(function() _searchOverlay:Destroy() end); _searchOverlay=nil end)
+    local resList=NEW("ScrollingFrame",{Size=UDim2.new(1,-16,1,-50),Position=UDim2.new(0,8,0,44),BackgroundTransparency=1,ScrollBarThickness=2,ScrollBarImageColor3=GOLD3,ZIndex=601,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y},_searchOverlay)
+    NEW("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4),HorizontalAlignment=Enum.HorizontalAlignment.Center},resList)
+    NEW("UIPadding",{PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4)},resList)
+    local function BuildResults(q)
+        resList:ClearAllChildren()
+        NEW("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4),HorizontalAlignment=Enum.HorizontalAlignment.Center},resList)
+        q=q:lower(); local count=0
+        for _,r in ipairs(_searchRegistry) do
+            if q=="" or r.name:lower():find(q,1,true) or r.desc:lower():find(q,1,true) then
+                count+=1
+                local row=NEW("TextButton",{Size=UDim2.new(1,-8,0,38),BackgroundColor3=BG3,Text="",AutoButtonColor=false,ZIndex=602},resList)
+                CORNER(7,row); STROKE(C(28,24,52),1,0,row)
+                NEW("TextLabel",{Text=r.name,Size=UDim2.new(0.6,0,0,18),Position=UDim2.new(0,12,0,4),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=603},row)
+                NEW("TextLabel",{Text=r.desc,Size=UDim2.new(0.9,0,0,14),Position=UDim2.new(0,12,0,22),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=603},row)
+                local tabBadge=NEW("TextLabel",{Text=r.tab,Size=UDim2.new(0,0,0,18),Position=UDim2.new(1,-8,0.5,-9),AutomaticSize=Enum.AutomaticSize.X,BackgroundColor3=BG4,TextColor3=GOLD3,Font=Enum.Font.GothamBold,TextSize=8,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=603},row)
+                CORNER(4,tabBadge); NEW("UIPadding",{PaddingLeft=UDim.new(0,5),PaddingRight=UDim.new(0,5)},tabBadge)
+                row.MouseEnter:Connect(function() TWEEN(row,0.12,{BackgroundColor3=BG4}) end)
+                row.MouseLeave:Connect(function() TWEEN(row,0.12,{BackgroundColor3=BG3}) end)
+                row.MouseButton1Click:Connect(function()
+                    pcall(function() _searchOverlay:Destroy() end); _searchOverlay=nil
+                    -- jump to that tab
+                    if Tabs and Tabs[r.tab] then Tabs[r.tab].btn:activate() end
+                end)
+            end
+        end
+        if count==0 then
+            NEW("TextLabel",{Text="No results found",Size=UDim2.new(1,-8,0,40),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=602},resList)
+        end
+    end
+    BuildResults("")
+    sBox:GetPropertyChangedSignal("Text"):Connect(function() BuildResults(sBox.Text) end)
+    sBox:CaptureFocus()
+    TWEEN_BACK(_searchOverlay,0.22,{Position=UDim2.new(0.5,-190,0,56)})
+end
 
 local BG0=C(4,3,10); local BG1=C(8,6,18); local BG2=C(11,9,24); local BG3=C(15,13,33)
 local BG4=C(20,18,44); local BG5=C(7,6,16); local BG_HDR=C(10,9,22)
@@ -5047,6 +5225,18 @@ UIS.InputEnded:Connect(function(inp)
 end)
 
 -- =====================================================================
+-- KEYBIND TOGGLE  (default: RightShift — configurable in Config tab)
+-- =====================================================================
+local _keybindKey = Enum.KeyCode.RightShift
+UIS.InputBegan:Connect(function(inp,gpe)
+    if gpe then return end
+    if inp.KeyCode == _keybindKey then
+        if MainFrame and MainFrame.Visible then _G._GBO_HideHub()
+        else _G._GBO_ShowHub() end
+    end
+end)
+
+-- =====================================================================
 -- MAIN FRAME
 -- =====================================================================
 local MainFrame=NEW("CanvasGroup",{Size=UDim2.new(0,720,0,520),Position=UDim2.new(0.5,-360,0.5,-260),BackgroundColor3=BG1,BorderSizePixel=0,ClipsDescendants=true,GroupTransparency=1},ScreenGui)
@@ -5116,7 +5306,35 @@ task.spawn(function() local cols={COL_MAIN,COL_TRAVEL,COL_FISH,COL_STATS,COL_PS,
 NEW("TextLabel",{Text="ZILI HUB",Position=UDim2.new(0,56,0,8),Size=UDim2.new(0,88,0,18),TextColor3=GOLD2,Font=Enum.Font.GothamBold,TextSize=14,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Left},TopBar)
 NEW("TextLabel",{Text="|",Position=UDim2.new(0,146,0,8),Size=UDim2.new(0,12,0,18),TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=15,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Center},TopBar)
 NEW("TextLabel",{Text="GBO",Position=UDim2.new(0,160,0,8),Size=UDim2.new(0,42,0,18),TextColor3=CYAN,Font=Enum.Font.GothamBold,TextSize=14,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Left},TopBar)
-NEW("TextLabel",{Text="v2.6  ·  PREMIUM",Position=UDim2.new(0,56,0,28),Size=UDim2.new(0,180,0,12),TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=9,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Left},TopBar)
+-- Version + active feature counter
+local _topSubLbl=NEW("TextLabel",{Text="v2.9  ·  PREMIUM  ·  0 active",Position=UDim2.new(0,56,0,28),Size=UDim2.new(0,220,0,12),TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=9,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Left},TopBar)
+-- Session timer (bottom-right of TopBar)
+local _sessionStart=tick()
+local _sessionLbl=NEW("TextLabel",{Text="00:00",Position=UDim2.new(1,-160,0,8),Size=UDim2.new(0,60,0,16),TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=10,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Right},TopBar)
+Tooltip(_sessionLbl,"Session time")
+-- Search button
+local _searchBtn=NEW("TextButton",{Text="⌕",Position=UDim2.new(1,-165,0.5,0),AnchorPoint=Vector2.new(0,0.5),Size=UDim2.new(0,28,0,28),TextColor3=GOLD2,TextSize=16,BackgroundColor3=BG3,Font=Enum.Font.Legacy,AutoButtonColor=false},TopBar)
+CORNER(7,_searchBtn); STROKE(GOLD3,1,0.4,_searchBtn)
+_searchBtn.MouseEnter:Connect(function() TWEEN(_searchBtn,0.15,{BackgroundColor3=BG4,TextColor3=C(255,255,255)}) end)
+_searchBtn.MouseLeave:Connect(function() TWEEN(_searchBtn,0.15,{BackgroundColor3=BG3,TextColor3=GOLD2}) end)
+_searchBtn.MouseButton1Click:Connect(OpenGlobalSearch)
+Tooltip(_searchBtn,"Global search (all features)")
+
+-- Session timer updater + feature counter
+task.spawn(function()
+    while TopBar and TopBar.Parent do
+        task.wait(1)
+        local elapsed=tick()-_sessionStart
+        local m=math.floor(elapsed/60); local s=math.floor(elapsed%60)
+        if _sessionLbl and _sessionLbl.Parent then _sessionLbl.Text=string.format("%02d:%02d",m,s) end
+        local active=0
+        for _,d in pairs(TogglesData) do if type(d)=="table" and d.Active then active+=1 end end
+        if _topSubLbl and _topSubLbl.Parent then
+            _topSubLbl.Text=string.format("v2.9  ·  PREMIUM  ·  %d active",active)
+            _topSubLbl.TextColor3=active>0 and COL_CFG or TEXT3
+        end
+    end
+end)
 
 local function MakeCtrlBtn(text,posX,col,bgCol)
     local btn=NEW("TextButton",{Text=text,Position=UDim2.new(1,posX,0.5,0),AnchorPoint=Vector2.new(0,0.5),Size=UDim2.new(0,28,0,28),TextColor3=col,TextSize=15,BackgroundColor3=bgCol or BG3,Font=Enum.Font.Legacy,AutoButtonColor=false},TopBar)
@@ -5298,8 +5516,23 @@ local function CardHeader(card,iconName,label,accentCol)
     local accBar=NEW("Frame",{Size=UDim2.new(0,3,0.60,0),Position=UDim2.new(0,0,0.20,0),BackgroundColor3=accentCol,BorderSizePixel=0},bar); CORNER(2,accBar)
     local iconBg=NEW("Frame",{Size=UDim2.new(0,18,0,18),Position=UDim2.new(0,8,0.5,-9),BackgroundColor3=C(math.min(255,math.floor(accentCol.R*255*0.18+8)),math.min(255,math.floor(accentCol.G*255*0.18+8)),math.min(255,math.floor(accentCol.B*255*0.18+8)))},bar)
     CORNER(5,iconBg); STROKE(accentCol,1,0.5,iconBg); DrawIcon(iconBg,iconName,2,2,14,accentCol)
-    NEW("TextLabel",{Text=label,Size=UDim2.new(1,-44,1,0),Position=UDim2.new(0,33,0,0),BackgroundTransparency=1,TextColor3=accentCol,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},bar)
+    NEW("TextLabel",{Text=label,Size=UDim2.new(1,-56,1,0),Position=UDim2.new(0,33,0,0),BackgroundTransparency=1,TextColor3=accentCol,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},bar)
     NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=accentCol,BorderSizePixel=0,BackgroundTransparency=0.55},bar)
+    -- Collapse chevron
+    local _collapsed=false
+    local _fullH=card.Size.Y.Offset
+    local chevron=NEW("TextLabel",{Text="▾",Size=UDim2.new(0,18,0,18),Position=UDim2.new(1,-22,0.5,-9),BackgroundTransparency=1,TextColor3=accentCol,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center},bar)
+    bar.InputBegan:Connect(function(inp)
+        if inp.UserInputType~=Enum.UserInputType.MouseButton1 then return end
+        _collapsed=not _collapsed
+        if _collapsed then
+            TWEEN(card,0.2,{Size=UDim2.new(1,-24,0,30)})
+            TWEEN(chevron,0.2,{Rotation=90,TextColor3=TEXT3})
+        else
+            TWEEN(card,0.22,{Size=UDim2.new(1,-24,0,_fullH)})
+            TWEEN(chevron,0.2,{Rotation=0,TextColor3=accentCol})
+        end
+    end)
     return bar
 end
 
@@ -5323,6 +5556,8 @@ local function CardToggle(card,posY,configKey,callback,accentCol)
         local ac=d.AccentCol or GOLD2; local ad=d.AccentDark or GOLDD
         TWEEN(pill,0.22,{BackgroundColor3=on and ad or BG5}); TWEEN(strk,0.22,{Color=on and ac or TEXT3,Transparency=on and 0 or 0.3})
         TWEEN(thumb,0.22,{BackgroundColor3=on and ac or TEXT3,Position=on and UDim2.new(1,-22,0.5,-9) or UDim2.new(0,4,0.5,-9)})
+        -- Toast notification
+        Toast((on and "ON  " or "OFF  ")..configKey:gsub("([A-Z])"," %1"):gsub("^%s",""), on and ac or TEXT2, on and "⬡" or "○")
         if d.Callback then d.Callback(on) end
     end)
     return pill,strk,thumb
@@ -5358,8 +5593,18 @@ MinBtn.MouseButton1Click:Connect(function() ToggleHub(false) end)
 -- MAIN PAGE
 -- =====================================================================
 PageLayout(MainPage,14,10)
+-- Register features visible on both lobby and game world
+RegSearch("Auto Hide UI","Config","Auto-hide hub after inactivity","AutoHide")
+RegSearch("Color Theme","Config","Switch accent color preset","")
+RegSearch("Keybind Toggle","Config","Set key to show/hide hub","")
 
 if IS_LOBBY then
+    RegSearch("Auto Race Reroll","Main","Keep rerolling until target race","AutoRace")
+    RegSearch("Randomize Skin","Main","One-shot randomize all cosmetics","AutoSkinDisco")
+    RegSearch("Auto Change Skin","Main","Re-randomize every 30s","AutoChangeSkin")
+    RegSearch("Private Server Join","Private Server","Join PS by code","")
+    RegSearch("Auto Join PS","Private Server","Auto-join on start","Config_AutoJoinPS")
+    RegSearch("Auto Rejoin","Private Server","Auto-rejoin if kicked","AutoRejoin")
     -- LOBBY BUILD --------------------------------------------------
     local function SetToggleState(key,state)
         local d=TogglesData[key];if not d then return end; d.Active=state; local on=state
@@ -5525,10 +5770,13 @@ if IS_LOBBY then
 
 else
     -- GAME WORLD BUILD -----------------------------------------------
+    RegSearch("Island ESP","Main","Show island locations on screen","ESP_Island")
+    RegSearch("Player ESP","Main","Show player positions","ESP_Player")
+    RegSearch("Item ESP","Main","Show dropped items","ESP_Item")
     -- Status card
     local statusCard=MakeCard(MainPage,72,1); CardHeader(statusCard,"eye","HUB STATUS",GREEN)
     NEW("TextLabel",{Text="⬡  Connected  ·  GET BETTER OUT",Size=UDim2.new(0.65,0,0,18),Position=UDim2.new(0,14,0,34),BackgroundTransparency=1,TextColor3=GREEN,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},statusCard)
-    NEW("TextLabel",{Text="Zili Hub  ·  v2.6.0  ·  Premium Build",Size=UDim2.new(1,-20,0,13),Position=UDim2.new(0,14,0,54),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},statusCard)
+    NEW("TextLabel",{Text="Zili Hub  ·  v2.9.0  ·  Premium Build",Size=UDim2.new(1,-20,0,13),Position=UDim2.new(0,14,0,54),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},statusCard)
     local pingBadge=NEW("TextLabel",{Text="⬤  LIVE",Size=UDim2.new(0,68,0,20),Position=UDim2.new(1,-80,0,36),BackgroundColor3=C(5,36,18),TextColor3=GREEN,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Center},statusCard)
     CORNER(4,pingBadge); STROKE(GREEN,1,0.35,pingBadge)
     task.spawn(function() while statusCard and statusCard.Parent do TWEEN(pingBadge,0.9,{TextColor3=C(120,255,175)});task.wait(1.2);TWEEN(pingBadge,0.9,{TextColor3=GREEN});task.wait(1.2) end end)
@@ -5653,6 +5901,10 @@ if not IS_LOBBY then
 
 -- ── AUTO FARM ──────────────────────────────────────────────────────────
 _pageBuildFns["Auto Farm"] = function()
+    RegSearch("Start Level Farm","Auto Farm","Auto kills enemies, respawns","AutoFarmLevel")
+    RegSearch("Auto Farm for Fishing","Auto Farm","Switches farm/fish by level","AutoFarmForFishing")
+    RegSearch("Auto Get Buso","Auto Farm","Auto buy Buso Haki at LVL 80","AutoBuso")
+    RegSearch("Auto Get Geppo","Auto Farm","Auto buy Geppo at LVL 125","AutoGeppo")
     PageLayout(AutoFarmPage,14,10)
     local lfCard=MakeCard(AutoFarmPage,144,1); CardHeader(lfCard,"sword","LEVEL FARM",AMBER)
     RowLabel(lfCard,"Start Level Farm","Auto kills enemies · respawns",34)
@@ -5690,6 +5942,8 @@ end -- _pageBuildFns["Auto Farm"]
 
 -- ── TRAVEL ─────────────────────────────────────────────────────────────
 _pageBuildFns["Travel"] = function()
+    RegSearch("Island Teleport","Travel","Tween to any island on map","TravelActive")
+    RegSearch("Auto Enter 2nd Sea","Travel","Auto travel to 2nd sea portal","Auto2ndSea")
     PageLayout(TravelPage,14,10)
     local tpCard=MakeCard(TravelPage,148,1); tpCard.ZIndex=5; CardHeader(tpCard,"globe","ISLAND TELEPORT",CYAN)
     RowLabel(tpCard,"Target Island","Select destination",36)
@@ -5726,6 +5980,9 @@ end -- _pageBuildFns["Travel"]
 
 -- ── FISHING + MERCHANT ─────────────────────────────────────────────────
 _pageBuildFns["Fishing + Merchant"] = function()
+    RegSearch("Auto Fishing + Merchant","Fishing + Merchant","Auto catch, sell, restock bait","AutoFishMerchant")
+    RegSearch("Auto Store Fruit","Fishing + Merchant","Auto store fruit to inventory","AutoStoreFruit")
+    RegSearch("Auto Drop Fruit","Fishing + Merchant","Drop fruit when inventory full","AutoDropFruit")
     PageLayout(FishingPage,14,10)
     local fmCard=MakeCard(FishingPage,80,1); CardHeader(fmCard,"fish","FISHING + MERCHANT FARM",ORANGE)
     FishMasterBar=NEW("Frame",{Size=UDim2.new(0,3,1,0),BackgroundColor3=GOLD,BorderSizePixel=0},fmCard); CORNER(2,FishMasterBar)
@@ -5760,6 +6017,7 @@ _pageBuildFns["Fishing + Merchant"] = function()
     end
     local fsStatusLbl=NEW("TextLabel",{Text="Status: Idle",Size=UDim2.new(1,-8,0,12),Position=UDim2.new(0,4,0,118),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Center},fsCard)
     getgenv().GBO_SetFishStatus=function(msg) pcall(function() if fsStatusLbl and fsStatusLbl.Parent then fsStatusLbl.Text="Status: "..(msg or "Idle") end end) end
+    local _lastMythic=0
     task.spawn(function()
         while fsCard and fsCard.Parent do task.wait(2.5)
             pcall(function()
@@ -5768,7 +6026,15 @@ _pageBuildFns["Fishing + Merchant"] = function()
                 if invNode then local ok,decoded=pcall(function() return HttpService:JSONDecode(invNode.Value) end);if ok and type(decoded)=="table" then inv=decoded end end
                 local peliVal="0";local sn=sf:FindFirstChild("Stats");local pn=sn and sn:FindFirstChild("Peli");if pn then peliVal=tostring(pn.Value) end
                 local bait=_G.TargetBait or "Common Fish Bait"
-                local updates={MythicChest=tostring(inv["Mythical Fruit Chest"] or 0),LegBait=tostring(inv["Legendary Fish Bait"] or 0),Peli=peliVal,Bait=tostring(inv[bait] or 0)}
+                local mythicCount=inv["Mythical Fruit Chest"] or 0
+                -- Toast + tab badge when a new Mythic chest drops
+                if mythicCount > _lastMythic then
+                    local gained=mythicCount-_lastMythic
+                    Toast("+"..gained.." Mythic Chest".. (gained>1 and "s" or "").." obtained!", AMBER, "⬡")
+                    TabBadge("Fishing + Merchant", mythicCount, AMBER)
+                end
+                _lastMythic=mythicCount
+                local updates={MythicChest=tostring(mythicCount),LegBait=tostring(inv["Legendary Fish Bait"] or 0),Peli=peliVal,Bait=tostring(inv[bait] or 0)}
                 for key,val in pairs(updates) do if FishStatValues[key] then FishStatValues[key].Text=val end end
             end)
         end
@@ -5858,6 +6124,7 @@ end -- _pageBuildFns["Fishing + Merchant"]
 
 -- ── STATS ───────────────────────────────────────────────────────────────
 _pageBuildFns["Stats"] = function()
+    RegSearch("Auto Add Stats","Stats","Auto allocate stat points with cap","AutoStats")
     PageLayout(StatsPage,14,8)
     AutoStatsData={}
     local function CreateStatRow(statName,layoutOrder)
@@ -5926,13 +6193,51 @@ CardToggle(cfgAutoHideCard,124,"AutoHideOnLoad",function(state)
     end
 end,C(45,225,218))
 
+-- ── THEME PICKER CARD ────────────────────────────────────────────────
+local themeCard=MakeCard(ConfigPage,80,1); CardHeader(themeCard,"fruit","COLOR THEME",GOLD2)
+NEW("TextLabel",{Text="Theme",Size=UDim2.new(0.4,0,0,20),Position=UDim2.new(0,14,0,34),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left},themeCard)
+local _themeBtns={}
+for i,th in ipairs(THEMES) do
+    local bx=NEW("TextButton",{Size=UDim2.new(0,56,0,26),Position=UDim2.new(0,100+(i-1)*62,0,38),BackgroundColor3=C(math.floor(th.main.R*255*0.12),math.floor(th.main.G*255*0.12),math.floor(th.main.B*255*0.12)),Text=th.name,TextColor3=th.main,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false},themeCard)
+    CORNER(5,bx); local bxS=STROKE(th.c2,1,i==1 and 0.1 or 0.6,bx)
+    _themeBtns[i]={btn=bx,strk=bxS}
+    bx.MouseButton1Click:Connect(function()
+        ApplyTheme(i)
+        for j,td in ipairs(_themeBtns) do TWEEN(td.strk,0.18,{Transparency=j==i and 0.1 or 0.6}) end
+        Toast("Theme: "..th.name,th.main,"⬡")
+    end)
+end
+
+-- ── KEYBIND CONFIG CARD ───────────────────────────────────────────────
+local kbCard=MakeCard(ConfigPage,72,2); CardHeader(kbCard,"lightning","KEYBIND",AMBER)
+NEW("TextLabel",{Text="Toggle Hub",Size=UDim2.new(0.5,0,0,20),Position=UDim2.new(0,14,0,34),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left},kbCard)
+local _kbLbl=NEW("TextLabel",{Text="RightShift",Size=UDim2.new(0.4,0,0,18),Position=UDim2.new(0.55,0,0,36),BackgroundTransparency=1,TextColor3=AMBER,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center},kbCard)
+local _kbBtn=NEW("TextButton",{Text="Click to rebind",Size=UDim2.new(0,108,0,26),Position=UDim2.new(1,-120,0,38),BackgroundColor3=BG5,TextColor3=TEXT2,Font=Enum.Font.GothamSemibold,TextSize=10,AutoButtonColor=false},kbCard)
+CORNER(6,_kbBtn); local _kbS=STROKE(GOLD3,1,0.3,_kbBtn)
+local _listening=false
+_kbBtn.MouseButton1Click:Connect(function()
+    if _listening then return end
+    _listening=true; _kbBtn.Text="Press any key..."; _kbBtn.TextColor3=AMBER; TWEEN(_kbS,0.15,{Color=AMBER,Transparency=0})
+    local conn; conn=UIS.InputBegan:Connect(function(inp,gpe)
+        if gpe then return end
+        if inp.UserInputType==Enum.UserInputType.Keyboard then
+            _keybindKey=inp.KeyCode
+            _kbLbl.Text=tostring(inp.KeyCode):gsub("Enum.KeyCode.","")
+            _kbBtn.Text="Click to rebind"; _kbBtn.TextColor3=TEXT2
+            TWEEN(_kbS,0.15,{Color=GOLD3,Transparency=0.3})
+            Toast("Keybind set: ".._kbLbl.Text,AMBER,"⚡")
+            _listening=false; conn:Disconnect()
+        end
+    end)
+end)
+
 -- Header card
-local cfgHeaderCard=MakeCard(ConfigPage,38,1); cfgHeaderCard.BackgroundColor3=C(9,10,22)
+local cfgHeaderCard=MakeCard(ConfigPage,38,3); cfgHeaderCard.BackgroundColor3=C(9,10,22)
 NEW("Frame",{Size=UDim2.new(0,2,0.55,0),Position=UDim2.new(0,0,0.225,0),BackgroundColor3=GOLD,BorderSizePixel=0},cfgHeaderCard)
 NEW("TextLabel",{Text="CONFIG MANAGER  ·  SAVE  ·  LOAD  ·  AUTO",Size=UDim2.new(1,-10,1,0),Position=UDim2.new(0,10,0,0),BackgroundTransparency=1,TextColor3=GOLD2,Font=Enum.Font.GothamBold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left},cfgHeaderCard)
 
 -- Two-panel container
-local cfgContainer=NEW("Frame",{Size=UDim2.new(1,-24,0,390),BackgroundTransparency=1,LayoutOrder=2},ConfigPage)
+local cfgContainer=NEW("Frame",{Size=UDim2.new(1,-24,0,390),BackgroundTransparency=1,LayoutOrder=4},ConfigPage)
 NEW("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,HorizontalAlignment=Enum.HorizontalAlignment.Left,VerticalAlignment=Enum.VerticalAlignment.Top,Padding=UDim.new(0,10),SortOrder=Enum.SortOrder.LayoutOrder},cfgContainer)
 
 local LeftPanel=NEW("Frame",{Size=UDim2.new(0,238,1,0),BackgroundColor3=BG3,LayoutOrder=0},cfgContainer); CORNER(9,LeftPanel); STROKE(GOLD,1,0.65,LeftPanel)
