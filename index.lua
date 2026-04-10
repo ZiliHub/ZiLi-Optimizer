@@ -9,9 +9,7 @@ if env.ZiliHub_Loaded then
     
     -- Dùng trick tạo Event ảo để ép dừng luồng script vĩnh viễn
     -- Đảm bảo 100% ngắt được script trên mọi loại Executor mà không văng lỗi đỏ
-    local freezeThread = Instance.new("BindableEvent")
-    freezeThread.Event:Wait() 
-    return 
+    return coroutine.yield()
 end
 
 env.ZiliHub_Loaded = true
