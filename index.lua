@@ -1026,7 +1026,17 @@ __modules["Farm/AutoFarmLevel"] = function()
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Player = Players.LocalPlayer
 
-    local QuestFunc = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("NPCInteractions"):WaitForChild("QuestFunctions"))
+    local QuestFunc = nil
+    pcall(function()
+        local mods = ReplicatedStorage:WaitForChild("Modules", 10)
+        if not mods then return end
+        local npcI = mods:WaitForChild("NPCInteractions", 10)
+        if not npcI then return end
+        local qf   = npcI:WaitForChild("QuestFunctions", 10)
+        if not qf   then return end
+        QuestFunc = require(qf)
+    end)
+    if not QuestFunc then warn("[ZILI] QuestFunctions not found, AutoFarmLevel disabled"); return end
     local TweenToIsland = require("Island/TWEEN TO ISLAND")
 
     _G.LureFarm = false
