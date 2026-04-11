@@ -665,15 +665,13 @@ __modules["BYPASS ANTICHEAT"] = function()
     -- ==========================================
     local AsyncQueue = {}
 
-    -- [FIX 2] Thêm nil-check + pcall: nếu remote bị destroy giữa chừng thì không crash
     RunService.Heartbeat:Connect(function(deltaTime)
         for i = #AsyncQueue, 1, -1 do
             local taskObj = AsyncQueue[i]
             taskObj.timer = taskObj.timer - deltaTime
+            
             if taskObj.timer <= 0 then
-                if taskObj.remote and taskObj.remote.Parent then
-                    pcall(function() taskObj.remote:FireServer(table.unpack(taskObj.args)) end)
-                end
+                taskObj.remote:FireServer(unpack(taskObj.args))
                 table.remove(AsyncQueue, i)
             end
         end
@@ -766,25 +764,20 @@ __modules["Island/TWEEN TO ISLAND"] = function()
     local Events   = ReplicatedStorage:WaitForChild("Events", 5)
     local TakeStam = Events and Events:WaitForChild("takestam", 5)
 
-    -- [FIX 3] StaminaSpoof singleton: dùng _G._ZiliStaminaSpoofing để chỉ có 1 loop trên toàn script
-    -- Tránh 3 module (TweenToIsland / AutoFarmLevel / AutoGetBuso) spam server ~60 req/s
     local isSpoofingStamina = false
     local function StartStaminaSpoof()
-        if _G._ZiliStaminaSpoofing then return end
-        _G._ZiliStaminaSpoofing = true
+        if isSpoofingStamina then return end
         isSpoofingStamina = true
         task.spawn(function()
-            while isSpoofingStamina and _G._ZiliStaminaSpoofing and task.wait(0.05) do
+            while isSpoofingStamina and task.wait(0.05) do
                 if TakeStam and TakeStam.Parent then
                     pcall(function() TakeStam:FireServer(0.545, "dash") end)
                 else break end
             end
-            _G._ZiliStaminaSpoofing = false
         end)
     end
     local function StopStaminaSpoof()
         isSpoofingStamina = false
-        _G._ZiliStaminaSpoofing = false
     end
 
     -- =====================================================================
@@ -830,7 +823,7 @@ __modules["Island/TWEEN TO ISLAND"] = function()
             for _, v in pairs(root:GetChildren()) do 
                 if v.Name == "ZILI_AntiGravity" then v:Destroy() end 
             end
-            pcall(function() root.Velocity = VEC_ZERO end)
+            root.Velocity = VEC_ZERO
         end
         if Tween.FakeFloor then Tween.FakeFloor:Destroy(); Tween.FakeFloor = nil end
     end
@@ -916,20 +909,11 @@ __modules["Island/TWEEN TO ISLAND"] = function()
                 Tween.FakeFloor.Parent = Workspace
             end
 
-            -- [FIX 6] BodyVelocity deprecated → LinearVelocity (Roblox constraint mới)
-            local antiGravity = root:FindFirstChild("ZILI_AntiGravity")
-            if not antiGravity then
-                antiGravity = Instance.new("LinearVelocity")
-                antiGravity.Name = "ZILI_AntiGravity"
-                antiGravity.MaxForce = math.huge
-                antiGravity.VectorVelocity = Vector3.zero
-                antiGravity.RelativeTo = Enum.ActuatorRelativeTo.World
-                local attachment = Instance.new("Attachment")
-                attachment.Name = "ZILI_AntiGravityAttach"
-                attachment.Parent = root
-                antiGravity.Attachment0 = attachment
-                antiGravity.Parent = root
-            end
+            local antiGravity = root:FindFirstChild("ZILI_AntiGravity") or Instance.new("BodyVelocity")
+            antiGravity.Name = "ZILI_AntiGravity"
+            antiGravity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+            antiGravity.Velocity = VEC_ZERO
+            antiGravity.Parent = root
 
             local targetPos = stepData.pos
 
@@ -937,7 +921,7 @@ __modules["Island/TWEEN TO ISLAND"] = function()
                 if not Tween.IsTeleporting or not root.Parent then Tween.Stop(); return end
 
                 if Tween.FakeFloor then Tween.FakeFloor.CFrame = root.CFrame * OFFSET_FAKEFLOOR end
-                pcall(function() root.Velocity = VEC_ZERO end)
+                root.Velocity = VEC_ZERO
 
                 local currentPos = root.Position
                 local distXZ = (Vector2.new(targetPos.X, targetPos.Z) - Vector2.new(currentPos.X, currentPos.Z)).Magnitude
@@ -1042,18 +1026,7 @@ __modules["Farm/AutoFarmLevel"] = function()
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Player = Players.LocalPlayer
 
-    -- [FIX 1] Nguyên nhân insta-crash: original_require() trên server-sided ModuleScript bị Roblox block
-    -- AutoGetBuso đã làm đúng, AutoFarmLevel chưa — fix để đồng bộ
-    local QuestFunc = nil
-    pcall(function()
-        local mods = ReplicatedStorage:WaitForChild("Modules", 5)
-        if not mods then return end
-        local npc = mods:WaitForChild("NPCInteractions", 5)
-        if not npc then return end
-        local qf = npc:WaitForChild("QuestFunctions", 5)
-        if not qf then return end
-        QuestFunc = require(qf)
-    end)
+    local QuestFunc = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("NPCInteractions"):WaitForChild("QuestFunctions"))
     local TweenToIsland = require("Island/TWEEN TO ISLAND")
 
     _G.LureFarm = false
@@ -1090,20 +1063,18 @@ __modules["Farm/AutoFarmLevel"] = function()
 
     local isSpoofingStamina = false
     local function StartStaminaSpoof()
-        if _G._ZiliStaminaSpoofing then return end
-        _G._ZiliStaminaSpoofing = true
+        if isSpoofingStamina then return end
         isSpoofingStamina = true
         task.spawn(function()
-            while isSpoofingStamina and _G._ZiliStaminaSpoofing and task.wait(0.05) do
+            while isSpoofingStamina and task.wait(0.05) do
                 if TakeStam and TakeStam.Parent then
                     pcall(function() TakeStam:FireServer(0.545, "dash") end)
                 else break end
             end
-            _G._ZiliStaminaSpoofing = false
         end)
     end
     
-    local function StopStaminaSpoof() isSpoofingStamina = false; _G._ZiliStaminaSpoofing = false end
+    local function StopStaminaSpoof() isSpoofingStamina = false end
 
     local function UnequipWeapons()
         pcall(function()
@@ -1178,16 +1149,10 @@ __modules["Farm/AutoFarmLevel"] = function()
     end
 
     task.spawn(function()
-        -- [FIX 5] WaitForChild có timeout, tránh treo nếu Events chưa load
-        local eventsFolder = ReplicatedStorage:WaitForChild("Events", 10)
-        if not eventsFolder then return end
-        local CombatRegister = eventsFolder:WaitForChild("CombatRegister", 10)
-        if not CombatRegister then return end
+        local CombatRegister = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
         local currentCombo = 1 
         
         while true do
-            -- [FIX 5] Khi farm tắt: nghỉ 0.5s rồi tiếp tục kiểm tra, không burn CPU
-            if not _G.LureFarm then task.wait(0.5); continue end
             local attackDelay = 0.3 -- Tốc độ mặc định giữa các nhát chém
             
             if _G.LureFarm and not isTakingQuest and not isInteracting and IsReadyToAttack then
@@ -1430,8 +1395,8 @@ __modules["Farm/AutoFarmLevel"] = function()
                             
                             while tick() - waitForNpc < 15 do
                                 root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
-                                pcall(function() root.RotVelocity = Vector3.new(0,0,0) end)
+                                root.Velocity = Vector3.new(0,0,0)
+                                root.RotVelocity = Vector3.new(0,0,0)
                                 
                                 for _, prompt in pairs(workspace:GetDescendants()) do
                                     if prompt:IsA("ProximityPrompt") and prompt.Parent and prompt.Parent:IsA("BasePart") then
@@ -1451,7 +1416,7 @@ __modules["Farm/AutoFarmLevel"] = function()
                                 local waitAppear = tick()
                                 while tick() - waitAppear < 3 do
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                    root.Velocity = Vector3.new(0,0,0)
                                     if Player.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                     task.wait(0.2)
                                 end
@@ -1459,7 +1424,7 @@ __modules["Farm/AutoFarmLevel"] = function()
                                 local waitChatClose = tick()
                                 while tick() - waitChatClose < 8 do 
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                    root.Velocity = Vector3.new(0,0,0)
                                     
                                     local chatGui = Player.PlayerGui:FindFirstChild("NPCCHAT")
                                     if not chatGui then break end 
@@ -1522,7 +1487,7 @@ __modules["Farm/AutoFarmLevel"] = function()
                             local waitAppear = tick()
                             while tick() - waitAppear < 2 do
                                 root.CFrame = CFrame.new(standPos, Vector3.new(QuestNPC_Pos.X, standPos.Y, QuestNPC_Pos.Z))
-                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                root.Velocity = Vector3.new(0,0,0)
                                 if Player.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                 task.wait(0.2)
                             end
@@ -1530,7 +1495,7 @@ __modules["Farm/AutoFarmLevel"] = function()
                             local waitChatClose = tick()
                             while tick() - waitChatClose < 8 do 
                                 root.CFrame = CFrame.new(standPos, Vector3.new(QuestNPC_Pos.X, standPos.Y, QuestNPC_Pos.Z))
-                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                root.Velocity = Vector3.new(0,0,0)
                                 
                                 local chatGui = Player.PlayerGui:FindFirstChild("NPCCHAT")
                                 if not chatGui then break end 
@@ -1644,14 +1609,11 @@ __modules["Farm/AutoFarmLevel"] = function()
                     hum.PlatformStand = true 
                     local bv = root:FindFirstChild("FloatForce")
                     if not bv then
-                        -- [FIX 7] LinearVelocity thay BodyVelocity deprecated
-                        local attach = root:FindFirstChild("FloatForceAttach") or Instance.new("Attachment")
-                        attach.Name = "FloatForceAttach"; attach.Parent = root
-                        bv = Instance.new("LinearVelocity")
-                        bv.Name = "FloatForce"; bv.MaxForce = math.huge
-                        bv.VectorVelocity = Vector3.zero
-                        bv.RelativeTo = Enum.ActuatorRelativeTo.World
-                        bv.Attachment0 = attach; bv.Parent = root
+                        bv = Instance.new("BodyVelocity")
+                        bv.Name = "FloatForce"
+                        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                        bv.Velocity = Vector3.new(0, 0, 0)
+                        bv.Parent = root
                     end
                 end
 
@@ -1817,19 +1779,17 @@ end)
 
     local isSpoofingStamina = false
     local function StartStaminaSpoof()
-        if _G._ZiliStaminaSpoofing then return end
-        _G._ZiliStaminaSpoofing = true
+        if isSpoofingStamina then return end
         isSpoofingStamina = true
         task.spawn(function()
-            while isSpoofingStamina and _G._ZiliStaminaSpoofing and task.wait(0.05) do
+            while isSpoofingStamina and task.wait(0.05) do
                 if TakeStam and TakeStam.Parent then
                     pcall(function() TakeStam:FireServer(0.545, "dash") end)
                 else break end
             end
-            _G._ZiliStaminaSpoofing = false
         end)
     end
-    local function StopStaminaSpoof() isSpoofingStamina = false; _G._ZiliStaminaSpoofing = false end
+    local function StopStaminaSpoof() isSpoofingStamina = false end
 
     -- =====================================================================
     -- ANTI-AFK & ANTI-SIT
@@ -2073,7 +2033,7 @@ end)
                                     Fishman_Portal.Y,
                                     Fishman_Portal.Z + toggle
                                 )
-                                pcall(function() pcall(function() root.Velocity = Vector3.new(0,0,0) end) end)
+                                root.Velocity = Vector3.new(0, 0, 0)
                                 toggle = toggle * -1
                                 task.wait(0.3)
                                 waited = waited + 0.3
@@ -2121,8 +2081,8 @@ end)
                             
                             while tick() - waitForNpc < 15 do
                                 root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
-                                pcall(function() root.RotVelocity = Vector3.new(0,0,0) end)
+                                root.Velocity = Vector3.new(0,0,0)
+                                root.RotVelocity = Vector3.new(0,0,0)
                                 
                                 if targetRobo then
                                     for _, prompt in pairs(targetRobo:GetDescendants()) do
@@ -2158,7 +2118,7 @@ end)
                                 local waitAppear = tick()
                                 while tick() - waitAppear < 3 do
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                    root.Velocity = Vector3.new(0,0,0)
                                     if Player.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                     task.wait(0.2)
                                 end
@@ -2166,7 +2126,7 @@ end)
                                 local waitChatClose = tick()
                                 while tick() - waitChatClose < 8 do 
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                    root.Velocity = Vector3.new(0,0,0)
                                     local chatGui = Player.PlayerGui:FindFirstChild("NPCCHAT")
                                     if not chatGui then break end 
                                     AutoClickUI(chatGui)
@@ -2226,8 +2186,8 @@ end)
                             
                             while tick() - waitForNpc < 15 do
                                 root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
-                                pcall(function() root.RotVelocity = Vector3.new(0,0,0) end)
+                                root.Velocity = Vector3.new(0,0,0)
+                                root.RotVelocity = Vector3.new(0,0,0)
                                 
                                 if targetRobo then
                                     for _, prompt in pairs(targetRobo:GetDescendants()) do
@@ -2262,7 +2222,7 @@ end)
                                 local waitAppear = tick()
                                 while tick() - waitAppear < 3 do
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                    root.Velocity = Vector3.new(0,0,0)
                                     if Player.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                     task.wait(0.2)
                                 end
@@ -2270,7 +2230,7 @@ end)
                                 local waitChatClose = tick()
                                 while tick() - waitChatClose < 8 do 
                                     root.CFrame = CFrame.new(standPos, SetSpawnCoords)
-                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                    root.Velocity = Vector3.new(0,0,0)
                                     local chatGui = Player.PlayerGui:FindFirstChild("NPCCHAT")
                                     if not chatGui then break end 
                                     AutoClickUI(chatGui)
@@ -2344,7 +2304,7 @@ end)
                             local waitAppear = tick()
                             while tick() - waitAppear < 2 do
                                 root.CFrame = CFrame.new(standPos, Vector3.new(QuestNPC_Pos.X, standPos.Y, QuestNPC_Pos.Z))
-                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                root.Velocity = Vector3.new(0,0,0)
                                 if Player.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                 task.wait(0.2)
                             end
@@ -2352,7 +2312,7 @@ end)
                             local waitChatClose = tick()
                             while tick() - waitChatClose < 8 do 
                                 root.CFrame = CFrame.new(standPos, Vector3.new(QuestNPC_Pos.X, standPos.Y, QuestNPC_Pos.Z))
-                                pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                root.Velocity = Vector3.new(0,0,0)
                                 
                                 local chatGui = Player.PlayerGui:FindFirstChild("NPCCHAT")
                                 if not chatGui then break end 
@@ -2542,13 +2502,11 @@ end)
                     hum.PlatformStand = true 
                     local bv = root:FindFirstChild("FloatForce")
                     if not bv then
-                        local attach = root:FindFirstChild("FloatForceAttach") or Instance.new("Attachment")
-                        attach.Name = "FloatForceAttach"; attach.Parent = root
-                        bv = Instance.new("LinearVelocity")
-                        bv.Name = "FloatForce"; bv.MaxForce = math.huge
-                        bv.VectorVelocity = Vector3.zero
-                        bv.RelativeTo = Enum.ActuatorRelativeTo.World
-                        bv.Attachment0 = attach; bv.Parent = root
+                        bv = Instance.new("BodyVelocity")
+                        bv.Name = "FloatForce"
+                        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                        bv.Velocity = Vector3.new(0, 0, 0)
+                        bv.Parent = root
                     end
                 end
 
@@ -2736,7 +2694,7 @@ __modules["Farm/AutoGeppo"] = function()
             for _, v in pairs(root:GetChildren()) do 
                 if v.Name == "ZILI_AntiGravity" then v:Destroy() end 
             end
-            pcall(function() pcall(function() root.Velocity = Vector3.new(0,0,0) end) end)
+            root.Velocity = Vector3.new(0, 0, 0)
         end
         if FakeFloor.Parent then FakeFloor.Parent = nil end
     end
@@ -2751,16 +2709,11 @@ __modules["Farm/AutoGeppo"] = function()
         StartStaminaSpoof() -- ▶️ Bắt đầu spoof khi bắt đầu tween
         FakeFloor.Parent = Workspace
 
-        local antiGravity = root:FindFirstChild("ZILI_AntiGravity")
-        if not antiGravity then
-            local attach = root:FindFirstChild("ZILI_AntiGravityAttach") or Instance.new("Attachment")
-            attach.Name = "ZILI_AntiGravityAttach"; attach.Parent = root
-            antiGravity = Instance.new("LinearVelocity")
-            antiGravity.Name = "ZILI_AntiGravity"; antiGravity.MaxForce = math.huge
-            antiGravity.VectorVelocity = Vector3.zero
-            antiGravity.RelativeTo = Enum.ActuatorRelativeTo.World
-            antiGravity.Attachment0 = attach; antiGravity.Parent = root
-        end
+        local antiGravity = root:FindFirstChild("ZILI_AntiGravity") or Instance.new("BodyVelocity")
+        antiGravity.Name = "ZILI_AntiGravity"
+        antiGravity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        antiGravity.Velocity = Vector3.new(0, 0, 0)
+        antiGravity.Parent = root
 
         local MAX_SPEED = 90
         local flyTarget = Vector3.new(targetPos.X, targetPos.Y + 30, targetPos.Z)
@@ -2776,7 +2729,7 @@ __modules["Farm/AutoGeppo"] = function()
             end
 
             FakeFloor.CFrame = root.CFrame * CFrame.new(0, -3.2, 0) 
-            pcall(function() pcall(function() root.Velocity = Vector3.new(0,0,0) end) end)
+            root.Velocity = Vector3.new(0, 0, 0)
 
             local currentPos = root.Position
             local activeTarget = isDiving and targetPos or flyTarget
@@ -2808,7 +2761,7 @@ __modules["Farm/AutoGeppo"] = function()
                             while waited < 4 do
                                 if not root or not root.Parent or not _G.AutoGeppo then break end
                                 root.CFrame = root.CFrame * CFrame.new(0, -0.5, 0)
-                                pcall(function() pcall(function() root.Velocity = Vector3.new(0,0,0) end) end)
+                                root.Velocity = Vector3.new(0, 0, 0)
                                 task.wait(0.5)
                                 waited = waited + 0.5
                             end
@@ -2907,7 +2860,7 @@ __modules["Farm/AutoGeppo"] = function()
                                 local waitAppear = tick()
                                 while tick() - waitAppear < 2 and _G.AutoGeppo do
                                     root.CFrame = CFrame.lookAt(standPos, lookAtPos)
-                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                    root.Velocity = Vector3.new(0,0,0)
                                     if LocalPlayer.PlayerGui:FindFirstChild("NPCCHAT") then break end
                                     task.wait(0.2)
                                 end
@@ -2915,7 +2868,7 @@ __modules["Farm/AutoGeppo"] = function()
                                 local waitChatClose = tick()
                                 while tick() - waitChatClose < 8 and _G.AutoGeppo do 
                                     root.CFrame = CFrame.lookAt(standPos, lookAtPos)
-                                    pcall(function() root.Velocity = Vector3.new(0,0,0) end)
+                                    root.Velocity = Vector3.new(0,0,0)
                                     
                                     local chatGui = LocalPlayer.PlayerGui:FindFirstChild("NPCCHAT")
                                     if not chatGui then break end 
@@ -2928,7 +2881,7 @@ __modules["Farm/AutoGeppo"] = function()
                                 
                                 pcall(function()
                                     local args = { [1] = "skyWalkTrainer" }
-                                    ReplicatedStorage:WaitForChild("Events"):WaitForChild("learnStyle"):FireServer(table.unpack(args))
+                                    ReplicatedStorage:WaitForChild("Events"):WaitForChild("learnStyle"):FireServer(unpack(args))
                                 end)
                                 
                                 AutoGeppoModule.Toggle(false)
@@ -3236,7 +3189,7 @@ __modules["Farm/AutoFishMerchant"] = function()
             for _, v in pairs(root:GetChildren()) do
                 if v.Name == "ZILI_AntiGravity" then v:Destroy() end
             end
-            pcall(function() root.Velocity = VEC_ZERO end)
+            root.Velocity = VEC_ZERO
         end
         if Tween.FakeFloor then Tween.FakeFloor:Destroy(); Tween.FakeFloor = nil end
     end
@@ -3334,16 +3287,11 @@ __modules["Farm/AutoFishMerchant"] = function()
                 Tween.FakeFloor.Parent      = workspace
             end
 
-            local ag = root:FindFirstChild("ZILI_AntiGravity")
-            if not ag then
-                local attach = root:FindFirstChild("ZILI_AntiGravityAttach") or Instance.new("Attachment")
-                attach.Name = "ZILI_AntiGravityAttach"; attach.Parent = root
-                ag = Instance.new("LinearVelocity")
-                ag.Name = "ZILI_AntiGravity"; ag.MaxForce = math.huge
-                ag.VectorVelocity = Vector3.zero
-                ag.RelativeTo = Enum.ActuatorRelativeTo.World
-                ag.Attachment0 = attach; ag.Parent = root
-            end
+            local ag       = root:FindFirstChild("ZILI_AntiGravity") or Instance.new("BodyVelocity")
+            ag.Name        = "ZILI_AntiGravity"
+            ag.MaxForce    = Vector3.new(9e9, 9e9, 9e9)
+            ag.Velocity    = VEC_ZERO
+            ag.Parent      = root
             local targetPos = stepData.pos
 
             local flyY
@@ -3383,9 +3331,9 @@ __modules["Farm/AutoFishMerchant"] = function()
                         if Tween.FakeFloor then
                             Tween.FakeFloor.CFrame = curRoot.CFrame * OFFSET_FAKEFLOOR
                         end
-                        -- Reset LinearVelocity để xóa inertia cũ sau snap
+                        -- Reset BodyVelocity để xóa inertia cũ sau snap
                         local ag2 = curRoot:FindFirstChild("ZILI_AntiGravity")
-                        if ag2 and ag2:IsA("LinearVelocity") then ag2.VectorVelocity = VEC_ZERO end
+                        if ag2 then ag2.Velocity = VEC_ZERO end
                     end
                     _watchLastPos = curRoot.Position
                 end
@@ -3396,7 +3344,7 @@ __modules["Farm/AutoFishMerchant"] = function()
                 local dt = math.min(rawDt, DT_CAP)
 
                 if Tween.FakeFloor then Tween.FakeFloor.CFrame = root.CFrame * OFFSET_FAKEFLOOR end
-                pcall(function() root.Velocity = VEC_ZERO end)
+                root.Velocity = VEC_ZERO
 
                 local cur    = root.Position
                 local distXZ = (Vector2.new(targetPos.X, targetPos.Z) - Vector2.new(cur.X, cur.Z)).Magnitude
@@ -3547,7 +3495,7 @@ __modules["Farm/AutoFishMerchant"] = function()
                     -- [OPTIMIZE] Dùng cached FishingShopRemoteR thay vì WaitForChild mỗi lần
                     if FishingShopRemoteR then
                         pcall(function()
-                            FishingShopRemoteR:InvokeServer(table.unpack({{
+                            FishingShopRemoteR:InvokeServer(unpack({{
                                 ["Fish"]=fishName, ["All"]=false, ["Method"]="SellFish"
                             }}))
                         end)
@@ -3602,7 +3550,7 @@ __modules["Farm/AutoFishMerchant"] = function()
                     -- Ví dụ: 30 Fangfish, countPerCraft=2 → Count=15 → server deduct 30 cá
                     if CraftingRemoteR then
                         pcall(function()
-                            CraftingRemoteR:InvokeServer(table.unpack({{
+                            CraftingRemoteR:InvokeServer(unpack({{
                                 ["BlueprintItem"] = blueprintType,
                                 ["Method"]        = "Craft",
                                 ["ExtraData"]     = {[fishName] = extraDataKey},
@@ -3618,7 +3566,7 @@ __modules["Farm/AutoFishMerchant"] = function()
                         if not _G.AutoFishing then return false end
                         if CraftingRemoteR then
                             pcall(function()
-                                CraftingRemoteR:InvokeServer(table.unpack({{
+                                CraftingRemoteR:InvokeServer(unpack({{
                                     ["BlueprintItem"] = blueprintType,
                                     ["Method"]        = "Craft",
                                     ["ExtraData"]     = {[fishName] = extraDataKey},
@@ -5054,6 +5002,20 @@ local function TWEEN(obj,t,props) TweenService:Create(obj,TweenInfo.new(t,Enum.E
 local function TWEEN_BACK(obj,t,props) TweenService:Create(obj,TweenInfo.new(t,Enum.EasingStyle.Back,Enum.EasingDirection.Out),props):Play() end
 
 -- =====================================================================
+-- COLORS  (moved up — must be declared before Toast/TabBadge/Search)
+-- =====================================================================
+local BG0=Color3.fromRGB(4,3,10); local BG1=Color3.fromRGB(8,6,18); local BG2=Color3.fromRGB(11,9,24); local BG3=Color3.fromRGB(15,13,33)
+local BG4=Color3.fromRGB(20,18,44); local BG5=Color3.fromRGB(7,6,16); local BG_HDR=Color3.fromRGB(10,9,22)
+local GOLD=Color3.fromRGB(220,172,68); local GOLD2=Color3.fromRGB(255,215,115); local GOLD3=Color3.fromRGB(140,100,30); local GOLDD=Color3.fromRGB(35,26,6)
+local TEXT1=Color3.fromRGB(245,242,232); local TEXT2=Color3.fromRGB(148,143,168); local TEXT3=Color3.fromRGB(60,55,82)
+local COL_MAIN=Color3.fromRGB(255,215,85); local COL_FARM=Color3.fromRGB(255,105,40); local COL_TRAVEL=Color3.fromRGB(45,225,218)
+local COL_FISH=Color3.fromRGB(65,165,255); local COL_STATS=Color3.fromRGB(185,95,255); local COL_PS=Color3.fromRGB(240,75,190); local COL_CFG=Color3.fromRGB(72,225,135)
+local RED=Color3.fromRGB(240,60,60); local GREEN=Color3.fromRGB(55,220,130); local CYAN=Color3.fromRGB(45,225,218); local CYAND=Color3.fromRGB(5,40,38)
+local PINK=Color3.fromRGB(240,75,190); local PINKD=Color3.fromRGB(42,8,48); local BLUE_A=Color3.fromRGB(65,165,255)
+local ORANGE=Color3.fromRGB(255,105,40); local PURPLE=Color3.fromRGB(185,95,255); local AMBER=Color3.fromRGB(255,215,85)
+
+
+-- =====================================================================
 -- COLOR THEME SYSTEM
 -- 4 presets; accent colors swap live across the entire hub
 -- =====================================================================
@@ -5197,15 +5159,6 @@ local function OpenGlobalSearch()
     TWEEN_BACK(_searchOverlay,0.22,{Position=UDim2.new(0.5,-190,0,56)})
 end
 
-local BG0=C(4,3,10); local BG1=C(8,6,18); local BG2=C(11,9,24); local BG3=C(15,13,33)
-local BG4=C(20,18,44); local BG5=C(7,6,16); local BG_HDR=C(10,9,22)
-local GOLD=C(220,172,68); local GOLD2=C(255,215,115); local GOLD3=C(140,100,30); local GOLDD=C(35,26,6)
-local TEXT1=C(245,242,232); local TEXT2=C(148,143,168); local TEXT3=C(60,55,82)
-local COL_MAIN=C(255,215,85); local COL_FARM=C(255,105,40); local COL_TRAVEL=C(45,225,218)
-local COL_FISH=C(65,165,255); local COL_STATS=C(185,95,255); local COL_PS=C(240,75,190); local COL_CFG=C(72,225,135)
-local RED=C(240,60,60); local GREEN=C(55,220,130); local CYAN=C(45,225,218); local CYAND=C(5,40,38)
-local PINK=C(240,75,190); local PINKD=C(42,8,48); local BLUE_A=C(65,165,255)
-local ORANGE=C(255,105,40); local PURPLE=C(185,95,255); local AMBER=C(255,215,85)
 
 -- =====================================================================
 -- ICON SYSTEM (condensed)
