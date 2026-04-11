@@ -5030,18 +5030,41 @@ local ORANGE=Color3.fromRGB(255,105,40); local PURPLE=Color3.fromRGB(185,95,255)
 -- 4 presets; accent colors swap live across the entire hub
 -- =====================================================================
 local THEMES={
-    {name="Gold",   main=C(255,215,85), c2=C(220,172,68),  c3=C(140,100,30), dark=C(35,26,6)},
-    {name="Cyan",   main=C(45,225,218), c2=C(30,200,195),  c3=C(15,100,100), dark=C(3,30,30)},
-    {name="Purple", main=C(185,95,255), c2=C(155,75,220),  c3=C(80,35,120),  dark=C(18,6,36)},
-    {name="Rose",   main=C(255,90,160), c2=C(230,70,140),  c3=C(130,30,75),  dark=C(35,5,20)},
+    {name="Gold",   main=C(255,215,85),  c2=C(220,172,68),  c3=C(140,100,30), dark=C(35,26,6)},
+    {name="Cyan",   main=C(45,225,218),  c2=C(30,200,195),  c3=C(15,100,100), dark=C(3,30,30)},
+    {name="Purple", main=C(185,95,255),  c2=C(155,75,220),  c3=C(80,35,120),  dark=C(18,6,36)},
+    {name="Rose",   main=C(255,90,160),  c2=C(230,70,140),  c3=C(130,30,75),  dark=C(35,5,20)},
+    {name="Blue",   main=C(65,165,255),  c2=C(45,140,230),  c3=C(20,70,140),  dark=C(4,16,36)},
+    {name="Green",  main=C(55,220,130),  c2=C(40,190,110),  c3=C(18,100,55),  dark=C(4,26,14)},
+    {name="Orange", main=C(255,130,40),  c2=C(230,105,25),  c3=C(140,60,10),  dark=C(36,18,4)},
+    {name="Teal",   main=C(0,210,180),   c2=C(0,175,155),   c3=C(0,90,80),    dark=C(2,24,22)},
 }
 local _curTheme=1
-local _themeObjects={}  -- {obj, prop} pairs registered for live recolour
-local function RegTheme(obj,prop) table.insert(_themeObjects,{obj=obj,prop=prop}) end
+local _themeObjects={}  -- {obj, prop, kind} where kind: "main","c2","c3","dark"
+local function RegTheme(obj,prop,kind) table.insert(_themeObjects,{obj=obj,prop=prop,kind=kind or "main"}) end
 local function ApplyTheme(idx)
     _curTheme=idx; local t=THEMES[idx]
     GOLD=t.c2; GOLD2=t.main; GOLD3=t.c3; GOLDD=t.dark
-    for _,r in ipairs(_themeObjects) do pcall(function() r.obj[r.prop]=t.main end) end
+    for _,r in ipairs(_themeObjects) do
+        pcall(function()
+            local col = (r.kind=="c2" and t.c2) or (r.kind=="c3" and t.c3) or (r.kind=="dark" and t.dark) or t.main
+            r.obj[r.prop]=col
+        end)
+    end
+    -- Update all toggle pills that use GOLD accent
+    for _,d in pairs(TogglesData or {}) do
+        if type(d)=="table" then
+            local isGoldAccent = d.AccentCol and
+                math.abs((d.AccentCol.R - THEMES[1].main.R/255)) < 0.05
+            if isGoldAccent or not d.AccentCol then
+                d.AccentCol  = t.main
+                d.AccentDark = t.dark
+                if d.Active and d.Btn  then pcall(function() TWEEN(d.Btn,0.3,{BackgroundColor3=t.dark}) end) end
+                if d.Active and d.Strk then pcall(function() TWEEN(d.Strk,0.3,{Color=t.main}) end) end
+                if d.Active and d.Thumb then pcall(function() TWEEN(d.Thumb,0.3,{BackgroundColor3=t.main}) end) end
+            end
+        end
+    end
 end
 
 -- =====================================================================
@@ -5127,12 +5150,17 @@ end
 local _searchOverlay=nil
 local function OpenGlobalSearch()
     if _searchOverlay then pcall(function() _searchOverlay:Destroy() end); _searchOverlay=nil; return end
-    _searchOverlay=NEW("Frame",{Size=UDim2.new(0,380,0,320),Position=UDim2.new(0.5,-190,0,56),BackgroundColor3=BG1,BorderSizePixel=0,ZIndex=600},ScreenGui)
+    -- Parent to ScreenGui (MainFrame may not be declared yet at call-registration time)
+    local mfPos = MainFrame and MainFrame.AbsolutePosition or Vector2.new(0,0)
+    local mfSz  = MainFrame and MainFrame.AbsoluteSize  or Vector2.new(720,520)
+    local ox = mfPos.X + mfSz.X/2 - 190
+    local oy = mfPos.Y + 52
+    _searchOverlay=NEW("Frame",{Size=UDim2.new(0,380,0,310),Position=UDim2.new(0,ox,0,oy),BackgroundColor3=BG1,BorderSizePixel=0,ZIndex=600,ClipsDescendants=false},ScreenGui)
     CORNER(12,_searchOverlay); STROKE(GOLD,1.5,0.15,_searchOverlay)
     local hdr=NEW("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=BG2,ZIndex=601},_searchOverlay); CORNER(10,hdr)
     NEW("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=BG2,BorderSizePixel=0,ZIndex=601},hdr)
     local sBox=NEW("TextBox",{Size=UDim2.new(1,-80,1,-10),Position=UDim2.new(0,12,0,5),BackgroundTransparency=1,Text="",PlaceholderText="Search features...",TextColor3=TEXT1,PlaceholderColor3=TEXT3,Font=Enum.Font.GothamSemibold,TextSize=13,ZIndex=602},hdr)
-    local closeS=NEW("TextButton",{Text="✕",Size=UDim2.new(0,28,0,28),Position=UDim2.new(1,-36,0.5,-14),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=14,ZIndex=602},hdr)
+    local closeS=NEW("TextButton",{Text="x",Size=UDim2.new(0,28,0,28),Position=UDim2.new(1,-36,0.5,-14),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=14,ZIndex=602},hdr)
     closeS.MouseButton1Click:Connect(function() pcall(function() _searchOverlay:Destroy() end); _searchOverlay=nil end)
     local resList=NEW("ScrollingFrame",{Size=UDim2.new(1,-16,1,-50),Position=UDim2.new(0,8,0,44),BackgroundTransparency=1,ScrollBarThickness=2,ScrollBarImageColor3=GOLD3,ZIndex=601,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y},_searchOverlay)
     NEW("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4),HorizontalAlignment=Enum.HorizontalAlignment.Center},resList)
@@ -5154,8 +5182,41 @@ local function OpenGlobalSearch()
                 row.MouseLeave:Connect(function() TWEEN(row,0.12,{BackgroundColor3=BG3}) end)
                 row.MouseButton1Click:Connect(function()
                     pcall(function() _searchOverlay:Destroy() end); _searchOverlay=nil
-                    -- jump to that tab
-                    if Tabs and Tabs[r.tab] then Tabs[r.tab].btn:activate() end
+                    -- 1. Run lazy build for that tab if it hasn't been built yet
+                    if _pageBuildFns and _pageBuildFns[r.tab] then
+                        local fn = _pageBuildFns[r.tab]; _pageBuildFns[r.tab] = nil; fn()
+                    end
+                    -- 2. Switch to that tab
+                    if Tabs and Tabs[r.tab] then
+                        local td = Tabs[r.tab]
+                        -- setActive directly instead of :activate() which may not fire connected fns
+                        if SelectedTab and SelectedTab ~= td.btn then
+                            for _, tabData in pairs(Tabs) do
+                                if tabData.btn == SelectedTab then tabData.setInactive(); break end
+                            end
+                            if SelectedPage then SelectedPage.Visible = false end
+                        end
+                        SelectedTab = td.btn; SelectedPage = Pages[r.tab]; td.setActive()
+                    end
+                    -- 3. If a toggleKey exists, try to scroll the page to that element
+                    if r.key and r.key ~= "" and Pages and Pages[r.tab] then
+                        task.defer(function()
+                            local page = Pages[r.tab]
+                            if not page then return end
+                            -- Find the card/frame that contains this toggle
+                            for _, child in ipairs(page:GetDescendants()) do
+                                if child:IsA("Frame") or child:IsA("ScrollingFrame") then
+                                    -- Look for toggle pill registered under this key
+                                    local td = TogglesData and TogglesData[r.key]
+                                    if td and td.Btn and td.Btn:IsDescendantOf(child) then
+                                        local relY = child.AbsolutePosition.Y - page.AbsolutePosition.Y + page.CanvasPosition.Y
+                                        page.CanvasPosition = Vector2.new(0, math.max(0, relY - 40))
+                                        break
+                                    end
+                                end
+                            end
+                        end)
+                    end
                 end)
             end
         end
@@ -5166,7 +5227,9 @@ local function OpenGlobalSearch()
     BuildResults("")
     sBox:GetPropertyChangedSignal("Text"):Connect(function() BuildResults(sBox.Text) end)
     sBox:CaptureFocus()
-    TWEEN_BACK(_searchOverlay,0.22,{Position=UDim2.new(0.5,-190,0,56)})
+    -- Animate in from slightly above
+    _searchOverlay.Position=UDim2.new(0,ox,0,oy-10)
+    TWEEN_BACK(_searchOverlay,0.22,{Position=UDim2.new(0,ox,0,oy)})
 end
 
 
@@ -5175,7 +5238,7 @@ end
 -- =====================================================================
 local function DrawIcon(parent,iconName,px,py,sz,col)
     sz=sz or 14; col=col or TEXT2
-    local c=NEW("Frame",{Size=UDim2.new(0,sz,0,sz),Position=UDim2.new(0,px,0,py),BackgroundTransparency=1,BorderSizePixel=0},parent)
+    local c=NEW("Frame",{Size=UDim2.new(0,sz,0,sz),Position=UDim2.new(0,px,0,py),BackgroundTransparency=1,BorderSizePixel=0,ClipsDescendants=true},parent)
     local s=sz
     local function RR(x,y,w,h,r,clr) local f=NEW("Frame",{Size=UDim2.new(0,w,0,h),Position=UDim2.new(0,x,0,y),BackgroundColor3=clr or col,BorderSizePixel=0},c); if r and r>0 then CORNER(r,f) end; return f end
     local function L(x1,y1,x2,y2,th,clr) local dx=x2-x1;local dy=y2-y1;local len=math.sqrt(dx*dx+dy*dy);if len<0.5 then return end;local f=NEW("Frame",{Size=UDim2.new(0,len,0,th or 1.5),Position=UDim2.new(0,(x1+x2)/2,0,(y1+y2)/2),AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=clr or col,BorderSizePixel=0,Rotation=math.deg(math.atan2(dy,dx))},c);CORNER(1,f);return f end
@@ -5245,16 +5308,18 @@ local _keybindKey = Enum.KeyCode.RightShift
 UIS.InputBegan:Connect(function(inp,gpe)
     if gpe then return end
     if inp.KeyCode == _keybindKey then
-        if MainFrame and MainFrame.Visible then _G._GBO_HideHub()
-        else _G._GBO_ShowHub() end
+        -- MiniLogo.Visible = true means hub is hidden → show it; otherwise hide
+        if MiniLogo and MiniLogo.Visible then _G._GBO_ShowHub()
+        else _G._GBO_HideHub() end
     end
 end)
 
 -- =====================================================================
 -- MAIN FRAME
 -- =====================================================================
-local MainFrame=NEW("Frame",{Size=UDim2.new(0,720,0,520),Position=UDim2.new(0.5,-360,0.5,-260),BackgroundColor3=BG1,BorderSizePixel=0,ClipsDescendants=true,BackgroundTransparency=1},ScreenGui)
-CORNER(14,MainFrame); STROKE(GOLD,1.8,0.06,MainFrame)
+local MainFrame=NEW("CanvasGroup",{Size=UDim2.new(0,720,0,520),Position=UDim2.new(0.5,-360,0.5,-260),BackgroundColor3=BG1,BorderSizePixel=0,ClipsDescendants=true,BackgroundTransparency=1,GroupTransparency=1},ScreenGui)
+local _mainFrameStroke=STROKE(GOLD,1.8,0.06,MainFrame); RegTheme(_mainFrameStroke,"Color","c2")
+CORNER(14,MainFrame)
 MainFrame.Visible=false
 task.spawn(function()
     local waited=0
@@ -5276,14 +5341,14 @@ local cornerGlows={}
 for i,gd in ipairs(GLOW_DATA) do local g=NEW("Frame",{Size=UDim2.new(0,160,0,160),Position=UDim2.new(gd[2],-80,gd[3],-80),BackgroundColor3=gd[1],BackgroundTransparency=0.93,ZIndex=0,BorderSizePixel=0},MainFrame);CORNER(80,g);table.insert(cornerGlows,g) end
 task.spawn(function() local t=0;while MainFrame and MainFrame.Parent do t+=0.03;for i,g in ipairs(cornerGlows) do TWEEN(g,1.6,{BackgroundTransparency=0.94-0.035*math.sin(t+i*1.57)}) end;task.wait(1.6) end end)
 
-local sh1=NEW("Frame",{Size=UDim2.new(0,2,1.8,0),Position=UDim2.new(-0.12,0,-0.4,0),BackgroundColor3=GOLD2,BackgroundTransparency=0.91,ZIndex=0,BorderSizePixel=0,Rotation=16},MainFrame)
-task.spawn(function() while MainFrame and MainFrame.Parent do sh1.Position=UDim2.new(-0.12,0,-0.4,0);TweenService:Create(sh1,TweenInfo.new(5.5,Enum.EasingStyle.Quad),{Position=UDim2.new(1.15,0,-0.4,0)}):Play();task.wait(10) end end)
+local sh1=NEW("Frame",{Size=UDim2.new(0,2,1,0),Position=UDim2.new(-0.01,0,0,0),BackgroundColor3=GOLD2,BackgroundTransparency=0.91,ZIndex=0,BorderSizePixel=0,Rotation=16},BgBase)
+task.spawn(function() while MainFrame and MainFrame.Parent do sh1.Position=UDim2.new(-0.01,0,0,0);TweenService:Create(sh1,TweenInfo.new(5.5,Enum.EasingStyle.Quad),{Position=UDim2.new(1.01,0,0,0)}):Play();task.wait(10) end end)
 
 local PARTICLE_COLORS={GOLD,GOLD2,COL_TRAVEL,COL_STATS,COL_FISH}
 task.spawn(function()
     while MainFrame and MainFrame.Parent do task.wait(4);if not MainFrame or not MainFrame.Parent then break end
         local col=PARTICLE_COLORS[math.random(#PARTICLE_COLORS)];local sz=math.random(2,4);local xs=math.random(4,96)/100
-        local p=NEW("Frame",{Size=UDim2.new(0,sz,0,sz),Position=UDim2.new(xs,0,1.04,0),BackgroundColor3=col,BackgroundTransparency=0.7,ZIndex=0,BorderSizePixel=0},MainFrame);CORNER(sz,p)
+        local p=NEW("Frame",{Size=UDim2.new(0,sz,0,sz),Position=UDim2.new(xs,0,1.04,0),BackgroundColor3=col,BackgroundTransparency=0.7,ZIndex=0,BorderSizePixel=0},BgBase);CORNER(sz,p)
         local dur=math.random(7,13);TweenService:Create(p,TweenInfo.new(dur,Enum.EasingStyle.Linear),{Position=UDim2.new(xs,math.random(-30,30),-0.05,0),BackgroundTransparency=1}):Play()
         task.delay(dur+0.2,function() if p and p.Parent then p:Destroy() end end)
     end
@@ -5306,6 +5371,7 @@ MakeEdgeGlow(0,0);MakeEdgeGlow(1,0);MakeEdgeGlow(0,1);MakeEdgeGlow(1,1)
 local TopBar=NEW("Frame",{Size=UDim2.new(1,0,0,50),BackgroundColor3=BG2,BorderSizePixel=0},MainFrame)
 CORNER(12,TopBar); NEW("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=BG2,BorderSizePixel=0},TopBar)
 local tbLine=NEW("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,1,-2),BackgroundColor3=GOLD,BorderSizePixel=0},TopBar)
+RegTheme(tbLine,"BackgroundColor3","c2")
 local tbGrad=Instance.new("UIGradient")
 tbGrad.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,COL_MAIN),ColorSequenceKeypoint.new(0.18,COL_FARM),ColorSequenceKeypoint.new(0.36,COL_TRAVEL),ColorSequenceKeypoint.new(0.54,COL_FISH),ColorSequenceKeypoint.new(0.72,COL_STATS),ColorSequenceKeypoint.new(0.88,COL_PS),ColorSequenceKeypoint.new(1,COL_CFG)})
 tbGrad.Parent=tbLine
@@ -5322,36 +5388,80 @@ NEW("TextLabel",{Text="|",Position=UDim2.new(0,146,0,8),Size=UDim2.new(0,12,0,18
 NEW("TextLabel",{Text="GBO",Position=UDim2.new(0,160,0,8),Size=UDim2.new(0,42,0,18),TextColor3=CYAN,Font=Enum.Font.GothamBold,TextSize=14,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Left},TopBar)
 -- Version + active feature counter
 local _topSubLbl=NEW("TextLabel",{Text="v2.9  ·  PREMIUM  ·  0 active",Position=UDim2.new(0,56,0,28),Size=UDim2.new(0,220,0,12),TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=9,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Left},TopBar)
--- Session timer (bottom-right of TopBar)
+-- Session timer (top-right, bigger, properly spaced from search button)
 local _sessionStart=tick()
-local _sessionLbl=NEW("TextLabel",{Text="00:00",Position=UDim2.new(1,-160,0,8),Size=UDim2.new(0,60,0,16),TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=10,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Right},TopBar)
-Tooltip(_sessionLbl,"Session time")
--- Search button
-local _searchBtn=NEW("TextButton",{Text="⌕",Position=UDim2.new(1,-165,0.5,0),AnchorPoint=Vector2.new(0,0.5),Size=UDim2.new(0,28,0,28),TextColor3=GOLD2,TextSize=16,BackgroundColor3=BG3,Font=Enum.Font.Legacy,AutoButtonColor=false},TopBar)
+local _sessionLbl=NEW("TextLabel",{Text="00:00",Position=UDim2.new(1,-182,0,6),Size=UDim2.new(0,44,0,18),TextColor3=GOLD2,Font=Enum.Font.GothamBold,TextSize=13,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Right},TopBar)
+local _uptimeIcon=NEW("Frame",{Size=UDim2.new(0,14,0,14),Position=UDim2.new(1,-189,0,10),BackgroundTransparency=1,BorderSizePixel=0},TopBar)
+do -- clock icon
+    local ring=NEW("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0},_uptimeIcon); CORNER(7,ring); STROKE(TEXT3,1.2,0,ring)
+    NEW("Frame",{Size=UDim2.new(0,1.5,0,5),Position=UDim2.new(0.5,-0.75,0.5,-4.5),BackgroundColor3=TEXT3,BorderSizePixel=0},_uptimeIcon)
+    NEW("Frame",{Size=UDim2.new(0,4,0,1.5),Position=UDim2.new(0.5,0,0.5,-0.75),BackgroundColor3=TEXT3,BorderSizePixel=0},_uptimeIcon)
+end
+local _upLbl=NEW("TextLabel",{Text="UPTIME",Position=UDim2.new(1,-182,0,26),Size=UDim2.new(0,44,0,10),TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=8,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Right},TopBar)
+Tooltip(_sessionLbl,"Script uptime")
+-- Search button — extra 12px gap from uptime label
+local _searchBtn=NEW("TextButton",{Text="",Position=UDim2.new(1,-148,0.5,0),AnchorPoint=Vector2.new(0,0.5),Size=UDim2.new(0,28,0,28),BackgroundColor3=BG3,AutoButtonColor=false},TopBar)
 CORNER(7,_searchBtn); STROKE(GOLD3,1,0.4,_searchBtn)
-_searchBtn.MouseEnter:Connect(function() TWEEN(_searchBtn,0.15,{BackgroundColor3=BG4,TextColor3=C(255,255,255)}) end)
-_searchBtn.MouseLeave:Connect(function() TWEEN(_searchBtn,0.15,{BackgroundColor3=BG3,TextColor3=GOLD2}) end)
+do -- Draw magnifying glass manually
+    local mg=NEW("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0},_searchBtn)
+    local circle=NEW("Frame",{Size=UDim2.new(0,13,0,13),Position=UDim2.new(0,4,0,4),BackgroundTransparency=1,BorderSizePixel=0},mg); CORNER(7,circle); STROKE(GOLD2,1.8,0,circle)
+    local handle=NEW("Frame",{Size=UDim2.new(0,6,0,2),Position=UDim2.new(0,16,0,19),BackgroundColor3=GOLD2,BorderSizePixel=0,Rotation=45},mg); CORNER(1,handle)
+    _searchBtn.MouseEnter:Connect(function()
+        TWEEN(_searchBtn,0.15,{BackgroundColor3=BG4})
+        for _,ch in ipairs(mg:GetDescendants()) do
+            if ch:IsA("UIStroke") then TWEEN(ch,0.15,{Color=C(255,255,255)}) end
+            if ch:IsA("Frame") and ch.BackgroundColor3==GOLD2 then TWEEN(ch,0.15,{BackgroundColor3=C(255,255,255)}) end
+        end
+    end)
+    _searchBtn.MouseLeave:Connect(function()
+        TWEEN(_searchBtn,0.15,{BackgroundColor3=BG3})
+        for _,ch in ipairs(mg:GetDescendants()) do
+            if ch:IsA("UIStroke") then TWEEN(ch,0.15,{Color=GOLD2}) end
+            if ch:IsA("Frame") and ch.BackgroundColor3~=GOLD2 then TWEEN(ch,0.15,{BackgroundColor3=GOLD2}) end
+        end
+    end)
+end
 _searchBtn.MouseButton1Click:Connect(OpenGlobalSearch)
 Tooltip(_searchBtn,"Global search (all features)")
 
 -- Session timer updater + feature counter
+local _sessionStart = tick()   -- start tracking from script execution
 task.spawn(function()
     while TopBar and TopBar.Parent do
         task.wait(1)
-        local elapsed=tick()-_sessionStart
-        local m=math.floor(elapsed/60); local s=math.floor(elapsed%60)
-        if _sessionLbl and _sessionLbl.Parent then _sessionLbl.Text=string.format("%02d:%02d",m,s) end
-        local active=0
-        for _,d in pairs(TogglesData) do if type(d)=="table" and d.Active then active+=1 end end
+        -- Robust elapsed time — works for 1min, 1hr, 1 day, 1 week+
+        local ok, elapsed = pcall(function() return tick() - _sessionStart end)
+        if not ok then elapsed = 0 end
+        local d = math.floor(elapsed / 86400)
+        local h = math.floor((elapsed % 86400) / 3600)
+        local m = math.floor((elapsed % 3600) / 60)
+        local s = math.floor(elapsed % 60)
+        local timeStr
+        if d > 0 then
+            timeStr = string.format("%dd %d:%02d:%02d", d, h, m, s)
+        elseif h > 0 then
+            timeStr = string.format("%d:%02d:%02d", h, m, s)
+        else
+            timeStr = string.format("%02d:%02d", m, s)
+        end
+        if _sessionLbl and _sessionLbl.Parent then _sessionLbl.Text = timeStr end
+        local active = 0
+        -- Guard pairs(TogglesData) — if TogglesData is nil the whole loop would crash
+        pcall(function()
+            for _,d in pairs(TogglesData) do if type(d)=="table" and d.Active then active+=1 end end
+        end)
         if _topSubLbl and _topSubLbl.Parent then
             _topSubLbl.Text=string.format("v2.9  ·  PREMIUM  ·  %d active",active)
             _topSubLbl.TextColor3=active>0 and COL_CFG or TEXT3
+        end
+        if _sessionLbl and _sessionLbl.Parent then
+            _sessionLbl.TextColor3 = active>0 and COL_CFG or GOLD2
         end
     end
 end)
 
 local function MakeCtrlBtn(text,posX,col,bgCol)
-    local btn=NEW("TextButton",{Text=text,Position=UDim2.new(1,posX,0.5,0),AnchorPoint=Vector2.new(0,0.5),Size=UDim2.new(0,28,0,28),TextColor3=col,TextSize=15,BackgroundColor3=bgCol or BG3,Font=Enum.Font.Legacy,AutoButtonColor=false},TopBar)
+    local btn=NEW("TextButton",{Text=text,Position=UDim2.new(1,posX,0.5,0),AnchorPoint=Vector2.new(0,0.5),Size=UDim2.new(0,28,0,28),TextColor3=col,TextSize=15,BackgroundColor3=bgCol or BG3,Font=Enum.Font.GothamBold,AutoButtonColor=false},TopBar)
     CORNER(7,btn);STROKE(col,1,0.45,btn)
     btn.MouseEnter:Connect(function() TWEEN(btn,0.15,{BackgroundColor3=BG4,TextColor3=C(255,255,255)}) end)
     btn.MouseLeave:Connect(function() TWEEN(btn,0.15,{BackgroundColor3=bgCol or BG3,TextColor3=col}) end)
@@ -5413,6 +5523,7 @@ local sideGrad=Instance.new("UIGradient")
 sideGrad.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,C(14,11,30)),ColorSequenceKeypoint.new(0.4,C(10,8,22)),ColorSequenceKeypoint.new(1,C(7,5,17))})
 sideGrad.Rotation=90; sideGrad.Parent=Sidebar
 local sideDiv=NEW("Frame",{Size=UDim2.new(0,1,1,-8),Position=UDim2.new(1,-1,0,4),BackgroundColor3=GOLD,BackgroundTransparency=0.1,BorderSizePixel=0},Sidebar)
+RegTheme(sideDiv,"BackgroundColor3","c2")
 local sdg=Instance.new("UIGradient"); sdg.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,C(20,20,40)),ColorSequenceKeypoint.new(0.3,COL_TRAVEL),ColorSequenceKeypoint.new(0.6,GOLD3),ColorSequenceKeypoint.new(1,C(20,20,40))}); sdg.Rotation=90; sdg.Parent=sideDiv
 
 local UserCard=NEW("Frame",{Size=UDim2.new(1,-14,0,58),Position=UDim2.new(0,7,1,-64),BackgroundColor3=BG3},Sidebar)
@@ -5423,9 +5534,19 @@ local UserImg=NEW("ImageLabel",{Size=UDim2.new(0,36,0,36),Position=UDim2.new(0,9
 CORNER(18,UserImg); STROKE(GOLD,1.5,0.25,UserImg)
 pcall(function() UserImg.Image=Players:GetUserThumbnailAsync(LocalPlayer.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size420x420) end)
 NEW("TextLabel",{Text=LocalPlayer.DisplayName,Position=UDim2.new(0,52,0,8),Size=UDim2.new(1,-56,0,16),TextColor3=TEXT1,Font=Enum.Font.GothamBold,TextSize=12,BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Left},UserCard)
-local premBadge=NEW("TextLabel",{Text="✦  PREMIUM",Position=UDim2.new(0,52,0,28),Size=UDim2.new(0,80,0,16),BackgroundColor3=GOLDD,TextColor3=GOLD2,Font=Enum.Font.GothamBold,TextSize=8,TextXAlignment=Enum.TextXAlignment.Center},UserCard)
+local premBadge=NEW("Frame",{Position=UDim2.new(0,52,0,28),Size=UDim2.new(0,86,0,18),BackgroundColor3=GOLDD,BorderSizePixel=0},UserCard)
 CORNER(4,premBadge); STROKE(GOLD3,1,0.2,premBadge)
-task.spawn(function() while UserCard and UserCard.Parent do TWEEN(premBadge,2.0,{TextColor3=GOLD2});task.wait(2.5);TWEEN(premBadge,2.0,{TextColor3=C(255,230,140)});task.wait(2.5) end end)
+-- Draw star icon manually (5 lines forming a star outline)
+local starBg=NEW("Frame",{Size=UDim2.new(0,12,0,12),Position=UDim2.new(0,4,0.5,-6),BackgroundTransparency=1,BorderSizePixel=0},premBadge)
+do local s=12
+    local function SL(x1,y1,x2,y2) local dx=x2-x1;local dy=y2-y1;local len=math.sqrt(dx*dx+dy*dy);if len<0.5 then return end;local f=NEW("Frame",{Size=UDim2.new(0,len,0,1.5),Position=UDim2.new(0,(x1+x2)/2,0,(y1+y2)/2),AnchorPoint=Vector2.new(0.5,0.5),BackgroundColor3=GOLD2,BorderSizePixel=0,Rotation=math.deg(math.atan2(dy,dx))},starBg);CORNER(1,f) end
+    -- 5-point star lines
+    local pts={{s*.5,0},{s*.62,s*.38},{s,s*.38},{s*.69,s*.62},{s*.79,s},{s*.5,s*.76},{s*.21,s},{s*.31,s*.62},{0,s*.38},{s*.38,s*.38}}
+    for k=1,#pts,2 do local a,b=pts[k],pts[k+1];SL(a[1],a[2],b[1],b[2]) end
+    SL(pts[#pts][1],pts[#pts][2],pts[1][1],pts[1][2])
+end
+NEW("TextLabel",{Text="PREMIUM",Position=UDim2.new(0,20,0,0),Size=UDim2.new(1,-22,1,0),BackgroundTransparency=1,TextColor3=GOLD2,Font=Enum.Font.GothamBold,TextSize=8,TextXAlignment=Enum.TextXAlignment.Left},premBadge)
+task.spawn(function() while UserCard and UserCard.Parent do TWEEN(premBadge,2.0,{BackgroundColor3=GOLDD});task.wait(2.5);TWEEN(premBadge,2.0,{BackgroundColor3=C(50,38,8)});task.wait(2.5) end end)
 
 local TabScroll=NEW("ScrollingFrame",{Size=UDim2.new(1,-8,1,-80),Position=UDim2.new(0,4,0,6),BackgroundTransparency=1,ScrollBarThickness=0,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new(0,0,0,0),ClipsDescendants=true},Sidebar)
 NEW("UIListLayout",{HorizontalAlignment=Enum.HorizontalAlignment.Center,Padding=UDim.new(0,2),SortOrder=Enum.SortOrder.LayoutOrder},TabScroll)
@@ -5464,8 +5585,8 @@ local function AddTab(name)
     local btn=NEW("TextButton",{Size=UDim2.new(0,162,0,40),BackgroundTransparency=1,Text="",AutoButtonColor=false,TextXAlignment=Enum.TextXAlignment.Left},TabScroll)
     CORNER(10,btn); btn.BackgroundColor3=tabColorD
     local accent=NEW("Frame",{Size=UDim2.new(0,3,0.50,0),Position=UDim2.new(0,2,0.25,0),BackgroundColor3=tabColor,BorderSizePixel=0,Visible=false},btn); CORNER(2,accent)
-    local iconBg=NEW("Frame",{Size=UDim2.new(0,22,0,22),Position=UDim2.new(0,10,0.5,-11),BackgroundColor3=tabColorD,BorderSizePixel=0},btn); CORNER(6,iconBg)
-    DrawIcon(iconBg,iconName,4,4,14,TEXT3)
+    local iconBg=NEW("Frame",{Size=UDim2.new(0,24,0,24),Position=UDim2.new(0,9,0.5,-12),BackgroundColor3=tabColorD,BorderSizePixel=0},btn); CORNER(6,iconBg)
+    DrawIcon(iconBg,iconName,5,5,14,tabColor)
     local nameLbl=NEW("TextLabel",{Text=name,Size=UDim2.new(1,-42,1,0),Position=UDim2.new(0,38,0,0),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamSemibold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left},btn)
     local page=NEW("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Visible=false,Name=name.."Page",ScrollBarThickness=3,ScrollBarImageColor3=tabColor,ClipsDescendants=true},PageContainer)
     Pages[name]=page
@@ -5473,7 +5594,7 @@ local function AddTab(name)
         TWEEN(btn,0.18,{BackgroundTransparency=1}); TWEEN(nameLbl,0.18,{TextColor3=TEXT3}); nameLbl.Font=Enum.Font.GothamSemibold
         for _,ch in ipairs(iconBg:GetDescendants()) do
             if ch.Name=="SDot" then local dc=ch:GetAttribute("DotColor");local dim=dc=="GREEN" and C(20,60,35) or dc=="AMBER" and C(55,40,8) or C(65,18,18);TWEEN(ch,0.18,{BackgroundColor3=dim})
-            elseif ch:IsA("Frame") then TWEEN(ch,0.18,{BackgroundColor3=TEXT3})
+            elseif ch:IsA("Frame") and ch.BackgroundTransparency < 0.5 then TWEEN(ch,0.18,{BackgroundColor3=TEXT3})
             elseif ch:IsA("UIStroke") then TWEEN(ch,0.18,{Color=TEXT3}) end
         end
         TWEEN(iconBg,0.18,{BackgroundColor3=C(10,10,22)}); accent.Visible=false; page.Visible=false
@@ -5482,7 +5603,7 @@ local function AddTab(name)
         TWEEN(btn,0.2,{BackgroundColor3=tabColorD,BackgroundTransparency=0}); TWEEN(nameLbl,0.2,{TextColor3=tabColor}); nameLbl.Font=Enum.Font.GothamBold
         for _,ch in ipairs(iconBg:GetDescendants()) do
             if ch.Name=="SDot" then local dc=ch:GetAttribute("DotColor");local fc=dc=="GREEN" and GREEN or dc=="AMBER" and AMBER or RED;TWEEN(ch,0.2,{BackgroundColor3=fc})
-            elseif ch:IsA("Frame") then TWEEN(ch,0.2,{BackgroundColor3=tabColor})
+            elseif ch:IsA("Frame") and ch.BackgroundTransparency < 0.5 then TWEEN(ch,0.2,{BackgroundColor3=tabColor})
             elseif ch:IsA("UIStroke") then TWEEN(ch,0.2,{Color=tabColor}) end
         end
         TWEEN(iconBg,0.2,{BackgroundColor3=C(math.min(255,math.floor(tabColor.R*255*0.18+6)),math.min(255,math.floor(tabColor.G*255*0.18+6)),math.min(255,math.floor(tabColor.B*255*0.18+6)))})
@@ -5532,19 +5653,24 @@ local function CardHeader(card,iconName,label,accentCol)
     CORNER(5,iconBg); STROKE(accentCol,1,0.5,iconBg); DrawIcon(iconBg,iconName,2,2,14,accentCol)
     NEW("TextLabel",{Text=label,Size=UDim2.new(1,-56,1,0),Position=UDim2.new(0,33,0,0),BackgroundTransparency=1,TextColor3=accentCol,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},bar)
     NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=accentCol,BorderSizePixel=0,BackgroundTransparency=0.55},bar)
-    -- Collapse chevron
+    -- Collapse chevron (Frame-based, always renders)
     local _collapsed=false
     local _fullH=card.Size.Y.Offset
-    local chevron=NEW("TextLabel",{Text="▾",Size=UDim2.new(0,18,0,18),Position=UDim2.new(1,-22,0.5,-9),BackgroundTransparency=1,TextColor3=accentCol,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center},bar)
+    local chevBg=NEW("Frame",{Size=UDim2.new(0,20,0,20),Position=UDim2.new(1,-24,0.5,-10),BackgroundTransparency=1,BorderSizePixel=0},bar)
+    -- Down arrow (two lines): renders as ∨
+    local chL1=NEW("Frame",{Size=UDim2.new(0,8,0,2),Position=UDim2.new(0,1,0.5,-1),BackgroundColor3=accentCol,BorderSizePixel=0,Rotation=40},chevBg); CORNER(1,chL1)
+    local chL2=NEW("Frame",{Size=UDim2.new(0,8,0,2),Position=UDim2.new(0,11,0.5,-1),BackgroundColor3=accentCol,BorderSizePixel=0,Rotation=-40},chevBg); CORNER(1,chL2)
     bar.InputBegan:Connect(function(inp)
         if inp.UserInputType~=Enum.UserInputType.MouseButton1 then return end
         _collapsed=not _collapsed
         if _collapsed then
             TWEEN(card,0.2,{Size=UDim2.new(1,-24,0,30)})
-            TWEEN(chevron,0.2,{Rotation=90,TextColor3=TEXT3})
+            TWEEN(chL1,0.2,{Rotation=-40,BackgroundColor3=TEXT3})
+            TWEEN(chL2,0.2,{Rotation=40,BackgroundColor3=TEXT3})
         else
             TWEEN(card,0.22,{Size=UDim2.new(1,-24,0,_fullH)})
-            TWEEN(chevron,0.2,{Rotation=0,TextColor3=accentCol})
+            TWEEN(chL1,0.2,{Rotation=40,BackgroundColor3=accentCol})
+            TWEEN(chL2,0.2,{Rotation=-40,BackgroundColor3=accentCol})
         end
     end)
     return bar
@@ -5635,7 +5761,7 @@ if IS_LOBBY then
     end,AMBER)
     RowDivider(RaceCard,74)
     local rSearchBg=NEW("Frame",{Size=UDim2.new(1,-24,0,30),Position=UDim2.new(0,12,0,82),BackgroundColor3=BG5,BorderSizePixel=0},RaceCard); CORNER(6,rSearchBg); STROKE(GOLD3,1,0.5,rSearchBg)
-    NEW("TextLabel",{Size=UDim2.new(0,28,1,0),BackgroundTransparency=1,Text="🔍",TextColor3=TEXT3,Font=Enum.Font.Legacy,TextSize=13},rSearchBg)
+    NEW("TextLabel",{Size=UDim2.new(0,28,1,0),BackgroundTransparency=1,Text="🔍",TextColor3=TEXT3,Font=Enum.Font.GothamMedium,TextSize=13},rSearchBg)
     local rSearch=NEW("TextBox",{Size=UDim2.new(1,-32,1,0),Position=UDim2.new(0,28,0,0),BackgroundTransparency=1,Text="",PlaceholderText="Search race...",TextColor3=TEXT1,PlaceholderColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=12,ClearTextOnFocus=true},rSearchBg)
     local rScroll=NEW("ScrollingFrame",{Size=UDim2.new(1,-24,0,148),Position=UDim2.new(0,12,0,120),BackgroundColor3=BG5,BorderSizePixel=0,ScrollBarThickness=2,ScrollBarImageColor3=GOLD3,CanvasSize=UDim2.new(0,0,0,0)},RaceCard)
     CORNER(8,rScroll); STROKE(GOLD3,1,0.5,rScroll)
@@ -5698,8 +5824,10 @@ if IS_LOBBY then
         if _seaHeaderLbl then _seaHeaderLbl.Visible=isReg end
     end
 
-    -- Server Setup card
-    local psCard=MakeCard(PrivateServerPage,10,1); CardHeader(psCard,"server","SERVER SETUP",PINK)
+    -- Server Setup card (height pre-calculated so CardHeader caches correct _fullH)
+    local HUB_START_Y=118  -- MUST be declared before _psCardH uses it
+    local _psCardH = HUB_START_Y + 2*52 + 62 + 50  -- hub grid + sea + join btn + padding = ~338
+    local psCard=MakeCard(PrivateServerPage,_psCardH,1); CardHeader(psCard,"server","SERVER SETUP",PINK)
     NEW("TextLabel",{Text="Private Server Code",Size=UDim2.new(1,-24,0,14),Position=UDim2.new(0,12,0,36),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},psCard)
     NEW("TextLabel",{Text="Leave empty for public",Size=UDim2.new(1,-24,0,12),Position=UDim2.new(1,-150,0,37),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Right},psCard)
     local psBg=NEW("Frame",{Size=UDim2.new(1,-24,0,32),Position=UDim2.new(0,12,0,52),BackgroundColor3=BG5,BorderSizePixel=0},psCard); CORNER(7,psBg); local psBgStrk=STROKE(GOLD3,1,0.45,psBg)
@@ -5709,7 +5837,6 @@ if IS_LOBBY then
     psBox:GetPropertyChangedSignal("Text"):Connect(function() getgenv().PSCode=psBox.Text;TogglesData["Config_PSCode"].Value=psBox.Text end)
     RowDivider(psCard,92)
     NEW("TextLabel",{Text="Destination Hub",Size=UDim2.new(0.5,0,0,14),Position=UDim2.new(0,12,0,100),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},psCard)
-    local HUB_START_Y=118
     for hi,hd in ipairs(HUB_GRID) do
         local ci=(hi-1)%2; local ri=math.floor((hi-1)/2)
         local hBtn=NEW("TextButton",{Size=UDim2.new(0.5,-8,0,46),Position=UDim2.new(ci*0.5,ci==0 and 5 or 3,0,HUB_START_Y+ri*52),BackgroundColor3=BG4,BackgroundTransparency=0.3,Text="",AutoButtonColor=false},psCard); CORNER(9,hBtn)
@@ -5742,7 +5869,7 @@ if IS_LOBBY then
         TWEEN(joinNowBtn,0.08,{BackgroundColor3=C(80,20,65)}); task.wait(0.1); TWEEN(joinNowBtn,0.15,{BackgroundColor3=PINKD})
         task.spawn(function() local code=getgenv().PSCode or "";local hub=getgenv().SelectedHub or "Regular";local sea=getgenv().SelectedSea or "Sea 1";local arg=HubArgs[hub] or true;ServerModule.Join(code,arg,hub=="Regular" and sea or nil) end)
     end)
-    task.spawn(function() task.wait(0.05);psCard.Size=UDim2.new(1,-24,0,jnY+50);UpdateHubSelection();UpdateSeaSelection() end)
+    task.spawn(function() task.wait(0.05);UpdateHubSelection();UpdateSeaSelection() end)
 
     -- Auto Join card
     local ajCard=MakeCard(PrivateServerPage,92,2); CardHeader(ajCard,"lightning","AUTO JOIN PS",PINK)
@@ -5751,7 +5878,26 @@ if IS_LOBBY then
     local ajPill=NEW("TextButton",{Size=UDim2.new(0,48,0,26),Position=UDim2.new(1,-60,0,40),BackgroundColor3=BG5,Text="",AutoButtonColor=false},ajCard); CORNER(20,ajPill); local ajStrk=STROKE(TEXT3,1.2,0.3,ajPill)
     local ajThumb=NEW("Frame",{Size=UDim2.new(0,18,0,18),Position=UDim2.new(0,4,0.5,-9),BackgroundColor3=TEXT3,BorderSizePixel=0},ajPill); CORNER(20,ajThumb)
     local autoJoinActive=false
-    local function SetAutoJoin(on) autoJoinActive=on;getgenv().GBO_AutoJoin=on;ApplyPillState(ajPill,ajStrk,ajThumb,on,COL_PS,PINKD);if TogglesData["Config_AutoJoinPS"] then TogglesData["Config_AutoJoinPS"].Value=on end;if on then AutoRejoinModule._saveSession() end end
+    local function DoJoinPS()
+        local code=getgenv().PSCode or ""; local hub=getgenv().SelectedHub or "Regular"; local sea=getgenv().SelectedSea or "Sea 1"
+        local arg=HubArgs[hub] or true
+        task.spawn(function() pcall(function() ServerModule.Join(code,arg,hub=="Regular" and sea or nil) end) end)
+    end
+    local function SetAutoJoin(on)
+        autoJoinActive=on; getgenv().GBO_AutoJoin=on
+        ApplyPillState(ajPill,ajStrk,ajThumb,on,COL_PS,PINKD)
+        if TogglesData["Config_AutoJoinPS"] then TogglesData["Config_AutoJoinPS"].Value=on end
+        if on then
+            AutoRejoinModule._saveSession()
+            -- Check if already in a PS; if not, join now
+            local inPS=false
+            pcall(function() local rc=game:GetService("ReplicatedStorage"):FindFirstChild("reservedCode"); if rc and rc.Value and rc.Value~="" then inPS=true end end)
+            if not inPS then inPS=(game.PrivateServerId~="") end
+            if not inPS then
+                task.delay(0.3, DoJoinPS)
+            end
+        end
+    end
     TogglesData["Config_AutoJoinPS"]={Value=false,Callback=function(val) SetAutoJoin(val==true) end}
     ajPill.MouseButton1Click:Connect(function() SetAutoJoin(not autoJoinActive) end)
 
@@ -5789,11 +5935,14 @@ else
     RegSearch("Item ESP","Main","Show dropped items","ESP_Item")
     -- Status card
     local statusCard=MakeCard(MainPage,72,1); CardHeader(statusCard,"eye","HUB STATUS",GREEN)
-    NEW("TextLabel",{Text="⬡  Connected  ·  GET BETTER OUT",Size=UDim2.new(0.65,0,0,18),Position=UDim2.new(0,14,0,34),BackgroundTransparency=1,TextColor3=GREEN,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},statusCard)
+    -- Green dot (Frame-based, always visible regardless of font support)
+    local _connDot=NEW("Frame",{Size=UDim2.new(0,9,0,9),Position=UDim2.new(0,14,0,38),BackgroundColor3=GREEN,BorderSizePixel=0},statusCard); CORNER(5,_connDot)
+    NEW("TextLabel",{Text="Connected  ·  GET BETTER OUT",Size=UDim2.new(0.65,0,0,18),Position=UDim2.new(0,30,0,34),BackgroundTransparency=1,TextColor3=GREEN,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},statusCard)
     NEW("TextLabel",{Text="Zili Hub  ·  v2.9.0  ·  Premium Build",Size=UDim2.new(1,-20,0,13),Position=UDim2.new(0,14,0,54),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},statusCard)
-    local pingBadge=NEW("TextLabel",{Text="⬤  LIVE",Size=UDim2.new(0,68,0,20),Position=UDim2.new(1,-80,0,36),BackgroundColor3=C(5,36,18),TextColor3=GREEN,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Center},statusCard)
+    local pingBadge=NEW("TextLabel",{Text=" LIVE",Size=UDim2.new(0,68,0,20),Position=UDim2.new(1,-80,0,36),BackgroundColor3=C(5,36,18),TextColor3=GREEN,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Center},statusCard)
     CORNER(4,pingBadge); STROKE(GREEN,1,0.35,pingBadge)
-    task.spawn(function() while statusCard and statusCard.Parent do TWEEN(pingBadge,0.9,{TextColor3=C(120,255,175)});task.wait(1.2);TWEEN(pingBadge,0.9,{TextColor3=GREEN});task.wait(1.2) end end)
+    local _liveDot=NEW("Frame",{Size=UDim2.new(0,6,0,6),Position=UDim2.new(0,6,0.5,-3),BackgroundColor3=GREEN,BorderSizePixel=0},pingBadge); CORNER(3,_liveDot)
+    task.spawn(function() while statusCard and statusCard.Parent do TWEEN(pingBadge,0.9,{TextColor3=C(120,255,175)});TWEEN(_liveDot,0.9,{BackgroundColor3=C(120,255,175)});task.wait(1.2);TWEEN(pingBadge,0.9,{TextColor3=GREEN});TWEEN(_liveDot,0.9,{BackgroundColor3=GREEN});task.wait(1.2) end end)
 
     -- Quick status card
     local quickCard=MakeCard(MainPage,118,2); CardHeader(quickCard,"lightning","QUICK STATUS",AMBER)
@@ -5830,18 +5979,42 @@ else
         if TogglesData["Config_SelectedSea"] then TogglesData["Config_SelectedSea"].Value=getgenv().SelectedSea end
     end
 
-    -- Current server card
-    local isInPS=(game.PrivateServerId~=""); local psIdShort=isInPS and (string.sub(game.PrivateServerId,1,8).."…"..string.sub(game.PrivateServerId,-5)) or "Public Server"
-    local gwSrvCard=MakeCard(PrivateServerPage,70,0); CardHeader(gwSrvCard,isInPS and "server" or "globe","CURRENT SERVER",isInPS and GREEN or RED)
-    local srvBadge=NEW("TextLabel",{Text=isInPS and "PRIVATE" or "PUBLIC",Size=UDim2.new(0,78,0,20),Position=UDim2.new(1,-90,0,32),BackgroundColor3=isInPS and C(5,36,18) or C(36,8,8),TextColor3=isInPS and GREEN or RED,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Center},gwSrvCard)
-    CORNER(5,srvBadge); STROKE(isInPS and GREEN or RED,1,0.3,srvBadge)
-    NEW("TextLabel",{Text="ID: "..psIdShort,Size=UDim2.new(1,-106,0,14),Position=UDim2.new(0,12,0,34),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.GothamMedium,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},gwSrvCard)
-    NEW("TextLabel",{Text="Job: "..string.sub(game.JobId,1,14).."…",Size=UDim2.new(1,-106,0,12),Position=UDim2.new(0,12,0,50),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},gwSrvCard)
-    local copyBtn=NEW("TextButton",{Text="COPY CODE",Size=UDim2.new(0,78,0,18),Position=UDim2.new(1,-90,0,50),BackgroundColor3=C(6,22,18),TextColor3=CYAN,Font=Enum.Font.GothamBold,TextSize=8,AutoButtonColor=false},gwSrvCard); CORNER(5,copyBtn); STROKE(CYAN,1,0.5,copyBtn)
-    copyBtn.MouseButton1Click:Connect(function() local code="";pcall(function() code=game.PrivateServerAccessKey or game.PrivateServerId or "" end);if code~="" then pcall(function() setclipboard(code) end);copyBtn.Text="COPIED";task.delay(2,function() if copyBtn and copyBtn.Parent then copyBtn.Text="COPY CODE" end end) end end)
+    -- Current server card — uses RS.reservedCode for accurate PS detection
+    local _rsReserved = pcall(function() return game:GetService("ReplicatedStorage").reservedCode end)
+        and pcall(function() return game:GetService("ReplicatedStorage").reservedCode end)
+    local function GetPSCode()
+        local code=""
+        pcall(function() local rc=game:GetService("ReplicatedStorage"):FindFirstChild("reservedCode"); if rc and rc.Value and rc.Value~="" then code=rc.Value end end)
+        if code=="" then pcall(function() code=game.PrivateServerAccessKey or "" end) end
+        if code=="" then pcall(function() code=game.PrivateServerId or "" end) end
+        return code
+    end
+    local _psCode=GetPSCode()
+    local isInPS=(_psCode~="")
+    local psIdShort=isInPS and (string.sub(_psCode,1,10).."…"..string.sub(_psCode,-4)) or "Public Server"
+    local gwSrvCard=MakeCard(PrivateServerPage,80,0); CardHeader(gwSrvCard,isInPS and "server" or "globe","CURRENT SERVER",isInPS and GREEN or RED)
+    -- Status badge
+    local srvBadge=NEW("Frame",{Size=UDim2.new(0,74,0,22),Position=UDim2.new(1,-86,0,32),BackgroundColor3=isInPS and C(5,36,18) or C(36,8,8),BorderSizePixel=0},gwSrvCard); CORNER(5,srvBadge); STROKE(isInPS and GREEN or RED,1,0.3,srvBadge)
+    local _srvDot=NEW("Frame",{Size=UDim2.new(0,7,0,7),Position=UDim2.new(0,7,0.5,-3.5),BackgroundColor3=isInPS and GREEN or RED,BorderSizePixel=0},srvBadge); CORNER(4,_srvDot)
+    NEW("TextLabel",{Text=isInPS and "PRIVATE" or "PUBLIC",Size=UDim2.new(1,-18,1,0),Position=UDim2.new(0,16,0,0),BackgroundTransparency=1,TextColor3=isInPS and GREEN or RED,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},srvBadge)
+    NEW("TextLabel",{Text="ID: "..psIdShort,Size=UDim2.new(1,-96,0,14),Position=UDim2.new(0,12,0,34),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.GothamMedium,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left},gwSrvCard)
+    NEW("TextLabel",{Text="Job: "..string.sub(game.JobId,1,16).."…",Size=UDim2.new(1,-96,0,12),Position=UDim2.new(0,12,0,52),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},gwSrvCard)
+    -- Copy code button (only useful when in PS)
+    local copyBtn=NEW("TextButton",{Text=isInPS and "COPY CODE" or "NO CODE",Size=UDim2.new(0,74,0,18),Position=UDim2.new(1,-86,0,58),BackgroundColor3=isInPS and C(6,22,18) or BG3,TextColor3=isInPS and CYAN or TEXT3,Font=Enum.Font.GothamBold,TextSize=8,AutoButtonColor=false},gwSrvCard)
+    CORNER(5,copyBtn); STROKE(isInPS and CYAN or TEXT3,1,isInPS and 0.5 or 0.7,copyBtn)
+    if isInPS then
+        copyBtn.MouseButton1Click:Connect(function()
+            local code=GetPSCode()
+            if code~="" then
+                pcall(function() setclipboard(code) end)
+                copyBtn.Text="COPIED!"; copyBtn.TextColor3=GREEN
+                task.delay(2,function() if copyBtn and copyBtn.Parent then copyBtn.Text="COPY CODE"; copyBtn.TextColor3=CYAN end end)
+            end
+        end)
+    end
 
-    -- GW Server Setup card
-    local gwCfgCard=MakeCard(PrivateServerPage,10,1); CardHeader(gwCfgCard,"server","SERVER SETUP",PINK)
+    -- GW Server Setup card  (height pre-calculated: header=30 + PS code=92 + hub grid=2×52 + sea=56 + pad = 286)
+    local gwCfgCard=MakeCard(PrivateServerPage,286,1); CardHeader(gwCfgCard,"server","SERVER SETUP",PINK)
     NEW("TextLabel",{Text="Private Server Code",Size=UDim2.new(1,-24,0,14),Position=UDim2.new(0,12,0,36),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},gwCfgCard)
     local gwPsBg=NEW("Frame",{Size=UDim2.new(1,-24,0,32),Position=UDim2.new(0,12,0,52),BackgroundColor3=BG5,BorderSizePixel=0},gwCfgCard); CORNER(7,gwPsBg); local gwPsStrk=STROKE(GOLD3,1,0.45,gwPsBg)
     GW_psBox=NEW("TextBox",{Size=UDim2.new(1,-16,1,0),Position=UDim2.new(0,8,0,0),BackgroundTransparency=1,Text="",PlaceholderText="Paste Private Server code here...",TextColor3=TEXT1,PlaceholderColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,ClearTextOnFocus=false},gwPsBg)
@@ -5873,7 +6046,7 @@ else
     end
     TogglesData["Config_SelectedHub"]={Value="Regular",Callback=function(val) getgenv().SelectedHub=val or "Regular";GW_UpdateHub() end}
     TogglesData["Config_SelectedSea"]={Value="Sea 1",Callback=function(val) getgenv().SelectedSea=val or "Sea 1";GW_UpdateSea() end}
-    task.spawn(function() task.wait(0.05);gwCfgCard.Size=UDim2.new(1,-24,0,GW_seaY+60);GW_UpdateHub();GW_UpdateSea() end)
+    task.spawn(function() task.wait(0.05);GW_UpdateHub();GW_UpdateSea() end)
 
     -- GW Auto Join + Rejoin card
     local gwCtrlCard=MakeCard(PrivateServerPage,188,2); CardHeader(gwCtrlCard,"lightning","AUTO JOIN  ·  REJOIN",PINK)
@@ -6012,25 +6185,62 @@ _pageBuildFns["Fishing + Merchant"] = function()
     end)
 
     -- Live stats card
-    local fsCard=MakeCard(FishingPage,132,2); fsCard.BackgroundColor3=C(8,9,18)
+    local fsCard=MakeCard(FishingPage,186,2); fsCard.BackgroundColor3=C(8,9,18)
     local fsHeader=NEW("Frame",{Size=UDim2.new(1,0,0,24),BackgroundColor3=BG_HDR},fsCard); CORNER(8,fsHeader)
     NEW("Frame",{Size=UDim2.new(1,0,0,12),Position=UDim2.new(0,0,1,-12),BackgroundColor3=BG_HDR,BorderSizePixel=0},fsHeader)
     local fsIconBg=NEW("Frame",{Size=UDim2.new(0,16,0,16),Position=UDim2.new(0,7,0,4),BackgroundColor3=C(28,14,4)},fsHeader); CORNER(4,fsIconBg); DrawIcon(fsIconBg,"chart",2,2,12,ORANGE)
     NEW("TextLabel",{Text="LIVE STATS",Size=UDim2.new(0,100,1,0),Position=UDim2.new(0,30,0,0),BackgroundTransparency=1,TextColor3=ORANGE,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},fsHeader)
-    local FISH_STAT_DEF={{"chest","MYTHIC","—","MythicChest",AMBER,1,0},{"arrows","LEG BAIT","—","LegBait",PURPLE,1,1},{"coin","PELI","0","Peli",CYAN,2,0},{"bottle","BAIT","—","Bait",ORANGE,2,1}}
+    -- Expand/fullscreen toggle button (DrawIcon-based, always renders)
+    local fsExpandBg=NEW("Frame",{Size=UDim2.new(0,22,0,16),Position=UDim2.new(1,-26,0.5,-8),BackgroundColor3=C(30,18,6),BorderSizePixel=0},fsHeader); CORNER(4,fsExpandBg); STROKE(ORANGE,1,0.5,fsExpandBg)
+    local fsExpandBtn=NEW("TextButton",{Text="",Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,ZIndex=2},fsExpandBg)
+    -- Plus icon inside (two crossing bars)
+    local _fsPlusH=NEW("Frame",{Size=UDim2.new(0,10,0,2),Position=UDim2.new(0.5,-5,0.5,-1),BackgroundColor3=ORANGE,BorderSizePixel=0},fsExpandBg); CORNER(1,_fsPlusH)
+    local _fsPlusV=NEW("Frame",{Size=UDim2.new(0,2,0,10),Position=UDim2.new(0.5,-1,0.5,-5),BackgroundColor3=ORANGE,BorderSizePixel=0},fsExpandBg); CORNER(1,_fsPlusV)
+    local _fsExpanded=false
     local FishStatValues={}
-    NEW("Frame",{Size=UDim2.new(0,1,0,90),Position=UDim2.new(0.5,0,0,24),BackgroundColor3=C(28,26,48),BorderSizePixel=0},fsCard)
-    NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,0,78),BackgroundColor3=C(28,26,48),BorderSizePixel=0},fsCard)
+    local FISH_STAT_DEF={{"chest","MYTHIC","--","MythicChest",AMBER,1,0},{"arrows","LEG BAIT","--","LegBait",PURPLE,1,1},{"coin","PELI","0","Peli",CYAN,2,0},{"bottle","BAIT","--","Bait",ORANGE,2,1}}
+    -- Dividers
+    NEW("Frame",{Size=UDim2.new(0,1,0,138),Position=UDim2.new(0.5,0,0,24),BackgroundColor3=C(28,26,48),BorderSizePixel=0},fsCard)
+    NEW("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,0,102),BackgroundColor3=C(28,26,48),BorderSizePixel=0},fsCard)
     for _,def in ipairs(FISH_STAT_DEF) do
         local iconName,lbl,val,key,accentC,row,col=def[1],def[2],def[3],def[4],def[5],def[6],def[7]
-        local rowY=(row==1) and 26 or 80;local xScale=col*0.5;local cellMid=xScale+0.25
-        local iconCell=NEW("Frame",{Size=UDim2.new(0,26,0,26),Position=UDim2.new(cellMid,-13,0,rowY+2),BackgroundColor3=C(math.min(255,math.floor(accentC.R*255*0.14+8)),math.min(255,math.floor(accentC.G*255*0.14+8)),math.min(255,math.floor(accentC.B*255*0.14+8))),BorderSizePixel=0},fsCard); CORNER(6,iconCell); DrawIcon(iconCell,iconName,3,3,20,accentC)
-        local valLbl=NEW("TextLabel",{Text=val,Size=UDim2.new(0.5,-4,0,20),Position=UDim2.new(xScale,2,0,rowY+30),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamBold,TextSize=16,TextXAlignment=Enum.TextXAlignment.Center},fsCard)
-        NEW("TextLabel",{Text=lbl,Size=UDim2.new(0.5,-4,0,11),Position=UDim2.new(xScale,2,0,rowY+52),BackgroundTransparency=1,TextColor3=accentC,Font=Enum.Font.GothamBold,TextSize=8,TextXAlignment=Enum.TextXAlignment.Center},fsCard)
+        local rowY=(row==1) and 28 or 104
+        local xScale=col*0.5; local cellMid=xScale+0.25
+        local iconCell=NEW("Frame",{Size=UDim2.new(0,28,0,28),Position=UDim2.new(cellMid,-14,0,rowY),BackgroundColor3=C(math.min(255,math.floor(accentC.R*255*0.14+8)),math.min(255,math.floor(accentC.G*255*0.14+8)),math.min(255,math.floor(accentC.B*255*0.14+8))),BorderSizePixel=0},fsCard); CORNER(7,iconCell); DrawIcon(iconCell,iconName,4,4,20,accentC)
+        local valLbl=NEW("TextLabel",{Text=val,Size=UDim2.new(0.5,-4,0,22),Position=UDim2.new(xScale,2,0,rowY+32),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamBold,TextSize=15,TextXAlignment=Enum.TextXAlignment.Center},fsCard)
+        NEW("TextLabel",{Text=lbl,Size=UDim2.new(0.5,-4,0,11),Position=UDim2.new(xScale,2,0,rowY+55),BackgroundTransparency=1,TextColor3=accentC,Font=Enum.Font.GothamBold,TextSize=8,TextXAlignment=Enum.TextXAlignment.Center},fsCard)
         FishStatValues[key]=valLbl
     end
-    local fsStatusLbl=NEW("TextLabel",{Text="Status: Idle",Size=UDim2.new(1,-8,0,12),Position=UDim2.new(0,4,0,118),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Center},fsCard)
+    local fsStatusLbl=NEW("TextLabel",{Text="Status: Idle",Size=UDim2.new(1,-8,0,12),Position=UDim2.new(0,4,0,168),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Center},fsCard)
     getgenv().GBO_SetFishStatus=function(msg) pcall(function() if fsStatusLbl and fsStatusLbl.Parent then fsStatusLbl.Text="Status: "..(msg or "Idle") end end) end
+    local _fsOverlay=nil
+    -- Expand button click: toggle +/- icon
+    fsExpandBtn.MouseButton1Click:Connect(function()
+        if _fsOverlay and _fsOverlay.Parent then
+            _fsOverlay:Destroy(); _fsOverlay=nil
+            -- Restore to plus
+            _fsPlusV.Visible=true
+            return
+        end
+        -- Switch to minus (hide vertical bar)
+        _fsPlusV.Visible=false
+        _fsOverlay=NEW("Frame",{Size=UDim2.new(0,150,0,150),Position=UDim2.new(0.5,-75,0.5,-75),BackgroundColor3=BG1,BorderSizePixel=0,ZIndex=900,ClipsDescendants=true},ScreenGui)
+        CORNER(10,_fsOverlay); STROKE(ORANGE,1.5,0.08,_fsOverlay)
+        NEW("TextLabel",{Text="LIVE STATS",Size=UDim2.new(1,0,0,20),Position=UDim2.new(0,0,0,2),BackgroundTransparency=1,TextColor3=ORANGE,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=901},_fsOverlay)
+        local closeFs=NEW("TextButton",{Text="x",Size=UDim2.new(0,18,0,18),Position=UDim2.new(1,-20,0,1),BackgroundTransparency=1,TextColor3=RED,Font=Enum.Font.GothamBold,TextSize=12,ZIndex=902},_fsOverlay)
+        closeFs.MouseButton1Click:Connect(function() if _fsOverlay then _fsOverlay:Destroy(); _fsOverlay=nil end; _fsPlusV.Visible=true end)
+        local OVERLAY_DEFS={{"MYTHIC","MythicChest",AMBER,4,24},{"LEG BAIT","LegBait",PURPLE,79,24},{"PELI","Peli",CYAN,4,86},{"BAIT","Bait",ORANGE,79,86}}
+        for _,od in ipairs(OVERLAY_DEFS) do
+            local lbl,key,col,ox,oy=od[1],od[2],od[3],od[4],od[5]
+            local cell=NEW("Frame",{Size=UDim2.new(0,63,0,56),Position=UDim2.new(0,ox,0,oy),BackgroundColor3=C(12,10,26),BorderSizePixel=0,ZIndex=901},_fsOverlay); CORNER(6,cell); STROKE(col,1,0.5,cell)
+            local vLbl=NEW("TextLabel",{Text=FishStatValues[key] and FishStatValues[key].Text or "--",Size=UDim2.new(1,0,0,26),Position=UDim2.new(0,0,0,8),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamBold,TextSize=16,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=902},cell)
+            NEW("TextLabel",{Text=lbl,Size=UDim2.new(1,0,0,12),Position=UDim2.new(0,0,0,36),BackgroundTransparency=1,TextColor3=col,Font=Enum.Font.GothamBold,TextSize=8,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=902},cell)
+            task.spawn(function() while _fsOverlay and _fsOverlay.Parent do task.wait(2); if FishStatValues[key] then pcall(function() vLbl.Text=FishStatValues[key].Text end) end end end)
+        end
+        local oStatus=NEW("TextLabel",{Text=fsStatusLbl and fsStatusLbl.Text or "Status: Idle",Size=UDim2.new(1,-4,0,12),Position=UDim2.new(0,2,0,144),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=8,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=901},_fsOverlay)
+        task.spawn(function() while _fsOverlay and _fsOverlay.Parent do task.wait(1); if fsStatusLbl then pcall(function() oStatus.Text=fsStatusLbl.Text end) end end end)
+        TWEEN_BACK(_fsOverlay,0.22,{Position=UDim2.new(0.5,-75,0.5,-75)})
+    end)
     local _lastMythic=0
     task.spawn(function()
         while fsCard and fsCard.Parent do task.wait(2.5)
@@ -6055,13 +6265,31 @@ _pageBuildFns["Fishing + Merchant"] = function()
     end)
 
     -- Fishing config card
-    local fcCard=MakeCard(FishingPage,530,3); CardHeader(fcCard,"gear","CONFIGURATION",GOLD)
+    local fcCard=MakeCard(FishingPage,512,3); CardHeader(fcCard,"gear","CONFIGURATION",GOLD)
     local function CreateDropdown(parent,titleText,options,defaultSelect,posY,configKey,isMulti,showSearch)
         NEW("TextLabel",{Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,posY),BackgroundTransparency=1,Text=titleText,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},parent)
         local headBtn=NEW("TextButton",{Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,posY-2),BackgroundColor3=BG5,TextColor3=GOLD2,Font=Enum.Font.GothamSemibold,TextSize=11,Text=isMulti and "Select..." or (defaultSelect or "Select..."),AutoButtonColor=false},parent); CORNER(5,headBtn); local headStroke=STROKE(GOLD3,1,0,headBtn)
         local dropScroll=NEW("ScrollingFrame",{Size=UDim2.new(0,158,0,0),Position=UDim2.new(0,0,0,0),BackgroundColor3=BG0,BorderSizePixel=0,ScrollBarThickness=2,Visible=false,ZIndex=200,ScrollBarImageColor3=GOLD,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new(0,0,0,0)},ScreenGui)
         CORNER(5,dropScroll); STROKE(GOLD3,1,0,dropScroll); NEW("UIListLayout",{HorizontalAlignment=Enum.HorizontalAlignment.Center,Padding=UDim.new(0,2)},dropScroll); NEW("UIPadding",{PaddingTop=UDim.new(0,3)},dropScroll)
-        local searchInput; if showSearch then searchInput=NEW("TextBox",{Size=UDim2.new(1,-6,0,22),BackgroundTransparency=1,Text="",PlaceholderText="Search...",TextColor3=TEXT1,Font=Enum.Font.Gotham,TextSize=11,PlaceholderColor3=TEXT3,ZIndex=201},dropScroll) end
+        local searchInput; if showSearch then
+            searchInput=NEW("TextBox",{
+                Size=UDim2.new(1,-6,0,22),
+                BackgroundColor3=C(12,10,26),
+                BackgroundTransparency=0,
+                Text="",
+                PlaceholderText="Search...",
+                TextColor3=TEXT1,
+                Font=Enum.Font.Gotham,
+                TextSize=11,
+                PlaceholderColor3=TEXT3,
+                ZIndex=201,
+                LayoutOrder=-1,   -- MUST be first child so UIListLayout renders it at top
+                BorderSizePixel=0,
+                ClearTextOnFocus=false,
+            },dropScroll)
+            CORNER(3,searchInput)
+            STROKE(GOLD3,1,0.4,searchInput)
+        end
         local initVal=isMulti and {} or nil
         local function defaultCallback(val)
             if isMulti then local ct=0;for _,b in ipairs(dropScroll:GetChildren()) do if b:IsA("TextButton") then local sel=type(val)=="table" and val[b.Name]==true;if sel then TWEEN(b,0.1,{TextColor3=GOLD2});b.Font=Enum.Font.GothamBold;if not b:FindFirstChild("TickMark") then NEW("TextLabel",{Name="TickMark",Text="✓",TextColor3=GOLD2,TextXAlignment=Enum.TextXAlignment.Right,Size=UDim2.new(1,-5,1,0),BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=12,ZIndex=202},b) end;ct+=1 else TWEEN(b,0.1,{TextColor3=TEXT2});b.Font=Enum.Font.Gotham;local tm=b:FindFirstChild("TickMark");if tm then tm:Destroy() end end end end;headBtn.Text=ct>0 and (ct.." Selected") or "Select..."
@@ -6074,8 +6302,8 @@ _pageBuildFns["Fishing + Merchant"] = function()
         headBtn.MouseButton1Click:Connect(function() if dropScroll.Visible then closeDrop() else openDrop() end end)
         UIS.InputBegan:Connect(function(inp) if inp.UserInputType==Enum.UserInputType.MouseButton1 and dropScroll.Visible then local mx,my=inp.Position.X,inp.Position.Y;local dp,ds=dropScroll.AbsolutePosition,dropScroll.AbsoluteSize;local bp,bs=headBtn.AbsolutePosition,headBtn.AbsoluteSize;if not(mx>=dp.X and mx<=dp.X+ds.X and my>=dp.Y and my<=dp.Y+ds.Y) and not(mx>=bp.X and mx<=bp.X+bs.X and my>=bp.Y and my<=bp.Y+bs.Y) then closeDrop() end end end)
         if showSearch and searchInput then searchInput:GetPropertyChangedSignal("Text"):Connect(function() local ft=searchInput.Text:lower();for _,b in ipairs(dropScroll:GetChildren()) do if b:IsA("TextButton") then b.Visible=ft=="" or (b.Name:lower():find(ft,1,true)~=nil) end end end) end
-        for _,opt in ipairs(options) do
-            local btn=NEW("TextButton",{Size=UDim2.new(1,-6,0,24),BackgroundTransparency=1,ZIndex=201,Text="  "..opt,Font=Enum.Font.Gotham,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left,Name=opt,AutoButtonColor=false},dropScroll); CORNER(3,btn); btn.TextColor3=TEXT2
+        for i,opt in ipairs(options) do
+            local btn=NEW("TextButton",{Size=UDim2.new(1,-6,0,24),BackgroundTransparency=1,ZIndex=201,Text="  "..opt,Font=Enum.Font.Gotham,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left,Name=opt,AutoButtonColor=false,LayoutOrder=i},dropScroll); CORNER(3,btn); btn.TextColor3=TEXT2
             btn.MouseEnter:Connect(function() TWEEN(btn,0.1,{BackgroundTransparency=0.85,BackgroundColor3=BG4,TextColor3=GOLD2});btn.Font=Enum.Font.GothamSemibold end)
             btn.MouseLeave:Connect(function() local isSel=isMulti and TogglesData[configKey].Value[opt] or (not isMulti and TogglesData[configKey].Value==opt);if not isSel then TWEEN(btn,0.1,{BackgroundTransparency=1,TextColor3=TEXT2});btn.Font=Enum.Font.Gotham end end)
             btn.MouseButton1Click:Connect(function()
@@ -6084,16 +6312,16 @@ _pageBuildFns["Fishing + Merchant"] = function()
             end)
         end
     end
-    CreateDropdown(fcCard,"Auto Select Bait",{"Common Fish Bait","Rare Fish Bait","Legendary Fish Bait"},nil,34,"Config_SelectBait",false,false)
-    CreateDropdown(fcCard,"Auto Sell Fish",{"Common Fish","Rare Fish","Legendary Fish"},nil,78,"Config_SellFish",true,false)
+    CreateDropdown(fcCard,"Auto Select Bait",{"Common Fish Bait","Rare Fish Bait","Legendary Fish Bait"},nil,42,"Config_SelectBait",false,false)
+    CreateDropdown(fcCard,"Auto Sell Fish",{"Common Fish","Rare Fish","Legendary Fish"},nil,86,"Config_SellFish",true,false)
     -- Buy items
     do
         local BUY_ITEMS={"All Seeing Shamrock","Mythical Fruit Chest","Legendary Fruit Chest","Legendary Fish Bait","Merchants Banana Rod","Race Reroll","Rare Fruit Chest","Rare Fish Bait","Karoo Mount","Special Tailor Token","SP Reset Essence","Knight's Gauntlet","Crab Cutlass","Bisento","Kessui","Raiui","Tropical Parrot","Coffin Boat","Striker","Hoverboard"}
-        NEW("TextLabel",{Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,122),BackgroundTransparency=1,Text="Auto Buy Items",TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},fcCard)
-        local buyCountBadge=NEW("TextLabel",{Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,120),BackgroundColor3=BG5,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=11,Text="Select items...",TextXAlignment=Enum.TextXAlignment.Center},fcCard); CORNER(5,buyCountBadge); STROKE(GOLD3,1,0,buyCountBadge)
-        local buySearchBox=NEW("TextBox",{Size=UDim2.new(1,-24,0,26),Position=UDim2.new(0,12,0,150),BackgroundColor3=BG5,PlaceholderText="  Search items...",Text="",TextColor3=GOLD2,Font=Enum.Font.GothamSemibold,TextSize=11,ClearTextOnFocus=false},fcCard); CORNER(6,buySearchBox); local bss=STROKE(GOLD3,1,0,buySearchBox)
+        NEW("TextLabel",{Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,130),BackgroundTransparency=1,Text="Auto Buy Items",TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},fcCard)
+        local buyCountBadge=NEW("TextLabel",{Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,128),BackgroundColor3=BG5,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=11,Text="Select items...",TextXAlignment=Enum.TextXAlignment.Center},fcCard); CORNER(5,buyCountBadge); STROKE(GOLD3,1,0,buyCountBadge)
+        local buySearchBox=NEW("TextBox",{Size=UDim2.new(1,-24,0,26),Position=UDim2.new(0,12,0,158),BackgroundColor3=BG5,PlaceholderText="  Search items...",Text="",TextColor3=GOLD2,Font=Enum.Font.GothamSemibold,TextSize=11,ClearTextOnFocus=false},fcCard); CORNER(6,buySearchBox); local bss=STROKE(GOLD3,1,0,buySearchBox)
         buySearchBox.Focused:Connect(function() buySearchBox.Text="";TWEEN(bss,0.15,{Color=GOLD2}) end); buySearchBox.FocusLost:Connect(function() TWEEN(bss,0.15,{Color=GOLD3}) end)
-        local buyList=NEW("ScrollingFrame",{Size=UDim2.new(1,-24,0,120),Position=UDim2.new(0,12,0,182),BackgroundColor3=BG0,BorderSizePixel=0,ScrollBarThickness=2,ScrollBarImageColor3=GOLD,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new(0,0,0,0)},fcCard); CORNER(6,buyList); STROKE(GOLD3,1,0,buyList)
+        local buyList=NEW("ScrollingFrame",{Size=UDim2.new(1,-24,0,120),Position=UDim2.new(0,12,0,190),BackgroundColor3=BG0,BorderSizePixel=0,ScrollBarThickness=2,ScrollBarImageColor3=GOLD,AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new(0,0,0,0)},fcCard); CORNER(6,buyList); STROKE(GOLD3,1,0,buyList)
         NEW("UIListLayout",{HorizontalAlignment=Enum.HorizontalAlignment.Center,Padding=UDim.new(0,2),SortOrder=Enum.SortOrder.LayoutOrder},buyList); NEW("UIPadding",{PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4)},buyList)
         local buyBtns={}
         TogglesData["Config_BuyItems"]={Value={},HeadBtn=buyCountBadge,Callback=function(val) if type(val)~="table" then return end;local ct=0;for itemName,data in pairs(buyBtns) do local sel=val[itemName]==true;if data.check then data.check.Text=sel and "✓" or "" end;if data.nameLbl then data.nameLbl.TextColor3=sel and GOLD2 or TEXT2;data.nameLbl.Font=sel and Enum.Font.GothamBold or Enum.Font.Gotham end;if sel then ct+=1 end end;buyCountBadge.Text=ct>0 and (ct.." Selected") or "Select items...";buyCountBadge.TextColor3=ct>0 and GOLD2 or TEXT3;TogglesData["Config_BuyItems"].Value=val end}
@@ -6112,15 +6340,16 @@ _pageBuildFns["Fishing + Merchant"] = function()
         end
         buySearchBox:GetPropertyChangedSignal("Text"):Connect(function() local ft=buySearchBox.Text:lower();for name,data in pairs(buyBtns) do data.row.Visible=ft=="" or name:lower():find(ft,1,true)~=nil end end)
     end
-    CreateDropdown(fcCard,"Auto Craft Bait",{"Rare Fish Bait","Legendary Fish Bait"},nil,318,"Config_CraftBait",true,false)
+    CreateDropdown(fcCard,"Auto Craft Bait",{"Rare Fish Bait","Legendary Fish Bait"},nil,326,"Config_CraftBait",true,false)
+    CreateDropdown(fcCard,"Craft Mode  (Rare Bait)",{"single","all"},"single",370,"Config_CraftRareMode",false,false)
     _G.FishBuyAmount=50
-    NEW("TextLabel",{Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,428),BackgroundTransparency=1,Text="Bait Buy Amount",TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},fcCard)
-    local buyAmtFrame=NEW("Frame",{Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,426),BackgroundColor3=BG5},fcCard); CORNER(5,buyAmtFrame); local buyAmtStroke=STROKE(GOLD3,1,0,buyAmtFrame)
+    NEW("TextLabel",{Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,410),BackgroundTransparency=1,Text="Bait Buy Amount",TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},fcCard)
+    local buyAmtFrame=NEW("Frame",{Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,408),BackgroundColor3=BG5},fcCard); CORNER(5,buyAmtFrame); local buyAmtStroke=STROKE(GOLD3,1,0,buyAmtFrame)
     local buyAmtBox=NEW("TextBox",{Size=UDim2.new(1,-16,1,0),Position=UDim2.new(0,8,0,0),BackgroundTransparency=1,Text="50",PlaceholderText="50",TextColor3=GOLD2,Font=Enum.Font.GothamSemibold,TextSize=12,ClearTextOnFocus=false},buyAmtFrame)
     buyAmtBox.Focused:Connect(function() TWEEN(buyAmtStroke,0.15,{Color=GOLD2}) end); buyAmtBox.FocusLost:Connect(function() local v=tonumber(buyAmtBox.Text);if v and v>0 then _G.FishBuyAmount=math.floor(v) else buyAmtBox.Text=tostring(_G.FishBuyAmount) end;TogglesData["Config_BaitAmount"].Value=_G.FishBuyAmount;TWEEN(buyAmtStroke,0.15,{Color=GOLD3}) end)
     TogglesData["Config_BaitAmount"]={Value=50,HeadBtn=buyAmtBox,Callback=function(val) local n=tonumber(val);if n and n>0 then _G.FishBuyAmount=math.floor(n);pcall(function() buyAmtBox.Text=tostring(math.floor(n)) end) end end}
-    NEW("TextLabel",{Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,466),BackgroundTransparency=1,Text="Discord Webhook",TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},fcCard)
-    local boxFrameWH=NEW("Frame",{Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,464),BackgroundColor3=BG5},fcCard); CORNER(5,boxFrameWH); local boxStrokeWH=STROKE(GOLD3,1,0,boxFrameWH)
+    NEW("TextLabel",{Size=UDim2.new(0,150,0,20),Position=UDim2.new(0,12,0,448),BackgroundTransparency=1,Text="Discord Webhook",TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},fcCard)
+    local boxFrameWH=NEW("Frame",{Size=UDim2.new(0,158,0,24),Position=UDim2.new(1,-170,0,446),BackgroundColor3=BG5},fcCard); CORNER(5,boxFrameWH); local boxStrokeWH=STROKE(GOLD3,1,0,boxFrameWH)
     local textBoxWH=NEW("TextBox",{Size=UDim2.new(1,-16,1,0),Position=UDim2.new(0,8,0,0),BackgroundTransparency=1,Text="",PlaceholderText="https://discord...",TextColor3=TEXT1,PlaceholderColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,ClearTextOnFocus=false,ClipsDescendants=true},boxFrameWH)
     TogglesData["Config_Webhook"]={Value="",HeadBtn=textBoxWH,Callback=function(val) _G.WebhookUrl=val or "";pcall(function() textBoxWH.Text=val or "" end) end}
     textBoxWH.FocusLost:Connect(function() _G.WebhookUrl=textBoxWH.Text;TogglesData["Config_Webhook"].Value=textBoxWH.Text;TWEEN(boxStrokeWH,0.15,{Color=GOLD2});task.wait(0.2);TWEEN(boxStrokeWH,0.2,{Color=GOLD3}) end)
@@ -6208,38 +6437,76 @@ CardToggle(cfgAutoHideCard,124,"AutoHideOnLoad",function(state)
 end,C(45,225,218))
 
 -- ── THEME PICKER CARD ────────────────────────────────────────────────
-local themeCard=MakeCard(ConfigPage,80,1); CardHeader(themeCard,"fruit","COLOR THEME",GOLD2)
-NEW("TextLabel",{Text="Theme",Size=UDim2.new(0.4,0,0,20),Position=UDim2.new(0,14,0,34),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left},themeCard)
+local themeCard=MakeCard(ConfigPage,136,1); CardHeader(themeCard,"fruit","COLOR THEME",GOLD2)
+NEW("TextLabel",{Text="Accent color applied across the entire hub",Size=UDim2.new(1,-24,0,14),Position=UDim2.new(0,14,0,34),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},themeCard)
 local _themeBtns={}
+-- 2 rows × 4 cols
 for i,th in ipairs(THEMES) do
-    local bx=NEW("TextButton",{Size=UDim2.new(0,56,0,26),Position=UDim2.new(0,100+(i-1)*62,0,38),BackgroundColor3=C(math.floor(th.main.R*255*0.12),math.floor(th.main.G*255*0.12),math.floor(th.main.B*255*0.12)),Text=th.name,TextColor3=th.main,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false},themeCard)
-    CORNER(5,bx); local bxS=STROKE(th.c2,1,i==1 and 0.1 or 0.6,bx)
-    _themeBtns[i]={btn=bx,strk=bxS}
+    local col=(i-1)%4; local row=math.floor((i-1)/4)
+    local bx=NEW("TextButton",{
+        Size=UDim2.new(0.25,-8,0,42),
+        Position=UDim2.new(col*0.25,col==0 and 6 or 4,0,52+row*50),
+        BackgroundColor3=C(math.max(0,math.floor(th.main.R*255*0.10)),math.max(0,math.floor(th.main.G*255*0.10)),math.max(0,math.floor(th.main.B*255*0.10))),
+        Text="",AutoButtonColor=false
+    },themeCard)
+    CORNER(8,bx); local bxS=STROKE(th.c2,1.5,i==1 and 0 or 0.55,bx)
+    -- Color dot
+    local dot=NEW("Frame",{Size=UDim2.new(0,16,0,16),Position=UDim2.new(0.5,-8,0,4),BackgroundColor3=th.main,BorderSizePixel=0},bx); CORNER(8,dot); STROKE(th.c2,1,0.2,dot)
+    -- Theme name
+    NEW("TextLabel",{Text=th.name,Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-16),BackgroundTransparency=1,TextColor3=th.main,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Center},bx)
+    -- Active indicator bar
+    local activeBar=NEW("Frame",{Size=UDim2.new(i==1 and 1 or 0,0,0,2),Position=UDim2.new(0,0,1,-2),BackgroundColor3=th.main,BorderSizePixel=0},bx); CORNER(1,activeBar)
+    _themeBtns[i]={btn=bx,strk=bxS,dot=dot,bar=activeBar}
+    bx.MouseEnter:Connect(function() if _curTheme~=i then TWEEN(bx,0.12,{BackgroundColor3=C(math.max(0,math.floor(th.main.R*255*0.18)),math.max(0,math.floor(th.main.G*255*0.18)),math.max(0,math.floor(th.main.B*255*0.18)))}) end end)
+    bx.MouseLeave:Connect(function() if _curTheme~=i then TWEEN(bx,0.12,{BackgroundColor3=C(math.max(0,math.floor(th.main.R*255*0.10)),math.max(0,math.floor(th.main.G*255*0.10)),math.max(0,math.floor(th.main.B*255*0.10)))}) end end)
     bx.MouseButton1Click:Connect(function()
         ApplyTheme(i)
-        for j,td in ipairs(_themeBtns) do TWEEN(td.strk,0.18,{Transparency=j==i and 0.1 or 0.6}) end
+        for j,td in ipairs(_themeBtns) do
+            TWEEN(td.strk,0.2,{Transparency=j==i and 0 or 0.55})
+            TWEEN(td.bar,0.2,{Size=UDim2.new(j==i and 1 or 0,0,0,2)})
+        end
         Toast("Theme: "..th.name,th.main,"⬡")
     end)
 end
 
 -- ── KEYBIND CONFIG CARD ───────────────────────────────────────────────
-local kbCard=MakeCard(ConfigPage,72,2); CardHeader(kbCard,"lightning","KEYBIND",AMBER)
-NEW("TextLabel",{Text="Toggle Hub",Size=UDim2.new(0.5,0,0,20),Position=UDim2.new(0,14,0,34),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left},kbCard)
-local _kbLbl=NEW("TextLabel",{Text="RightShift",Size=UDim2.new(0.4,0,0,18),Position=UDim2.new(0.55,0,0,36),BackgroundTransparency=1,TextColor3=AMBER,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center},kbCard)
-local _kbBtn=NEW("TextButton",{Text="Click to rebind",Size=UDim2.new(0,108,0,26),Position=UDim2.new(1,-120,0,38),BackgroundColor3=BG5,TextColor3=TEXT2,Font=Enum.Font.GothamSemibold,TextSize=10,AutoButtonColor=false},kbCard)
-CORNER(6,_kbBtn); local _kbS=STROKE(GOLD3,1,0.3,_kbBtn)
+local kbCard=MakeCard(ConfigPage,110,2); CardHeader(kbCard,"lightning","KEYBIND",AMBER)
+NEW("TextLabel",{Text="Toggle Hub Visibility",Size=UDim2.new(0.6,0,0,16),Position=UDim2.new(0,14,0,36),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},kbCard)
+NEW("TextLabel",{Text="Press to show / hide the hub",Size=UDim2.new(0.7,0,0,13),Position=UDim2.new(0,14,0,54),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left},kbCard)
+-- Current key display badge
+local _kbKeyBadge=NEW("Frame",{Size=UDim2.new(0,110,0,34),Position=UDim2.new(0,14,0,70),BackgroundColor3=C(22,18,6),BorderSizePixel=0},kbCard); CORNER(8,_kbKeyBadge)
+local _kbKeyStroke=STROKE(AMBER,1.5,0.2,_kbKeyBadge)
+-- Keyboard icon in badge
+do local kico=NEW("Frame",{Size=UDim2.new(0,16,0,16),Position=UDim2.new(0,8,0.5,-8),BackgroundTransparency=1,BorderSizePixel=0},_kbKeyBadge)
+    NEW("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0},kico); CORNER(3,kico); STROKE(AMBER,1.2,0,kico)
+    for r=0,1 do for c=0,2 do NEW("Frame",{Size=UDim2.new(0,3,0,3),Position=UDim2.new(0,2+c*5,0,2+r*5),BackgroundColor3=AMBER,BackgroundTransparency=0.4,BorderSizePixel=0},kico) end end
+end
+local _kbLbl=NEW("TextLabel",{Text="RightShift",Size=UDim2.new(1,-30,1,0),Position=UDim2.new(0,28,0,0),BackgroundTransparency=1,TextColor3=AMBER,Font=Enum.Font.GothamBold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left},_kbKeyBadge)
+-- Rebind button
+local _kbBtn=NEW("TextButton",{Text="REBIND",Size=UDim2.new(0,80,0,34),Position=UDim2.new(1,-92,0,70),BackgroundColor3=C(30,20,4),TextColor3=AMBER,Font=Enum.Font.GothamBold,TextSize=10,AutoButtonColor=false},kbCard)
+CORNER(8,_kbBtn); local _kbS=STROKE(AMBER,1.2,0.3,_kbBtn)
+_kbBtn.MouseEnter:Connect(function() TWEEN(_kbBtn,0.15,{BackgroundColor3=C(50,36,6),TextColor3=C(255,235,100)}) end)
+_kbBtn.MouseLeave:Connect(function() TWEEN(_kbBtn,0.15,{BackgroundColor3=C(30,20,4),TextColor3=AMBER}) end)
+CORNER(8,_kbBtn); local _kbS=STROKE(AMBER,1.2,0.3,_kbBtn)
+_kbBtn.MouseEnter:Connect(function() TWEEN(_kbBtn,0.15,{BackgroundColor3=C(50,36,6),TextColor3=C(255,235,100)}) end)
+_kbBtn.MouseLeave:Connect(function() TWEEN(_kbBtn,0.15,{BackgroundColor3=C(30,20,4),TextColor3=AMBER}) end)
 local _listening=false
 _kbBtn.MouseButton1Click:Connect(function()
     if _listening then return end
-    _listening=true; _kbBtn.Text="Press any key..."; _kbBtn.TextColor3=AMBER; TWEEN(_kbS,0.15,{Color=AMBER,Transparency=0})
+    _listening=true
+    _kbBtn.Text="Listening..."
+    TWEEN(_kbBtn,0.15,{BackgroundColor3=C(45,30,4)})
+    TWEEN(_kbKeyStroke,0.15,{Transparency=0,Color=C(255,235,100)})
     local conn; conn=UIS.InputBegan:Connect(function(inp,gpe)
         if gpe then return end
         if inp.UserInputType==Enum.UserInputType.Keyboard then
             _keybindKey=inp.KeyCode
-            _kbLbl.Text=tostring(inp.KeyCode):gsub("Enum.KeyCode.","")
-            _kbBtn.Text="Click to rebind"; _kbBtn.TextColor3=TEXT2
-            TWEEN(_kbS,0.15,{Color=GOLD3,Transparency=0.3})
-            Toast("Keybind set: ".._kbLbl.Text,AMBER,"⚡")
+            local keyName=tostring(inp.KeyCode):gsub("Enum.KeyCode.","")
+            _kbLbl.Text=keyName
+            _kbBtn.Text="REBIND"
+            TWEEN(_kbBtn,0.15,{BackgroundColor3=C(30,20,4),TextColor3=AMBER})
+            TWEEN(_kbKeyStroke,0.15,{Transparency=0.2,Color=AMBER})
+            Toast("Keybind: "..keyName,AMBER,"⚡")
             _listening=false; conn:Disconnect()
         end
     end)
@@ -6304,29 +6571,49 @@ UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseB
 -- CLOSE BUTTON
 -- =====================================================================
 CloseBtn.MouseButton1Click:Connect(function()
-    getgenv().ZiliHub_Loaded=false
-    local origPos=MainFrame.Position; local ox,oy=origPos.X.Offset,origPos.Y.Offset
-    TWEEN(CloseBtn,0.06,{TextColor3=C(255,40,40)})
-    local redOverlay=NEW("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=C(200,20,20),BackgroundTransparency=0.87,ZIndex=100,BorderSizePixel=0},MainFrame); CORNER(10,redOverlay)
-    task.wait(0.06); TWEEN(redOverlay,0.08,{BackgroundTransparency=1})
-    local glitch={-7,5,-9,8,-3,6,-2,1,0}
-    for _,dx in ipairs(glitch) do TweenService:Create(MainFrame,TweenInfo.new(0.02,Enum.EasingStyle.Linear),{Position=UDim2.new(origPos.X.Scale,ox+dx,origPos.Y.Scale,oy+math.random(-2,2))}):Play();task.wait(0.02) end
-    local cx=MainFrame.AbsolutePosition.X+MainFrame.AbsoluteSize.X/2; local cy=MainFrame.AbsolutePosition.Y+MainFrame.AbsoluteSize.Y/2
-    local allParticles={}
-    for i=0,11 do
-        local angle=(i/12)*math.pi*2; local dir={math.cos(angle),math.sin(angle)}; local sz=math.random(4,10)
-        local col=i%3==0 and GOLD2 or i%3==1 and C(220,60,60) or C(255,240,200)
-        local frag=NEW("Frame",{Size=UDim2.new(0,sz,0,sz),Position=UDim2.new(0,cx-sz/2,0,cy-sz/2),BackgroundColor3=col,BorderSizePixel=0,ZIndex=102},ScreenGui); CORNER(math.random(2,5),frag)
-        table.insert(allParticles,{frag=frag,dir=dir,dist=math.random(120,240)})
-    end
-    local shockwave=NEW("Frame",{Size=UDim2.new(0,10,0,10),Position=UDim2.new(0,cx-5,0,cy-5),BackgroundTransparency=1,ZIndex=105,BorderSizePixel=0},ScreenGui); CORNER(5,shockwave); STROKE(GOLD,2.5,0,shockwave)
-    TweenService:Create(MainFrame,TweenInfo.new(0.38,Enum.EasingStyle.Back,Enum.EasingDirection.In),{Position=UDim2.new(origPos.X.Scale,ox+MainFrame.AbsoluteSize.X/2-10,origPos.Y.Scale,oy+MainFrame.AbsoluteSize.Y/2-10),Size=UDim2.new(0,20,0,20),GroupTransparency=1}):Play()
-    TweenService:Create(shockwave,TweenInfo.new(0.5,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Size=UDim2.new(0,440,0,440),Position=UDim2.new(0,cx-220,0,cy-220)}):Play()
-    for _,p in ipairs(allParticles) do TweenService:Create(p.frag,TweenInfo.new(0.5,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),{Position=UDim2.new(0,cx+p.dir[1]*p.dist,0,cy+p.dir[2]*p.dist),Size=UDim2.new(0,2,0,2),BackgroundTransparency=1}):Play() end
-    task.wait(0.55)
-    for _,p in ipairs(allParticles) do if p.frag and p.frag.Parent then p.frag:Destroy() end end
-    if shockwave and shockwave.Parent then shockwave:Destroy() end
-    ScreenGui:Destroy()
+    -- Show properly-sized confirmation dialog before closing
+    local _confirmActive=true
+    local confirmFrame=NEW("Frame",{Size=UDim2.new(0,300,0,132),Position=UDim2.new(0.5,-150,0.5,-66),BackgroundColor3=BG1,BorderSizePixel=0,ZIndex=999,ClipsDescendants=false},MainFrame)
+    CORNER(12,confirmFrame); STROKE(RED,1.5,0.1,confirmFrame)
+    -- Darken overlay
+    local dimOverlay=NEW("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=C(0,0,0),BackgroundTransparency=0.55,BorderSizePixel=0,ZIndex=998},MainFrame)
+    CORNER(14,dimOverlay)
+    NEW("TextLabel",{Text="Close Zili Hub?",Size=UDim2.new(1,-20,0,26),Position=UDim2.new(0,10,0,14),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamBold,TextSize=16,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=1000},confirmFrame)
+    NEW("TextLabel",{Text="All running features will be stopped.",Size=UDim2.new(1,-20,0,16),Position=UDim2.new(0,10,0,44),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.Gotham,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=1000},confirmFrame)
+    local yesBtn=NEW("TextButton",{Text="CLOSE HUB",Size=UDim2.new(0,126,0,36),Position=UDim2.new(0,14,0,82),BackgroundColor3=C(38,8,8),TextColor3=RED,Font=Enum.Font.GothamBold,TextSize=13,AutoButtonColor=false,ZIndex=1000},confirmFrame); CORNER(8,yesBtn); STROKE(RED,1.2,0.15,yesBtn)
+    local noBtn=NEW("TextButton",{Text="CANCEL",Size=UDim2.new(0,126,0,36),Position=UDim2.new(1,-140,0,82),BackgroundColor3=BG3,TextColor3=TEXT2,Font=Enum.Font.GothamBold,TextSize=13,AutoButtonColor=false,ZIndex=1000},confirmFrame); CORNER(8,noBtn); STROKE(TEXT3,1,0.4,noBtn)
+    yesBtn.MouseEnter:Connect(function() TWEEN(yesBtn,0.15,{BackgroundColor3=C(60,12,12)}) end); yesBtn.MouseLeave:Connect(function() TWEEN(yesBtn,0.15,{BackgroundColor3=C(38,8,8)}) end)
+    noBtn.MouseEnter:Connect(function() TWEEN(noBtn,0.15,{BackgroundColor3=BG4}) end); noBtn.MouseLeave:Connect(function() TWEEN(noBtn,0.15,{BackgroundColor3=BG3}) end)
+    TWEEN_BACK(confirmFrame,0.25,{Position=UDim2.new(0.5,-150,0.5,-66)})
+    local function closeConfirm() _confirmActive=false; TWEEN(confirmFrame,0.18,{BackgroundTransparency=1,Position=UDim2.new(0.5,-150,0.45,-66)}); TWEEN(dimOverlay,0.18,{BackgroundTransparency=1}); task.delay(0.2,function() pcall(function() confirmFrame:Destroy() end); pcall(function() dimOverlay:Destroy() end) end) end
+    noBtn.MouseButton1Click:Connect(closeConfirm)
+    yesBtn.MouseButton1Click:Connect(function()
+        closeConfirm()
+        task.wait(0.22)
+        getgenv().ZiliHub_Loaded=false
+        local origPos=MainFrame.Position; local ox,oy=origPos.X.Offset,origPos.Y.Offset
+        TWEEN(CloseBtn,0.06,{TextColor3=C(255,40,40)})
+        local redOverlay=NEW("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=C(200,20,20),BackgroundTransparency=0.87,ZIndex=100,BorderSizePixel=0},MainFrame); CORNER(10,redOverlay)
+        task.wait(0.06); TWEEN(redOverlay,0.08,{BackgroundTransparency=1})
+        local glitch={-7,5,-9,8,-3,6,-2,1,0}
+        for _,dx in ipairs(glitch) do TweenService:Create(MainFrame,TweenInfo.new(0.02,Enum.EasingStyle.Linear),{Position=UDim2.new(origPos.X.Scale,ox+dx,origPos.Y.Scale,oy+math.random(-2,2))}):Play();task.wait(0.02) end
+        local cx=MainFrame.AbsolutePosition.X+MainFrame.AbsoluteSize.X/2; local cy=MainFrame.AbsolutePosition.Y+MainFrame.AbsoluteSize.Y/2
+        local allParticles={}
+        for i=0,11 do
+            local angle=(i/12)*math.pi*2; local dir={math.cos(angle),math.sin(angle)}; local sz=math.random(4,10)
+            local col=i%3==0 and GOLD2 or i%3==1 and C(220,60,60) or C(255,240,200)
+            local frag=NEW("Frame",{Size=UDim2.new(0,sz,0,sz),Position=UDim2.new(0,cx-sz/2,0,cy-sz/2),BackgroundColor3=col,BorderSizePixel=0,ZIndex=102},ScreenGui); CORNER(math.random(2,5),frag)
+            table.insert(allParticles,{frag=frag,dir=dir,dist=math.random(120,240)})
+        end
+        local shockwave=NEW("Frame",{Size=UDim2.new(0,10,0,10),Position=UDim2.new(0,cx-5,0,cy-5),BackgroundTransparency=1,ZIndex=105,BorderSizePixel=0},ScreenGui); CORNER(5,shockwave); STROKE(GOLD,2.5,0,shockwave)
+        TweenService:Create(MainFrame,TweenInfo.new(0.38,Enum.EasingStyle.Back,Enum.EasingDirection.In),{Position=UDim2.new(origPos.X.Scale,ox+MainFrame.AbsoluteSize.X/2-10,origPos.Y.Scale,oy+MainFrame.AbsoluteSize.Y/2-10),Size=UDim2.new(0,20,0,20),GroupTransparency=1}):Play()
+        TweenService:Create(shockwave,TweenInfo.new(0.5,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Size=UDim2.new(0,440,0,440),Position=UDim2.new(0,cx-220,0,cy-220)}):Play()
+        for _,p in ipairs(allParticles) do TweenService:Create(p.frag,TweenInfo.new(0.5,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),{Position=UDim2.new(0,cx+p.dir[1]*p.dist,0,cy+p.dir[2]*p.dist),Size=UDim2.new(0,2,0,2),BackgroundTransparency=1}):Play() end
+        task.wait(0.55)
+        for _,p in ipairs(allParticles) do if p.frag and p.frag.Parent then p.frag:Destroy() end end
+        if shockwave and shockwave.Parent then shockwave:Destroy() end
+        ScreenGui:Destroy()
+    end)
 end)
 
 -- =====================================================================
