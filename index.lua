@@ -5253,7 +5253,7 @@ end)
 -- =====================================================================
 -- MAIN FRAME
 -- =====================================================================
-local MainFrame=NEW("CanvasGroup",{Size=UDim2.new(0,720,0,520),Position=UDim2.new(0.5,-360,0.5,-260),BackgroundColor3=BG1,BorderSizePixel=0,ClipsDescendants=true,GroupTransparency=1},ScreenGui)
+local MainFrame=NEW("Frame",{Size=UDim2.new(0,720,0,520),Position=UDim2.new(0.5,-360,0.5,-260),BackgroundColor3=BG1,BorderSizePixel=0,ClipsDescendants=true,BackgroundTransparency=1},ScreenGui)
 CORNER(14,MainFrame); STROKE(GOLD,1.8,0.06,MainFrame)
 MainFrame.Visible=false
 task.spawn(function()
