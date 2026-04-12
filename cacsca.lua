@@ -1,8 +1,12 @@
 -- ==========================================
--- 🏹 SCRIPT: AUTO CUPID (V28 - FIXED + SECURE)
--- Changes vs V28-Fixed:
---   [SEC-1] setthreadidentity(8) — bypass permission checks
---   [SEC-2] cloneref() cho tất cả service & instance hay bị detect
+-- 🏹 SCRIPT: AUTO CUPID (V3 - IMPROVED)
+-- Changes vs V2:
+--   [IMP-1] ExecuteDodgeTween → LinearVelocity (mượt hơn, ít conflict physics)
+--   [IMP-2] DmgEvasionTween   → LinearVelocity
+--   [IMP-3] Heartbeat movement → AssemblyLinearVelocity (đúng API mới)
+--   [IMP-4] ZonePositions hardcoded fallback (zone 1-5) khi Effects.Zones không load
+--   [IMP-5] FLYING state: nhân vật quay mặt về hướng zone đích (XZ plane)
+--   [IMP-6] Smooth face-turn tween khi bắt đầu FLYING sang zone mới
 -- ==========================================
 
 -- [SEC-1] Set thread identity cao nhất ngay đầu
@@ -34,7 +38,6 @@ local Player = Players.LocalPlayer
 
 -- ==========================================
 -- [FIX-2] _SendRawEarly — coroutine + busy-wait 3s
--- ĐÃ ĐƯA LÊN TRƯỚC CheckPlayers để tránh forward-reference nil crash
 -- ==========================================
 local function _SendRawEarly(payload)
     local req = (syn and syn.request)
@@ -80,7 +83,6 @@ end
 
 -- ==========================================
 -- [GUARD] KICK NẾU CÓ NGƯỜI JOIN SERVER
--- (đặt SAU SendKickWebhookEarly để hàm đã tồn tại khi gọi)
 -- ==========================================
 local function CheckPlayers()
     if #Players:GetPlayers() > 1 then
@@ -97,9 +99,9 @@ CheckPlayers()
 -- ==========================================
 -- DISCONNECT / KICK WATCHER  (V31 - rewrite hoàn toàn)
 -- 3 lớp bảo vệ chồng nhau:
---   [L1] game:BindToClose()          — API Roblox, bắt MỌI disconnect kể cả Error 267
---   [L2] RobloxPromptGui.promptOverlay — vị trí thật của dialog Error Code 267
---   [L3] hookfunction Player.Kick     — bắt kick từ script nội bộ (CheckPlayers...)
+--   [L1] game:BindToClose()
+--   [L2] RobloxPromptGui.promptOverlay
+--   [L3] hookfunction Player.Kick
 -- ==========================================
 local _kickFired = false
 
@@ -136,12 +138,9 @@ local function OnKickDetected(msg)
     })
 end
 
--- [L1] game:BindToClose — API chính thức của Roblox, fired TRƯỚC khi ngắt kết nối
--- Đây là lớp quan trọng nhất, bắt được Error 267 trước khi internet bị cắt
--- BindToClose cho ~5 giây để hoàn thành callback trước khi game thực sự đóng
+-- [L1]
 pcall(function()
     game:BindToClose(function()
-        -- Lấy reason từ promptOverlay nếu có, không thì dùng reason đã lưu
         local reason = _sessionKickReason or "Disconnected"
         pcall(function()
             local overlay = CoreGui
@@ -151,14 +150,12 @@ pcall(function()
             if msg and msg ~= "" then reason = msg end
         end)
         OnKickDetected(reason)
-        -- Busy-wait để _SendRawEarly kịp gửi xong trước khi Roblox đóng
         local t0 = tick()
         repeat task.wait(0.05) until _kickFired or (tick() - t0 > 4)
     end)
 end)
 
--- [L2] Nghe trực tiếp CoreGui.RobloxPromptGui.promptOverlay — vị trí ĐÚNG của dialog Error 267
--- Trigger ngay khi dialog xuất hiện, không cần poll
+-- [L2]
 pcall(function()
     task.spawn(function()
         local promptGui = CoreGui:WaitForChild("RobloxPromptGui", 30)
@@ -178,17 +175,16 @@ pcall(function()
             end
         end
 
-        -- Lắng nghe mọi element mới được thêm vào overlay (dialog render dần)
         overlay.DescendantAdded:Connect(function(inst)
             if inst:IsA("TextLabel") then
                 task.defer(CheckOverlay)
             end
         end)
-        CheckOverlay() -- Kiểm tra ngay nếu dialog đã có sẵn
+        CheckOverlay()
     end)
 end)
 
--- [L3] hookfunction Player.Kick — bắt kick từ script nội bộ (CheckPlayers, v.v.)
+-- [L3]
 pcall(function()
     if hookfunction then
         local oldKick = hookfunction(Player.Kick, newcclosure(function(self, reason)
@@ -198,14 +194,12 @@ pcall(function()
     end
 end)
 
--- Fallback: AncestryChanged — lớp cuối cùng, bắt mọi trường hợp còn lại
+-- Fallback
 Player.AncestryChanged:Connect(function(_, parent)
     if not parent then
         OnKickDetected(_sessionKickReason or "Disconnected (AncestryChanged)")
     end
 end)
-
-
 
 -- Auto equip title
 task.spawn(function()
@@ -368,49 +362,32 @@ local function SendKickWebhook(reason, zone)
 end
 
 -- ==========================================
--- [2] RADAR TRACK
+-- [1] ITEM DROP DETECTOR
 -- ==========================================
 task.spawn(function()
-    local pGui = Player:WaitForChild("PlayerGui", 9e9)
-    local notif = pGui:WaitForChild("Notifications", 9e9)
+    local notif = Player.PlayerGui:WaitForChild("NotifGui", 60)
+    if not notif then return end
 
     local function CheckItemText(label)
-        if not label or not label:IsA("TextLabel") then return end
+        if not label:IsA("TextLabel") then return end
+
         local function parseText()
-            local rawText = string.gsub(label.Text, "<[^>]+>", "")
-            local txt = string.lower(rawText)
-            if txt == "" then return end
-
-            local newItemName = rawText:match("[Nn]ew [Ii]tem%s+<?([^>%\n]+)>?")
-                             or rawText:match("[Nn]ew [Ii]tem:%s*(.+)")
-            if newItemName then
-                newItemName = newItemName:match("^%s*(.-)%s*$")
-                local uid = tostring(label) .. "new:" .. newItemName
-                if not ProcessedUITexts[uid] then
-                    ProcessedUITexts[uid] = true
-                    table.insert(SessionItems, newItemName .. "  [NEW ITEM]")
-                end
-                return
-            end
-
-            local maxCapName = rawText:match("[Mm]ax [Cc]apacity %w* ?<?([^>%\n]+)>?")
-                            or rawText:match("[Mm]ax [Cc]apacity%s+of%s+(.+)")
-            if maxCapName then
-                maxCapName = maxCapName:match("^%s*(.-)%s*$")
-                local uid = tostring(label) .. "maxcap:" .. maxCapName
-                if not ProcessedUITexts[uid] then
-                    ProcessedUITexts[uid] = true
-                    table.insert(SessionItems, maxCapName .. "  [MAX CAPACITY — Already Owned]")
-                end
-                return
-            end
-
-            for rareName, _ in pairs(RareImages) do
-                if string.find(txt, string.lower(rareName), 1, true) then
-                    local uid = tostring(label) .. rareName
+            local txt = label.Text:lower()
+            for itemName, imgURL in pairs(RareImages) do
+                if string.find(txt, string.lower(itemName), 1, true) then
+                    local uid = tostring(label) .. itemName
                     if not ProcessedUITexts[uid] then
                         ProcessedUITexts[uid] = true
-                        table.insert(SessionItems, rareName .. "  [RARE]")
+                        table.insert(SessionItems, itemName .. "  [RARE]")
+                    end
+                end
+            end
+            for _, vipFruit in ipairs(VIP_Fruits) do
+                if string.find(txt, vipFruit, 1, true) then
+                    local uid = tostring(label) .. vipFruit
+                    if not ProcessedUITexts[uid] then
+                        ProcessedUITexts[uid] = true
+                        table.insert(SessionItems, vipFruit .. "  [VIP Fruit]")
                     end
                 end
             end
@@ -526,65 +503,30 @@ _G.AutoDungeon  = true
 _G.ForceReblock = false
 
 -- ==========================================
--- TAKESTAM LOOP  (V34 — position-only CFrame)
--- Root cause: Heartbeat set root.CFrame với tilt -90° khi attack
--- → takestam gửi CFrame tilt lên server → server reject
--- Fix: chỉ lấy root.Position, build CFrame mới không rotation mỗi tick
+-- TAKESTAM LOOP
 -- ==========================================
-_G.SpamStamina = true
+local Players_ts = cloneref(game:GetService("Players"))
+local ReplicatedStorage_ts = cloneref(game:GetService("ReplicatedStorage"))
+local LocalPlayer = Players_ts.LocalPlayer
+local skillEvent = ReplicatedStorage_ts:WaitForChild("Events"):WaitForChild("Skill")
+
 task.spawn(function()
-    local function getRemote()
-        local ok, Events = pcall(function()
-            return ReplicatedStorage:WaitForChild("Events", 10)
-        end)
-        if not ok or not Events then return nil end
-        local ok2, Remote = pcall(function()
-            return Events:WaitForChild("takestam", 10)
-        end)
-        return (ok2 and Remote) or nil
-    end
-
-    local Remote = getRemote()
-    if not Remote then
-        warn("[TakeStam] Không tìm thấy takestam — dừng")
-        return
-    end
-
-    local failCount = 0
-
-    while _G.SpamStamina do
-        -- Lấy position thực, build CFrame sạch không rotation
-        -- Tránh hoàn toàn tilt -90 mà Heartbeat đang inject vào root.CFrame
-        local cf = CFrame.new()
+    while task.wait(0.1) do
         pcall(function()
-            local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-            if root then
-                cf = CFrame.new(root.Position)  -- position only, identity rotation
+            local character = LocalPlayer.Character
+            if character and character:FindFirstChild("HumanoidRootPart") then
+                local currentCFrame = character.HumanoidRootPart.CFrame
+                local args = {
+                    [1] = "Sky Walk2",
+                    [2] = { ["char"] = character, ["cf"] = currentCFrame }
+                }
+                skillEvent:InvokeServer(unpack(args))
             end
         end)
-
-        local ok = pcall(function()
-            Remote:FireServer(1.075, "dash", cf)
-        end)
-
-        if not ok then
-            failCount = failCount + 1
-            if failCount >= 3 then
-                failCount = 0
-                local newRemote = getRemote()
-                if newRemote then Remote = newRemote
-                else task.wait(1) end
-            end
-        else
-            failCount = 0
-        end
-
-        task.wait(0.05)
     end
 end)
-print("[TakeStam] Đã bật Auto Take Stamina!")
 
-local MoveSpeed     = 45
+local MoveSpeed     = 90
 local AttackOffset  = 10.2
 local SearchRadius  = 800
 local WaitSpawnTime = 15
@@ -598,6 +540,22 @@ local Zone5Points = {
     Vector3.new(-962.64,  442.04, -3084.11),
     Vector3.new(-1135.6,  442.67, -3102.46)
 }
+
+-- ==========================================
+-- [IMP-4] ZONE POSITIONS HARDCODED FALLBACK
+-- Dùng khi Effects.Zones.ZoneX không tìm thấy (zone 6,7,8 chưa có tọa độ → thêm sau)
+-- ==========================================
+local ZonePositions = {
+    [1] = Vector3.new(548.82,   310.39, -2281.89),
+    [2] = Vector3.new(510.5,    320.39, -2755.17),
+    [3] = Vector3.new(-124.88,  376.5,  -2696.91),
+    [4] = Vector3.new(-600.54,  435.37, -2699.87),
+    [5] = Vector3.new(-1081.46, 444.37, -3052.89),
+    -- [6] = Vector3.new(...),   ← thêm vào khi có tọa độ
+    -- [7] = Vector3.new(...),
+    -- [8] = Vector3.new(...),
+}
+
 local EndPortalPos = Vector3.new(-1097.87, 672.92, -5379.12)
 local Z5Index = 1
 
@@ -623,7 +581,21 @@ local _z8DmgDodging     = false
 local _z8DmgUntil       = 0
 local _dodgeTweenActive = false
 
--- [SEC-2] fakePlatform via cloneref workspace
+-- ==========================================
+-- [IMP-6] 3-PHASE FLYING STATE
+-- RISE → ACROSS → DESCEND  (chống noclip hoàn toàn)
+-- ==========================================
+-- "RISE"    : bay thẳng lên tới riseAlt (cùng XZ hiện tại)
+-- "ACROSS"  : di chuyển ngang tới XZ của zone đích (giữ độ cao riseAlt)
+-- "DESCEND" : hạ xuống waitPos của zone đích
+local _flyPhase       = "RISE"   -- "RISE" | "ACROSS" | "DESCEND"
+local _flyRiseAlt     = 0        -- Y mục tiêu của phase RISE
+local _flyAcrossPos   = nil      -- Vector3 mục tiêu của phase ACROSS  (Y = riseAlt)
+local _flyDescendPos  = nil      -- Vector3 mục tiêu của phase DESCEND (waitPos)
+local _flyLastZone    = 0        -- zone lần fly trước, để reset khi đổi zone
+local _flyFaceDir     = nil      -- hướng quay mặt khi bắt đầu fly (face once)
+
+-- [SEC-2] fakePlatform
 local fakePlatform = cloneref(Workspace):FindFirstChild("CupidFakePlatform")
 if not fakePlatform then
     fakePlatform          = Instance.new("Part")
@@ -677,6 +649,11 @@ task.spawn(function()
                                 task.wait(5)
                                 CurrentZoneIndex = 1
                                 ZoneState        = "FLYING"
+                                _flyPhase        = "RISE"
+                                _flyLastZone     = 0
+                                _flyRiseAlt      = 0
+                                _flyAcrossPos    = nil
+                                _flyDescendPos   = nil
                                 IsFarmingReady   = true
                             end
                         else
@@ -855,6 +832,7 @@ end)
 
 -- ==========================================
 -- [V28-B] ZONE 8 DAMAGE SENSOR
+-- [IMP-1] DmgEvasionTween → LinearVelocity
 -- ==========================================
 local function HookCharacterZ8(char)
     if not char then return end
@@ -866,23 +844,34 @@ local function HookCharacterZ8(char)
         task.spawn(function() SendDeathWebhook(CurrentZoneIndex) end)
     end)
 
-    local function DmgEvasionTween(root)
+    -- [IMP-1] Thay TweenService CFrame bằng LinearVelocity
+    local function DmgEvasionLinearVelocity(root)
         if _z8DmgDodging then _z8DmgUntil = tick() + 2; return end
         _z8DmgDodging = true
         _z8DmgUntil   = tick() + 2
 
-        local riseTarget = root.CFrame + Vector3.new(0, 10, 0)
-        local riseTween  = TweenService:Create(
-            root,
-            TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {CFrame = riseTarget}
-        )
-        riseTween:Play()
+        -- Bước 1: bay lên bằng LinearVelocity (rise phase 0.25s)
+        local riseSpeed  = 10 / 0.25   -- 10 studs trong 0.25s
+        local att0 = Instance.new("Attachment"); att0.Parent = root
 
-        task.delay(2, function()
-            if not (tick() >= _z8DmgUntil) then return end
-            _z8DmgDodging = false
-            TargetCFrame  = nil
+        local lv = Instance.new("LinearVelocity")
+        lv.Attachment0     = att0
+        lv.MaxForce        = math.huge
+        lv.RelativeTo      = Enum.ActuatorRelativeTo.World
+        lv.VectorVelocity  = Vector3.new(0, riseSpeed, 0)
+        lv.Parent          = root
+
+        task.delay(0.25, function()
+            -- Dừng rise
+            pcall(function() lv:Destroy(); att0:Destroy() end)
+            pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+
+            -- Bước 2: giữ vị trí 2 giây rồi reset
+            task.delay(2, function()
+                if not (tick() >= _z8DmgUntil) then return end
+                _z8DmgDodging = false
+                TargetCFrame  = nil
+            end)
         end)
     end
 
@@ -907,7 +896,7 @@ local function HookCharacterZ8(char)
                 end
             end
         end
-        if isZone8 or isLightning then DmgEvasionTween(root) end
+        if isZone8 or isLightning then DmgEvasionLinearVelocity(root) end
     end)
 end
 
@@ -968,7 +957,6 @@ task.spawn(function()
                 local foundLavaPart   = nil
                 local foundLavaPrompt = nil
 
-                -- [SEC-2] cloneref Effects folder
                 local efFolder = cloneref(Workspace):FindFirstChild("Effects")
                 if efFolder then
                     for _, v in ipairs(cloneref(efFolder):GetDescendants()) do
@@ -1064,22 +1052,48 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- [V29] TWEEN DODGE
+-- [IMP-1] TWEEN DODGE → LINEARVELOCITY
+-- Thay TweenService:Create(root, ..., {CFrame=goalCF})
+-- bằng LinearVelocity constraint — mượt hơn, không conflict server physics
 -- ==========================================
-local function ExecuteDodgeTween(root, dodgeTarget, evadeDist, holdWait, onDone)
+local function ExecuteDodgeLinearVelocity(root, dodgeTarget, evadeDist, holdWait, onDone)
     if _dodgeTweenActive then return end
     _dodgeTweenActive = true
+
+    -- Tính vận tốc cần thiết: v = distance / time
     local tweenTime = math.clamp(evadeDist / MoveSpeed, 0.3, 2.0)
-    local goalCF    = CFrame.new(dodgeTarget) * root.CFrame.Rotation
-    local tween     = TweenService:Create(root,
-        TweenInfo.new(tweenTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {CFrame = goalCF})
-    tween.Completed:Connect(function()
+    local dir = (dodgeTarget - root.Position)
+    if dir.Magnitude < 0.1 then dir = root.CFrame.LookVector end
+    local speed = dir.Magnitude / tweenTime
+
+    -- Tạo Attachment + LinearVelocity
+    local att = Instance.new("Attachment")
+    att.Name   = "_DodgeAtt"
+    att.Parent = root
+
+    local lv = Instance.new("LinearVelocity")
+    lv.Name            = "_DodgeLV"
+    lv.Attachment0     = att
+    lv.MaxForce        = math.huge          -- không bị cản
+    lv.RelativeTo      = Enum.ActuatorRelativeTo.World
+    lv.VectorVelocity  = dir.Unit * speed
+    lv.Parent          = root
+
+    -- Quay mặt về hướng dodge trong suốt quá trình
+    local flatDir = Vector3.new(dir.X, 0, dir.Z)
+    if flatDir.Magnitude > 0.01 then
+        local targetRot = CFrame.lookAt(root.Position, root.Position + flatDir.Unit)
+        root.CFrame = CFrame.new(root.Position) * targetRot.Rotation
+    end
+
+    -- Sau tweenTime giây: dừng lực, giữ holdWait rồi callback
+    task.delay(tweenTime, function()
+        pcall(function() lv:Destroy(); att:Destroy() end)
+        pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
         task.wait(holdWait or 1.5)
         _dodgeTweenActive = false
         if onDone then onDone() end
     end)
-    tween:Play()
 end
 
 -- ==========================================
@@ -1106,10 +1120,41 @@ local function TriggerHoldBlock(weaponName, duration)
 end
 
 -- ==========================================
+-- [IMP-5] FACE ZONE DIRECTION  (dùng TweenService, chỉ rotation, không ảnh physics)
+-- ==========================================
+local function FaceTowardPosition(root, targetPos, duration)
+    local flatDir = Vector3.new(targetPos.X - root.Position.X, 0, targetPos.Z - root.Position.Z)
+    if flatDir.Magnitude < 0.5 then return end
+    local targetCF = CFrame.lookAt(root.Position, root.Position + flatDir.Unit)
+    TweenService:Create(root,
+        TweenInfo.new(duration or 0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {CFrame = targetCF}
+    ):Play()
+end
+
+-- ==========================================
+-- [IMP-6] SAFE FLY INIT — khởi tạo 3 phase khi bắt đầu fly sang zone mới
+--   RISE    : bay thẳng lên đến safeAlt (cùng XZ hiện tại)
+--   ACROSS  : di chuyển ngang tới XZ zone đích (giữ safeAlt)
+--   DESCEND : hạ xuống waitPos (floorY + 20)
+-- riseBuffer: studs thêm vào trên max(currentY, dstFloorY)
+-- ==========================================
+local function InitFlyPhases(root, boxCenter, dstFloorY, riseBuffer)
+    riseBuffer = riseBuffer or 60
+    local safeAlt  = math.max(root.Position.Y, dstFloorY) + riseBuffer
+    _flyPhase      = "RISE"
+    _flyRiseAlt    = safeAlt
+    _flyAcrossPos  = Vector3.new(boxCenter.X, safeAlt, boxCenter.Z)
+    _flyDescendPos = Vector3.new(boxCenter.X, dstFloorY + 20, boxCenter.Z)
+    -- Quay mặt về hướng zone đích ngay khi bắt đầu
+    FaceTowardPosition(root, boxCenter, 0.35)
+end
+
+-- ==========================================
 -- MAIN COMBAT LOOP
 -- ==========================================
 task.spawn(function()
-    local lastZone     = 0
+    local lastZone      = 0
     local isHoldingLava = false
 
     while _G.DungeonScriptID == currentScriptID do
@@ -1127,7 +1172,7 @@ task.spawn(function()
                     if not _G.EndGameStarted then
                         _G.EndGameStarted = true
                         task.spawn(function()
-                            if root then root.Velocity = Vector3.zero end
+                            if root then root.AssemblyLinearVelocity = Vector3.zero end
                             task.wait(2.5)
                             pcall(function()
                                 _G.IsProcessingFruit = true
@@ -1185,7 +1230,7 @@ task.spawn(function()
                         TargetCFrame = CFrame.new(EndPortalPos)
                     else
                         TargetCFrame = nil
-                        if root then root.Velocity = Vector3.zero end
+                        if root then root.AssemblyLinearVelocity = Vector3.zero end
                     end
                     return
                 end
@@ -1206,12 +1251,14 @@ task.spawn(function()
                     if ZoneState ~= "ABSORBING_CURSE" then PreviousZoneState = ZoneState; ZoneState = "ABSORBING_CURSE"; _G.LavaFailSafeTimer = tick() end
                     if tick() - _G.LavaFailSafeTimer > 10 then
                         if CurrentLava.Part and CurrentLava.Part.Parent then IgnoredHazards[CurrentLava.Part.Parent] = tick() + 60 end
-                        ZoneState = PreviousZoneState or "FLYING"; return
+                        ZoneState = PreviousZoneState or "FLYING"
+                        if ZoneState == "FLYING" then _flyPhase = "RISE"; _flyLastZone = 0 end
+                        return
                     end
                     IsReadyToAttack = false; CurrentTargetRoot = nil
                     TargetCFrame = CFrame.new(CurrentLava.Part.Position)
                     if (root.Position - CurrentLava.Part.Position).Magnitude <= 12 then
-                        root.Velocity = Vector3.zero
+                        root.AssemblyLinearVelocity = Vector3.zero
                         if not isHoldingLava then
                             isHoldingLava = true
                             task.spawn(function()
@@ -1232,12 +1279,16 @@ task.spawn(function()
                     end
                     return
                 else
-                    if ZoneState == "ABSORBING_CURSE" then ZoneState = PreviousZoneState or "FLYING" end
+                    if ZoneState == "ABSORBING_CURSE" then
+                        ZoneState = PreviousZoneState or "FLYING"
+                        if ZoneState == "FLYING" then _flyPhase = "RISE"; _flyLastZone = 0 end
+                    end
                 end
 
                 if _meraUltDodging then IsReadyToAttack = false; CurrentTargetRoot = nil; return end
                 if _z8DmgDodging   then IsReadyToAttack = false; CurrentTargetRoot = nil; return end
 
+                -- [IMP-1] Dùng ExecuteDodgeLinearVelocity thay TweenService
                 if CurrentZoneIndex ~= 5 and CurrentHazard.Type ~= "None" and ZoneState ~= "DODGING" then
                     local action    = CurrentHazard.Action or "DODGE"
                     local evadeDist = CurrentHazard.MinDist
@@ -1257,7 +1308,7 @@ task.spawn(function()
                         local flatDir     = Vector3.new(evadeDir.X,0,evadeDir.Z).Unit
                         local dodgeTarget = root.Position + flatDir * evadeDist
                         local holdWait    = (CurrentHazard.Type == "SkillAsset" or CurrentHazard.Type == "SkillName") and 2.0 or 1.5
-                        ExecuteDodgeTween(root, dodgeTarget, evadeDist, holdWait, function()
+                        ExecuteDodgeLinearVelocity(root, dodgeTarget, evadeDist, holdWait, function()
                             ZoneState = PreviousZoneState or "ATTACKING"
                             CurrentHazard.Type = "None"
                             TargetCFrame = nil
@@ -1269,57 +1320,151 @@ task.spawn(function()
                     IsReadyToAttack = false; CurrentTargetRoot = nil
                     if not _dodgeTweenActive then
                         ZoneState = PreviousZoneState or "FLYING"
+                        if ZoneState == "FLYING" then _flyPhase = "RISE"; _flyLastZone = 0 end
                         CurrentHazard.Type = "None"
                     else return end
                 end
 
+                -- ==========================================
                 -- ZONE STATE MACHINE
-                local zonePart = nil
-                pcall(function() zonePart = cloneref(Workspace).Effects.Zones["Zone"..CurrentZoneIndex]:FindFirstChild("Zone") end)
-                if zonePart then
-                    local boxCenter = zonePart.Position
-                    local floorY    = GetZoneFloor(CurrentZoneIndex, boxCenter)
-                    local waitPos   = Vector3.new(boxCenter.X, floorY + 20, boxCenter.Z)
-                    local mobs      = GetMobsInZone(boxCenter)
+                -- [IMP-4] ZonePositions fallback khi Effects.Zones không load
+                -- [IMP-6] 3-phase FLYING: RISE → ACROSS → DESCEND (anti-noclip)
+                --         Zone 7→8: riseBuffer = 100 studs
+                -- ==========================================
+                local zonePart  = nil
+                local boxCenter = nil
+                pcall(function()
+                    zonePart  = cloneref(Workspace).Effects.Zones["Zone"..CurrentZoneIndex]:FindFirstChild("Zone")
+                    boxCenter = zonePart.Position
+                end)
+                if not boxCenter then
+                    boxCenter = ZonePositions[CurrentZoneIndex]
+                end
 
+                if boxCenter then
+                    local floorY  = GetZoneFloor(CurrentZoneIndex, boxCenter)
+                    local waitPos = Vector3.new(boxCenter.X, floorY + 20, boxCenter.Z)
+                    local mobs    = GetMobsInZone(boxCenter)
+
+                    -- ── FLYING (3 phases) ──────────────────────────────────────
                     if ZoneState == "FLYING" then
-                        TargetCFrame = CFrame.new(Vector3.new(boxCenter.X, math.max(root.Position.Y, floorY+40), boxCenter.Z))
-                        CurrentTargetRoot = nil
-                        if (Vector2.new(root.Position.X,root.Position.Z) - Vector2.new(boxCenter.X,boxCenter.Z)).Magnitude < 15 then
-                            if CurrentZoneIndex == 5 then ZoneState = "ZONE5_SURVIVAL"; Timer = tick()+30; Z5Index = 1
-                            else ZoneState = "WAITING_SPAWN"; Timer = tick()+WaitSpawnTime end
+                        IsReadyToAttack = false; CurrentTargetRoot = nil
+
+                        -- Khởi tạo phases khi đổi zone
+                        if _flyLastZone ~= CurrentZoneIndex then
+                            _flyLastZone = CurrentZoneIndex
+                            -- Zone 7→8: rise cao hơn 100 studs để vượt tất cả geometry
+                            local buf = (CurrentZoneIndex == 8) and 100 or 60
+                            InitFlyPhases(root, boxCenter, floorY, buf)
                         end
+
+                        -- Phase RISE: bay lên đến _flyRiseAlt (cùng XZ hiện tại)
+                        if _flyPhase == "RISE" then
+                            TargetCFrame = CFrame.new(
+                                Vector3.new(root.Position.X, _flyRiseAlt, root.Position.Z)
+                            )
+                            -- Chuyển ACROSS khi đã đủ cao (trong 8 studs)
+                            if math.abs(root.Position.Y - _flyRiseAlt) < 8 then
+                                _flyPhase = "ACROSS"
+                                -- Cập nhật hướng mặt khi bắt đầu bay ngang
+                                FaceTowardPosition(root, boxCenter, 0.3)
+                            end
+
+                        -- Phase ACROSS: di chuyển ngang tới XZ zone đích (giữ độ cao)
+                        elseif _flyPhase == "ACROSS" then
+                            TargetCFrame = CFrame.new(_flyAcrossPos)
+                            local xzDist = (Vector2.new(root.Position.X, root.Position.Z)
+                                         - Vector2.new(boxCenter.X, boxCenter.Z)).Magnitude
+                            if xzDist < 15 then
+                                _flyPhase = "DESCEND"
+                            end
+
+                        -- Phase DESCEND: hạ xuống waitPos của zone đích
+                        elseif _flyPhase == "DESCEND" then
+                            TargetCFrame = CFrame.new(_flyDescendPos)
+                            local descDist = (root.Position - _flyDescendPos).Magnitude
+                            if descDist < 12 then
+                                -- Đã đến nơi → chuyển trạng thái combat
+                                _flyLastZone = 0  -- reset để zone tiếp theo trigger lại InitFlyPhases
+                                if CurrentZoneIndex == 5 then
+                                    ZoneState = "ZONE5_SURVIVAL"; Timer = tick()+30; Z5Index = 1
+                                else
+                                    ZoneState = "WAITING_SPAWN"; Timer = tick()+WaitSpawnTime
+                                end
+                            end
+                        end
+
+                    -- ── ZONE5 SURVIVAL ────────────────────────────────────────
                     elseif ZoneState == "ZONE5_SURVIVAL" then
                         IsReadyToAttack = false; CurrentTargetRoot = nil
                         local cZ5 = Zone5Points[Z5Index]
                         TargetCFrame = CFrame.new(cZ5)
-                        if (Vector3.new(root.Position.X,0,root.Position.Z) - Vector3.new(cZ5.X,0,cZ5.Z)).Magnitude < 10 then
+                        if (Vector3.new(root.Position.X,0,root.Position.Z)
+                          - Vector3.new(cZ5.X,0,cZ5.Z)).Magnitude < 10 then
                             Z5Index = Z5Index < #Zone5Points and Z5Index+1 or 1
                         end
-                        if tick() > Timer then CurrentZoneIndex = CurrentZoneIndex+1; ZoneState = "FLYING"; task.wait(0.2) end
+                        if tick() > Timer then
+                            CurrentZoneIndex = CurrentZoneIndex + 1
+                            ZoneState = "FLYING"; _flyPhase = "RISE"; _flyLastZone = 0
+                            task.wait(0.2)
+                        end
+
+                    -- ── WAITING SPAWN ─────────────────────────────────────────
                     elseif ZoneState == "WAITING_SPAWN" then
                         TargetCFrame = CFrame.new(waitPos); CurrentTargetRoot = nil
-                        if #mobs > 0 then ZoneState = "GATHERING"; Timer = tick()+GatherTime
-                        elseif tick() > Timer then CurrentZoneIndex = CurrentZoneIndex+1; ZoneState = "FLYING"; task.wait(0.2) end
+                        if #mobs > 0 then
+                            ZoneState = "GATHERING"; Timer = tick() + GatherTime
+                        elseif tick() > Timer then
+                            CurrentZoneIndex = CurrentZoneIndex + 1
+                            ZoneState = "FLYING"; _flyPhase = "RISE"; _flyLastZone = 0
+                            task.wait(0.2)
+                        end
+
+                    -- ── GATHERING ─────────────────────────────────────────────
                     elseif ZoneState == "GATHERING" then
                         if #mobs > 0 then CurrentTargetRoot = GetRoot(mobs[1]) end
                         if tick() > Timer then ZoneState = "ATTACKING" end
+
+                    -- ── ATTACKING ─────────────────────────────────────────────
                     elseif ZoneState == "ATTACKING" then
-                        if #mobs == 0 then ZoneState = "VERIFY_CLEAR"; Timer = tick()+2
-                        else CurrentTargetRoot = GetRoot(mobs[1]); IsReadyToAttack = true end
-                    elseif ZoneState == "VERIFY_CLEAR" then
-                        if #mobs > 0 then ZoneState = "ATTACKING"
-                        elseif tick() > Timer then
-                            if CurrentZoneIndex == 7 then ZoneState = "WAIT_30S"; Timer = tick()+20; IsReadyToAttack = false; CurrentTargetRoot = nil
-                            else CurrentZoneIndex = CurrentZoneIndex+1; ZoneState = "FLYING"; IsReadyToAttack = false; CurrentTargetRoot = nil; task.wait(0.2) end
+                        if #mobs == 0 then
+                            ZoneState = "VERIFY_CLEAR"; Timer = tick() + 2
+                        else
+                            CurrentTargetRoot = GetRoot(mobs[1]); IsReadyToAttack = true
                         end
+
+                    -- ── VERIFY CLEAR ──────────────────────────────────────────
+                    elseif ZoneState == "VERIFY_CLEAR" then
+                        if #mobs > 0 then
+                            ZoneState = "ATTACKING"
+                        elseif tick() > Timer then
+                            IsReadyToAttack = false; CurrentTargetRoot = nil
+                            if CurrentZoneIndex == 7 then
+                                -- Zone 7 xong → chờ 20s trước khi qua Zone 8
+                                ZoneState = "WAIT_30S"; Timer = tick() + 20
+                            else
+                                CurrentZoneIndex = CurrentZoneIndex + 1
+                                ZoneState = "FLYING"; _flyPhase = "RISE"; _flyLastZone = 0
+                                task.wait(0.2)
+                            end
+                        end
+
+                    -- ── WAIT_30S (zone 7 → 8) ────────────────────────────────
+                    -- Đứng chờ tại waitPos, sau đó InitFlyPhases với +100 studs
                     elseif ZoneState == "WAIT_30S" then
                         TargetCFrame = CFrame.new(waitPos); CurrentTargetRoot = nil; IsReadyToAttack = false
-                        if tick() > Timer then CurrentZoneIndex = 8; ZoneState = "FLYING" end
+                        if tick() > Timer then
+                            CurrentZoneIndex = 8
+                            -- Zone 8 dùng riseBuffer=100 → InitFlyPhases sẽ được gọi
+                            -- khi _flyLastZone ~= 8 trong phase FLYING
+                            ZoneState = "FLYING"; _flyPhase = "RISE"; _flyLastZone = 0
+                        end
                     end
+
                 else
+                    -- Chưa tìm thấy boxCenter → chờ
                     TargetCFrame = nil; CurrentTargetRoot = nil; IsReadyToAttack = false
-                    ZoneState = "FLYING"; task.wait(0.5)
+                    ZoneState = "FLYING"; _flyPhase = "RISE"; task.wait(0.5)
                 end
             end)
         end
@@ -1512,8 +1657,12 @@ task.spawn(function()
                     if root and root.Anchored then root.Anchored = false end
                     if root then
                         for _, v in pairs(root:GetChildren()) do
-                            if v:IsA("BodyVelocity") or v:IsA("BodyForce") or v:IsA("BodyPosition")
-                            or v:IsA("LinearVelocity") or v:IsA("VectorForce") or v:IsA("AlignPosition") then
+                            -- [IMP-3] Chỉ destroy LinearVelocity nếu không phải của chính script (tên khác _DodgeLV/_DodgeAtt)
+                            if v:IsA("BodyVelocity") or v:IsA("BodyForce") or v:IsA("BodyPosition") or v:IsA("VectorForce") then
+                                v:Destroy()
+                            elseif v:IsA("LinearVelocity") and v.Name ~= "_DodgeLV" then
+                                v:Destroy()
+                            elseif v:IsA("AlignPosition") then
                                 v:Destroy()
                             end
                         end
@@ -1562,6 +1711,7 @@ end)
 
 -- ==========================================
 -- RUNSERVICE: HEARTBEAT (MOVEMENT)
+-- [IMP-3] Dùng AssemblyLinearVelocity thay .Velocity (deprecated)
 -- ==========================================
 _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
     if not _G.AutoDungeon then return end
@@ -1580,6 +1730,7 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         fakePlatform.CFrame = CFrame.new(root.Position.X, root.Position.Y - 3.2, root.Position.Z)
     end
 
+    -- Không can thiệp khi LinearVelocity đang chạy
     if _dodgeTweenActive or _z8DmgDodging then return end
 
     local activeTargetPos = nil
@@ -1615,8 +1766,15 @@ _G.CupidHeartbeat = RunService.Heartbeat:Connect(function(dt)
         end
 
         if IsReadyToAttack and ZoneState ~= "ABSORBING_CURSE" then
-            if hum then root.Velocity = Vector3.new(root.CFrame.LookVector.X * hum.WalkSpeed, 0, root.CFrame.LookVector.Z * hum.WalkSpeed) end
-            root.RotVelocity = Vector3.zero
+            -- [IMP-3] AssemblyLinearVelocity thay .Velocity (đúng API Roblox hiện tại)
+            if hum then
+                root.AssemblyLinearVelocity = Vector3.new(
+                    root.CFrame.LookVector.X * hum.WalkSpeed,
+                    0,
+                    root.CFrame.LookVector.Z * hum.WalkSpeed
+                )
+            end
+            root.AssemblyAngularVelocity = Vector3.zero
             pcall(function()
                 if hum then hum:Move(Vector3.new(0.01, 0, 0.01), false) end
                 local footstepEvent = cloneref(ReplicatedStorage):FindFirstChild("Events")
