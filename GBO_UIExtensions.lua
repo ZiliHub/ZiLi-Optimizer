@@ -1,1437 +1,2947 @@
--- =====================================================================
--- GET BETTER OUT | UI EXTENSIONS  v1.0.0
--- =====================================================================
--- MODULES INSIDE:
---   01 · Bootstrap & Services
---   02 · Shared Helpers & Colors
---   03 · Profile System          (JSON persist, UserCard, playtime)
---   04 · Confirmation Dialog      (popup: Yes / Cancel)
---   05 · Panic Button             (Delete key → kill all features)
---   06 · Feature Keybind Manager  (per-feature hotkey + rebind UI)
---   07 · Quick Action Bar         (always-visible shortcut strip)
---   08 · Mini Stats Overlay       (EXP/hr · Fish/hr corner HUD)
---   09 · Mythic Chest Log         (tracks chest timer, no spam)
---   10 · Level XP Progress Bar    (realtime bar on Main page)
---   11 · Visual Effects           (ripple, cursor trail, card glow)
---   12 · Multi-Profile Config     (named save slots + switch)
---   13 · Import / Export Config   (base64 string encode/decode)
---   14 · Misc Panel               (Change Char, Display Name + extras)
--- =====================================================================
--- USAGE:  Run AFTER MainHub_Optimized.lua.
---         loadstring(readfile("GBO_UIExtensions.lua"))()
--- =====================================================================
+--[[
+	===========================================================
+	 ZILI HUB ENGINE — UI LIBRARY  (v2)
+	 Modular Desktop UI Library for Roblox (Production Automation Hub)
+	 Theme: Yellow / Black, Cyber-Minimal — fully re-themeable at runtime
+	 ===========================================================
+]]
 
--- =====================================================================
--- 01 · BOOTSTRAP — wait for main hub
--- =====================================================================
-local _bootWaited = 0
-repeat task.wait(0.1); _bootWaited += 0.1
-until _G._ZiliLoadReady or _bootWaited >= 30
-if not _G._ZiliLoadReady then warn("[GBO_EXT] Main hub not ready; aborting."); return end
+local Players          = game:GetService("Players")
+local TextService      = game:GetService("TextService")
+local TweenService     = game:GetService("TweenService")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Lighting         = game:GetService("Lighting")
+local Debris           = game:GetService("Debris")
 
--- =====================================================================
--- 02 · SERVICES & SHARED HELPERS
--- =====================================================================
-local Players      = game:GetService("Players")
-local UIS          = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local HttpService  = game:GetService("HttpService")
-local RunService   = game:GetService("RunService")
-local LocalPlayer  = Players.LocalPlayer
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui    = LocalPlayer:WaitForChild("PlayerGui")
 
-local C = Color3.fromRGB
+local Library = {}
+Library.__index = Library
 
-local function NEW(cls, props, parent)
-    local o = Instance.new(cls)
-    for k, v in pairs(props) do o[k] = v end
-    if parent then o.Parent = parent end
-    return o
-end
-local function CORNER(r, p)   return NEW("UICorner", {CornerRadius=UDim.new(0,r)}, p) end
-local function STROKE(col, th, tr, p) return NEW("UIStroke", {Color=col, Thickness=th, Transparency=tr or 0}, p) end
-local function TWEEN(o, t, pr)  TweenService:Create(o, TweenInfo.new(t, Enum.EasingStyle.Quad),  pr):Play() end
-local function TWEEN_B(o, t, pr) TweenService:Create(o, TweenInfo.new(t, Enum.EasingStyle.Back,     Enum.EasingDirection.Out), pr):Play() end
-local function TWEEN_E(o, t, pr) TweenService:Create(o, TweenInfo.new(t, Enum.EasingStyle.Elastic,  Enum.EasingDirection.Out), pr):Play() end
+--====================================================
+-- THEME (mutable at runtime via Custom UI tab)
+--====================================================
+local Theme = {
+	Background = Color3.fromRGB(15, 15, 17),
+	Panel      = Color3.fromRGB(23, 23, 26),
+	PanelLight = Color3.fromRGB(32, 32, 36),
+	Accent     = Color3.fromRGB(240, 180, 41),
+	AccentDim  = Color3.fromRGB(122, 92, 10),
+	AccentMuted = Color3.fromRGB(196, 168, 112),
+	Text       = Color3.fromRGB(241, 241, 243),
+	MutedText  = Color3.fromRGB(168, 168, 174),
+	Stroke     = Color3.fromRGB(255, 255, 255),
+	Danger     = Color3.fromRGB(220, 70, 70),
+	BackgroundImageTransparency = 0.45,
+}
 
--- ── Colors (mirrors main hub palette exactly) ──────────────────────
-local BG0=C(4,3,10); local BG1=C(8,6,18); local BG2=C(11,9,24)
-local BG3=C(15,13,33); local BG4=C(20,18,44); local BG5=C(7,6,16)
-local BG_HDR=C(10,9,22)
-local GOLD=C(220,172,68); local GOLD2=C(255,215,115); local GOLD3=C(140,100,30)
-local TEXT1=C(245,242,232); local TEXT2=C(148,143,168); local TEXT3=C(60,55,82)
-local RED=C(240,60,60); local GREEN=C(55,220,130); local CYAN=C(45,225,218)
-local AMBER=C(255,215,85); local ORANGE=C(255,105,40); local PURPLE=C(185,95,255)
-local PINK=C(240,75,190); local BLUE_A=C(65,165,255)
-local MISC_COL = C(160,80,255)  -- Misc accent: vivid violet
-
--- ── Extension screen GUI ───────────────────────────────────────────
-local ExtGui = Instance.new("ScreenGui")
-ExtGui.Name = "GBO_UIExtensions"
-ExtGui.ResetOnSpawn = false
-ExtGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ExtGui.DisplayOrder = 500
-ExtGui.Parent = gethui and gethui() or game:GetService("CoreGui")
-
--- ── Shared toast (delegates to main hub global if available) ────────
-local function Toast(msg, col, icon)
-    if type(_G._GBO_Toast) == "function" then _G._GBO_Toast(msg, col, icon); return end
-    col = col or GOLD2; icon = icon or "⬡"
-    local tf = NEW("Frame", {Size=UDim2.new(0,260,0,36), Position=UDim2.new(1,10,1,-66),
-        BackgroundColor3=BG1, BorderSizePixel=0, ZIndex=700}, ExtGui)
-    CORNER(8, tf); STROKE(col, 1.2, 0.1, tf)
-    NEW("Frame", {Size=UDim2.new(0,3,1,0), BackgroundColor3=col, BorderSizePixel=0, ZIndex=701}, tf); CORNER(2, tf:FindFirstChildWhichIsA("Frame"))
-    NEW("TextLabel", {Text=icon.."  "..msg, Size=UDim2.new(1,-14,1,0), Position=UDim2.new(0,12,0,0),
-        BackgroundTransparency=1, TextColor3=col, Font=Enum.Font.GothamBold, TextSize=11,
-        TextXAlignment=Enum.TextXAlignment.Left, ZIndex=702}, tf)
-    TWEEN(tf, 0.25, {Position=UDim2.new(1,-274,1,-66)})
-    task.delay(2.5, function()
-        TWEEN(tf, 0.2, {Position=UDim2.new(1,10,1,-66), BackgroundTransparency=1})
-        task.delay(0.22, function() pcall(function() tf:Destroy() end) end)
-    end)
+-- BuilderSans is Roblox's newer clean/geometric UI font (closer to the
+-- reference look than Gotham). Resolved through a safe fallback: if the
+-- exact enum name doesn't exist on some client (e.g. an older Roblox
+-- version, or if a bold/black variant is actually named differently than
+-- guessed here), this falls back to the proven Gotham family instead of
+-- throwing "X is not a valid member of Font" and breaking the whole hub.
+local function safeFont(name, fallback)
+	local ok, result = pcall(function() return Enum.Font[name] end)
+	return (ok and result) or fallback
 end
 
--- ── File I/O helpers ───────────────────────────────────────────────
-local function ReadJSON(filename)
-    local ok, data = pcall(function()
-        if not (isfile and isfile(filename)) then return nil end
-        local raw = readfile(filename)
-        return HttpService:JSONDecode(raw)
-    end)
-    return ok and data or nil
-end
-local function WriteJSON(filename, data)
-    pcall(function()
-        if not writefile then return end
-        writefile(filename, HttpService:JSONEncode(data))
-    end)
-end
+local FONT       = safeFont("BuilderSansMedium", Enum.Font.GothamMedium)
+local FONT_BOLD  = safeFont("BuilderSansBold", Enum.Font.GothamBold)
+local FONT_BLACK = safeFont("BuilderSansExtraBold", Enum.Font.GothamBlack)
+-- Monospace for numeric/technical readouts (Stat cards, FPS) — the
+-- reference site loads JetBrains Mono for exactly this kind of data
+-- display; Enum.Font.Code is Roblox's closest stable built-in equivalent.
+local FONT_MONO = safeFont("Code", Enum.Font.Code)
+print(("[ZiliHub] Font resolved: FONT=%s FONT_BOLD=%s FONT_BLACK=%s FONT_MONO=%s"):format(FONT.Name, FONT_BOLD.Name, FONT_BLACK.Name, FONT_MONO.Name))
 
--- ── Toggle state helper (accesses main hub's TogglesData global) ───
-local function GetToggles()
-    return getgenv and getgenv().TogglesData or {}
-end
+--====================================================
+-- PERFORMANCE / QUALITY SYSTEM
+-- The hub is meant to sit on top of an already-heavy game, so it should
+-- never be the thing that tips the client into a slideshow. "Auto" mode
+-- watches real Heartbeat frame time and scales animation cost down when
+-- the game itself is already struggling, then scales back up once frames
+-- recover — no manual babysitting needed. Power users can still pin a
+-- fixed level from the Performance tab.
+--====================================================
+local Quality = { Mode = "Auto", Resolved = "High" }
+local QUALITY_TWEEN_SCALE = { High = 1, Balanced = 0.65, Low = 0 } -- 0 = snap instantly, skip TweenService entirely
+local QualityListeners = {}
 
--- =====================================================================
--- 03 · PROFILE SYSTEM
--- Persists: username, playtime, per-feature usage count.
--- Exposes:  GBO.Profile.Save(), GBO.Profile.AddUse(featureKey)
--- UserCard displayed in MainFrame gutter (top-right of screen).
--- =====================================================================
-local GBO = {}  -- main namespace exposed to _G at end
-
-local PROFILE_FILE = "gbo_profile.json"
-
-local Profile = {}
-Profile.data = ReadJSON(PROFILE_FILE) or {}
-Profile.data.username    = Profile.data.username or LocalPlayer.Name
-Profile.data.playtime    = Profile.data.playtime or 0           -- seconds total
-Profile.data.sessions    = Profile.data.sessions or 0
-Profile.data.usageCount  = Profile.data.usageCount or {}        -- {featureKey = number}
-Profile.data.sessions    = Profile.data.sessions + 1
-Profile._sessionStart    = tick()
-
-function Profile.Save()
-    Profile.data.playtime = Profile.data.playtime + (tick() - Profile._sessionStart)
-    Profile._sessionStart = tick()
-    Profile.data.username = LocalPlayer.Name
-    WriteJSON(PROFILE_FILE, Profile.data)
+local function currentQuality()
+	return Quality.Mode ~= "Auto" and Quality.Mode or Quality.Resolved
 end
 
-function Profile.AddUse(key)
-    if not key then return end
-    Profile.data.usageCount[key] = (Profile.data.usageCount[key] or 0) + 1
-    -- Lazy-save every 10 uses to avoid spamming disk
-    local total = 0
-    for _, v in pairs(Profile.data.usageCount) do total += v end
-    if total % 10 == 0 then Profile.Save() end
+local function setQualityMode(mode)
+	Quality.Mode = mode
+	for _, fn in ipairs(QualityListeners) do task.spawn(fn, currentQuality()) end
 end
 
-function Profile.FormatTime(seconds)
-    local h = math.floor(seconds / 3600)
-    local m = math.floor((seconds % 3600) / 60)
-    if h > 0 then return string.format("%dh %dm", h, m) end
-    return string.format("%dm", math.max(0, m))
+local function setQualityResolved(level)
+	if Quality.Resolved == level then return end
+	Quality.Resolved = level
+	if Quality.Mode == "Auto" then
+		for _, fn in ipairs(QualityListeners) do task.spawn(fn, level) end
+	end
 end
 
--- ── UserCard UI ───────────────────────────────────────────────────
--- A compact floating card (top-right, ZIndex 300) that shows stats.
-local _ucCard = NEW("Frame", {
-    Size=UDim2.new(0,210,0,64), Position=UDim2.new(1,-224,0,8),
-    BackgroundColor3=BG2, BorderSizePixel=0, ZIndex=300, Visible=true
-}, ExtGui)
-CORNER(10, _ucCard); STROKE(MISC_COL, 1.2, 0.35, _ucCard)
+local function onQualityChanged(fn) table.insert(QualityListeners, fn) end
 
-local _ucBar = NEW("Frame", {Size=UDim2.new(0,3,0.6,0), Position=UDim2.new(0,0,0.2,0),
-    BackgroundColor3=MISC_COL, BorderSizePixel=0, ZIndex=301}, _ucCard); CORNER(2, _ucBar)
-local _ucName = NEW("TextLabel", {Text=LocalPlayer.Name, Size=UDim2.new(1,-12,0,20),
-    Position=UDim2.new(0,10,0,6), BackgroundTransparency=1, TextColor3=TEXT1,
-    Font=Enum.Font.GothamBold, TextSize=12, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=302}, _ucCard)
-local _ucSess = NEW("TextLabel", {Text="", Size=UDim2.new(1,-12,0,14),
-    Position=UDim2.new(0,10,0,26), BackgroundTransparency=1, TextColor3=MISC_COL,
-    Font=Enum.Font.GothamSemibold, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=302}, _ucCard)
-local _ucPT   = NEW("TextLabel", {Text="", Size=UDim2.new(1,-12,0,13),
-    Position=UDim2.new(0,10,0,43), BackgroundTransparency=1, TextColor3=TEXT3,
-    Font=Enum.Font.Gotham, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=302}, _ucCard)
+-- Cheap exponential moving average of FPS, always running (not just in
+-- Auto mode) so the Performance tab has a live number to show. No table
+-- allocations, just one float updated per Heartbeat.
+local LiveFPS = 60
+RunService.Heartbeat:Connect(function(dt)
+	if dt > 0 then
+		LiveFPS = LiveFPS + ((1 / dt) - LiveFPS) * 0.1
+	end
+end)
 
--- Live update every 30s
+-- Rolling FPS sample: averaged over ~60 Heartbeats (roughly 1s at 60fps,
+-- longer if the game is already slow) so a single hitch doesn't flip
+-- quality back and forth. Only runs the math while Mode == "Auto".
+do
+	local samples, accum = 0, 0
+	RunService.Heartbeat:Connect(function(dt)
+		if Quality.Mode ~= "Auto" or dt <= 0 then return end
+		samples = samples + 1
+		accum = accum + dt
+		if samples >= 60 then
+			local avgFps = samples / accum
+			samples, accum = 0, 0
+			if avgFps < 24 then
+				setQualityResolved("Low")
+			elseif avgFps < 42 then
+				setQualityResolved("Balanced")
+			else
+				setQualityResolved("High")
+			end
+		end
+	end)
+end
+
+--====================================================
+-- LIVE THEME BINDING SYSTEM
+-- Every themed instance registers { Instance, Property, Role }.
+-- Changing Theme.X and calling refreshTheme() updates everything
+-- on screen instantly — this is what was missing before.
+--====================================================
+local ThemeBindings = {}
+
+local function bindTheme(instance, property, role)
+	table.insert(ThemeBindings, { Instance = instance, Property = property, Role = role })
+	instance[property] = Theme[role]
+	return instance
+end
+
+local function refreshTheme()
+	for i = #ThemeBindings, 1, -1 do
+		local b = ThemeBindings[i]
+		if b.Instance and b.Instance.Parent then
+			b.Instance[b.Property] = Theme[b.Role]
+		else
+			table.remove(ThemeBindings, i)
+		end
+	end
+end
+
+-- Long-running hubs create/destroy a lot of rows (dropdown lists, dynamic
+-- tabs, config reloads). Without this, ThemeBindings only ever gets swept
+-- when the user opens Custom UI and touches a color — everything else sits
+-- in the table holding a hard reference to a destroyed Instance forever.
 task.spawn(function()
-    while _ucCard and _ucCard.Parent do
-        local sessionSecs = tick() - Profile._sessionStart
-        local totalSecs   = Profile.data.playtime + sessionSecs
-        _ucSess.Text = "Session: " .. Profile.FormatTime(sessionSecs)
-        _ucPT.Text   = "Total: "   .. Profile.FormatTime(totalSecs) ..
-                       "  ·  Sessions: " .. Profile.data.sessions
-        task.wait(30)
-    end
-end)
--- First tick immediately
-task.defer(function()
-    _ucSess.Text = "Session: 0m"
-    _ucPT.Text   = "Total: " .. Profile.FormatTime(Profile.data.playtime) ..
-                   "  ·  Sessions: " .. Profile.data.sessions
+	while true do
+		task.wait(30)
+		for i = #ThemeBindings, 1, -1 do
+			local b = ThemeBindings[i]
+			if not (b.Instance and b.Instance.Parent) then table.remove(ThemeBindings, i) end
+		end
+	end
 end)
 
--- Auto-save on exit / every 5min
-task.spawn(function()
-    while task.wait(300) do Profile.Save() end
-end)
-game:BindToClose(function() Profile.Save() end)
-
-GBO.Profile = Profile
-
--- =====================================================================
--- 04 · CONFIRMATION DIALOG
--- Usage: GBO.Confirm("Title", "Are you sure?", onYes, onNo)
--- =====================================================================
-local function Confirm(title, message, onYes, onNo)
-    -- Dim overlay
-    local overlay = NEW("Frame", {Size=UDim2.new(1,0,1,0), BackgroundColor3=C(0,0,0),
-        BackgroundTransparency=0.55, ZIndex=900, BorderSizePixel=0}, ExtGui)
-    CORNER(0, overlay)
-
-    local card = NEW("Frame", {Size=UDim2.new(0,320,0,150), Position=UDim2.new(0.5,-160,0.5,-75),
-        BackgroundColor3=BG2, BorderSizePixel=0, ZIndex=901}, ExtGui)
-    CORNER(12, card); STROKE(RED, 1.5, 0.2, card)
-    card.GroupTransparency = 1
-    TWEEN_B(card, 0.28, {GroupTransparency=0})
-
-    NEW("Frame", {Size=UDim2.new(0,3,0.55,0), Position=UDim2.new(0,0,0.22,0),
-        BackgroundColor3=RED, BorderSizePixel=0, ZIndex=902}, card)
-    NEW("TextLabel", {Text=title, Size=UDim2.new(1,-20,0,24), Position=UDim2.new(0,14,0,12),
-        BackgroundTransparency=1, TextColor3=TEXT1, Font=Enum.Font.GothamBold, TextSize=14,
-        TextXAlignment=Enum.TextXAlignment.Left, ZIndex=902}, card)
-    NEW("TextLabel", {Text=message, Size=UDim2.new(1,-20,0,36), Position=UDim2.new(0,14,0,40),
-        BackgroundTransparency=1, TextColor3=TEXT2, Font=Enum.Font.Gotham, TextSize=11,
-        TextXAlignment=Enum.TextXAlignment.Left, TextWrapped=true, ZIndex=902}, card)
-
-    local function closeAll()
-        TWEEN(card, 0.15, {GroupTransparency=1})
-        task.delay(0.15, function()
-            pcall(function() card:Destroy() end)
-            pcall(function() overlay:Destroy() end)
-        end)
-    end
-
-    local yesBtn = NEW("TextButton", {Text="YES, CONFIRM", Size=UDim2.new(0,130,0,34),
-        Position=UDim2.new(0,14,0,106), BackgroundColor3=C(38,8,8), TextColor3=RED,
-        Font=Enum.Font.GothamBold, TextSize=11, AutoButtonColor=false, ZIndex=902}, card)
-    CORNER(7, yesBtn); STROKE(RED, 1.2, 0.2, yesBtn)
-    local noBtn = NEW("TextButton", {Text="CANCEL", Size=UDim2.new(0,120,0,34),
-        Position=UDim2.new(1,-136,0,106), BackgroundColor3=BG4, TextColor3=TEXT2,
-        Font=Enum.Font.GothamSemibold, TextSize=11, AutoButtonColor=false, ZIndex=902}, card)
-    CORNER(7, noBtn); STROKE(C(35,35,55), 1, 0.3, noBtn)
-
-    yesBtn.MouseButton1Click:Connect(function()
-        closeAll(); if onYes then task.spawn(onYes) end
-    end)
-    noBtn.MouseButton1Click:Connect(function()
-        closeAll(); if onNo then task.spawn(onNo) end
-    end)
-    overlay.MouseButton1Click:Connect(function()
-        closeAll(); if onNo then task.spawn(onNo) end
-    end)
+--====================================================
+-- LOCALIZATION
+--====================================================
+local Localization = {
+	en = {
+		Dashboard = "Dashboard", AutoFarm = "Auto farm", Analytics = "Analytics", Settings = "Settings",
+		Config = "Config", CustomUI = "Custom UI", LocalizationTab = "Localization",
+		SearchPlaceholder = "Search settings, tasks...",
+		Accent = "Accent", Background = "Background", Panel = "Panel",
+		BackgroundImage = "Background image", BackgroundImageDesc = "Paste a decal or image asset id",
+		SaveConfig = "Save configuration", ResetTheme = "Reset theme",
+		Performance = "Performance", QualityMode = "Quality mode",
+		QualityDesc = "Auto lowers animation quality automatically if the game's frame rate drops.",
+		LiveFPS = "Live frame rate", ThemePresets = "Theme presets",
+	},
+	vi = {
+		Dashboard = "Bảng điều khiển", AutoFarm = "Tự động cày", Analytics = "Phân tích", Settings = "Cài đặt",
+		Config = "Cấu hình", CustomUI = "Tùy chỉnh giao diện", LocalizationTab = "Ngôn ngữ",
+		SearchPlaceholder = "Tìm cài đặt, tác vụ...",
+		Accent = "Màu nhấn", Background = "Nền", Panel = "Bảng",
+		BackgroundImage = "Ảnh nền", BackgroundImageDesc = "Dán asset id ảnh hoặc decal",
+		SaveConfig = "Lưu cấu hình", ResetTheme = "Khôi phục giao diện",
+		Performance = "Hiệu năng", QualityMode = "Chế độ chất lượng",
+		QualityDesc = "Auto sẽ tự động giảm chất lượng hiệu ứng nếu FPS của game bị tụt.",
+		LiveFPS = "FPS hiện tại", ThemePresets = "Bộ giao diện có sẵn",
+	},
+}
+local CurrentLang = "en"
+-- Weak keys: once an instance is destroyed and dropped elsewhere, Lua can
+-- actually collect it instead of this table holding it alive forever.
+local LocaleBindings = setmetatable({}, { __mode = "k" })
+local function L(key) return (Localization[CurrentLang] and Localization[CurrentLang][key]) or key end
+local function bindLocale(instance, key)
+	LocaleBindings[instance] = key
+	instance.Text = L(key)
 end
-GBO.Confirm = Confirm
-
--- =====================================================================
--- 05 · PANIC BUTTON
--- Default key: Delete. Custom via GBO.Panic.SetKey(KeyCode).
--- Disables ALL active features immediately.
--- =====================================================================
-local Panic = {}
-Panic._key = Enum.KeyCode.Delete
-
-function Panic.Fire()
-    local td = GetToggles()
-    local count = 0
-    for key, info in pairs(td) do
-        if type(info) == "table" and info.Active then
-            count += 1
-            pcall(function()
-                info.Active = false
-                -- Reset UI pill/thumb visuals
-                if info.Btn then
-                    TWEEN(info.Btn, 0.15, {BackgroundColor3=BG5})
-                    if info.Strk  then TWEEN(info.Strk, 0.15, {Color=C(60,55,82), Transparency=0.3}) end
-                    if info.Thumb then TWEEN(info.Thumb, 0.15, {BackgroundColor3=C(60,55,82), Position=UDim2.new(0,4,0.5,-9)}) end
-                    if info.MasterBar then TWEEN(info.MasterBar, 0.25, {BackgroundColor3=C(220,172,68)}) end
-                end
-                if info.Callback then info.Callback(false) end
-            end)
-        end
-    end
-    -- Also clear known getgenv flags
-    pcall(function()
-        local ge = getgenv()
-        ge.AutoFarm         = false
-        ge.AutoGetBuso      = false
-        ge.AutoGeppo        = false
-        ge.AutoFishMerchant = false
-        ge.AutoChangeSkin   = false
-        ge.AutoRejoin       = false
-        ge.Auto2ndSea       = false
-        ge.AutoChangeSkin   = false
-    end)
-    Toast("PANIC — " .. count .. " feature(s) stopped", RED, "🚨")
+local function refreshLocale()
+	for instance, key in pairs(LocaleBindings) do
+		if instance and instance.Parent then instance.Text = L(key) else LocaleBindings[instance] = nil end
+	end
 end
 
-function Panic.SetKey(keyCode) Panic._key = keyCode end
+--====================================================
+-- LOW-LEVEL UTILITY
+--====================================================
+local Utility = {}
 
-UIS.InputBegan:Connect(function(inp, gpe)
-    if gpe then return end
-    if inp.KeyCode == Panic._key then Panic.Fire() end
-end)
-
-GBO.Panic = Panic
-
--- =====================================================================
--- 06 · FEATURE KEYBIND MANAGER
--- Stores binds in gbo_keybinds.json.
--- GBO.Keybind.Register(featureKey, displayName, defaultKey)
--- GBO.Keybind.OpenUI()  — opens the rebind window
--- =====================================================================
-local KEYBIND_FILE = "gbo_keybinds.json"
-
-local Keybind = {}
-Keybind._binds    = ReadJSON(KEYBIND_FILE) or {}   -- {featureKey = "KeyCode_Name"}
-Keybind._registry = {}                              -- {featureKey = {display, default}}
-
-function Keybind.Register(key, display, defaultKey)
-    Keybind._registry[key] = {display=display, default=defaultKey}
-    if not Keybind._binds[key] then
-        Keybind._binds[key] = tostring(defaultKey):gsub("Enum.KeyCode.", "")
-    end
+function Utility.Create(class, props, children)
+	local inst = Instance.new(class)
+	for prop, value in pairs(props or {}) do inst[prop] = value end
+	for _, child in ipairs(children or {}) do child.Parent = inst end
+	return inst
 end
 
-function Keybind.GetKey(key)
-    local name = Keybind._binds[key]
-    if not name then return nil end
-    return Enum.KeyCode[name]
+function Utility.Corner(radius) return Utility.Create("UICorner", { CornerRadius = UDim.new(0, radius or 10) }) end
+
+function Utility.Stroke(color, thickness, transparency)
+	return Utility.Create("UIStroke", { Color = color or Theme.Stroke, Thickness = thickness or 1, Transparency = transparency or 0.88, ApplyStrokeMode = Enum.ApplyStrokeMode.Border })
 end
 
-function Keybind.Save()
-    WriteJSON(KEYBIND_FILE, Keybind._binds)
+function Utility.Padding(all)
+	return Utility.Create("UIPadding", { PaddingTop = UDim.new(0, all), PaddingBottom = UDim.new(0, all), PaddingLeft = UDim.new(0, all), PaddingRight = UDim.new(0, all) })
 end
 
--- Global listener: fires the feature's toggle when its hotkey is pressed
-UIS.InputBegan:Connect(function(inp, gpe)
-    if gpe then return end
-    if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
-    local keyName = tostring(inp.KeyCode):gsub("Enum.KeyCode.", "")
-    for featureKey, boundName in pairs(Keybind._binds) do
-        if keyName == boundName then
-            local td = GetToggles()
-            if td[featureKey] and td[featureKey].Btn then
-                pcall(function() td[featureKey].Btn:activate() end)
-                Profile.AddUse(featureKey)
-            end
-        end
-    end
-end)
-
--- Register default binds for known features
-Keybind.Register("AutoFarmLevel",    "Auto Farm Level",    Enum.KeyCode.F5)
-Keybind.Register("AutoFishMerchant", "Auto Fish+Merchant", Enum.KeyCode.F6)
-Keybind.Register("AutoGetBuso",      "Auto Get Buso",      Enum.KeyCode.F7)
-Keybind.Register("AutoGeppo",        "Auto Geppo",         Enum.KeyCode.F8)
-Keybind.Register("ESP_Island",       "Island ESP",         Enum.KeyCode.F9)
-
--- ── Keybind Rebind UI ─────────────────────────────────────────────
-function Keybind.OpenUI()
-    -- close if already open
-    local old = ExtGui:FindFirstChild("KeybindPanel")
-    if old then old:Destroy(); return end
-
-    local panel = NEW("Frame", {
-        Name="KeybindPanel", Size=UDim2.new(0,360,0,420),
-        Position=UDim2.new(0.5,-180,0.5,-210), BackgroundColor3=BG2,
-        BorderSizePixel=0, ZIndex=600
-    }, ExtGui)
-    CORNER(12, panel); STROKE(PURPLE, 1.5, 0.2, panel)
-    panel.GroupTransparency = 1
-    TWEEN_B(panel, 0.3, {GroupTransparency=0})
-
-    -- Header
-    local hdr = NEW("Frame", {Size=UDim2.new(1,0,0,44), BackgroundColor3=BG_HDR, ZIndex=601}, panel)
-    CORNER(10, hdr); NEW("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=BG_HDR,BorderSizePixel=0,ZIndex=601},hdr)
-    NEW("TextLabel", {Text="⌨  KEYBIND MANAGER", Size=UDim2.new(1,-50,1,0), Position=UDim2.new(0,14,0,0),
-        BackgroundTransparency=1, TextColor3=PURPLE, Font=Enum.Font.GothamBold, TextSize=13,
-        TextXAlignment=Enum.TextXAlignment.Left, ZIndex=602}, hdr)
-    local closeKb = NEW("TextButton", {Text="✕", Size=UDim2.new(0,28,0,28), Position=UDim2.new(1,-36,0.5,-14),
-        BackgroundTransparency=1, TextColor3=TEXT3, Font=Enum.Font.GothamBold, TextSize=15, ZIndex=602}, hdr)
-    closeKb.MouseButton1Click:Connect(function() TWEEN(panel, 0.15, {GroupTransparency=1}); task.delay(0.15, function() pcall(function() panel:Destroy() end) end) end)
-
-    local scroll = NEW("ScrollingFrame", {
-        Size=UDim2.new(1,-16,1,-56), Position=UDim2.new(0,8,0,52),
-        BackgroundTransparency=1, ScrollBarThickness=2, ScrollBarImageColor3=PURPLE,
-        CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=601
-    }, panel)
-    NEW("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,6),
-        HorizontalAlignment=Enum.HorizontalAlignment.Center}, scroll)
-    NEW("UIPadding", {PaddingTop=UDim.new(0,6), PaddingBottom=UDim.new(0,6)}, scroll)
-
-    local listening = nil  -- featureKey currently listening for a rebind
-
-    for featureKey, info in pairs(Keybind._registry) do
-        local row = NEW("Frame", {Size=UDim2.new(1,-8,0,48), BackgroundColor3=BG3, BorderSizePixel=0, ZIndex=602}, scroll)
-        CORNER(8, row); STROKE(C(28,24,52), 1, 0, row)
-        NEW("TextLabel", {Text=info.display, Size=UDim2.new(0.55,0,0,18), Position=UDim2.new(0,12,0,6),
-            BackgroundTransparency=1, TextColor3=TEXT1, Font=Enum.Font.GothamBold, TextSize=11,
-            TextXAlignment=Enum.TextXAlignment.Left, ZIndex=603}, row)
-        local keyLbl = NEW("TextLabel", {Text=Keybind._binds[featureKey] or "None",
-            Size=UDim2.new(0,80,0,16), Position=UDim2.new(0,12,0,28),
-            BackgroundTransparency=1, TextColor3=PURPLE, Font=Enum.Font.GothamSemibold, TextSize=10,
-            TextXAlignment=Enum.TextXAlignment.Left, ZIndex=603}, row)
-        local rebindBtn = NEW("TextButton", {Text="REBIND", Size=UDim2.new(0,80,0,28),
-            Position=UDim2.new(1,-90,0.5,-14), BackgroundColor3=BG4, TextColor3=PURPLE,
-            Font=Enum.Font.GothamBold, TextSize=10, AutoButtonColor=false, ZIndex=603}, row)
-        CORNER(6, rebindBtn); STROKE(PURPLE, 1, 0.3, rebindBtn)
-
-        local fk = featureKey
-        rebindBtn.MouseButton1Click:Connect(function()
-            if listening == fk then
-                listening = nil
-                rebindBtn.Text = "REBIND"; rebindBtn.TextColor3 = PURPLE
-                return
-            end
-            listening = fk
-            rebindBtn.Text = "PRESS KEY"; rebindBtn.TextColor3 = AMBER
-
-            local conn; conn = UIS.InputBegan:Connect(function(inp, gpe)
-                if gpe then return end
-                if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
-                local kName = tostring(inp.KeyCode):gsub("Enum.KeyCode.", "")
-                Keybind._binds[fk] = kName
-                keyLbl.Text = kName
-                Keybind.Save()
-                listening = nil
-                rebindBtn.Text = "REBIND"; rebindBtn.TextColor3 = PURPLE
-                Toast("Bound " .. (Keybind._registry[fk] and Keybind._registry[fk].display or fk) .. " → " .. kName, PURPLE, "⌨")
-                conn:Disconnect()
-            end)
-        end)
-    end
-
-    -- Drag
-    local d, ds, sp
-    hdr.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then d=true;ds=i.Position;sp=panel.Position end end)
-    UIS.InputChanged:Connect(function(i) if d and i.UserInputType==Enum.UserInputType.MouseMovement then local delta=i.Position-ds;panel.Position=UDim2.new(sp.X.Scale,sp.X.Offset+delta.X,sp.Y.Scale,sp.Y.Offset+delta.Y) end end)
-    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then d=false end end)
+-- A fake "Completed" signal for the instant-apply (Low quality) path, so
+-- every existing call site that does `Utility.Tween(...).Completed:Wait()`
+-- or `:Connect(...)` keeps working without special-casing quality itself.
+local function instantSignalStub()
+	return {
+		Wait = function() end,
+		Connect = function(_, fn)
+			if fn then task.spawn(fn) end
+			return { Disconnect = function() end }
+		end,
+	}
 end
 
-GBO.Keybind = Keybind
+function Utility.Tween(instance, props, duration, style, direction)
+	local scale = QUALITY_TWEEN_SCALE[currentQuality()] or 1
+	if scale <= 0 then
+		-- Low quality: write the end values directly, no TweenService
+		-- object, no per-frame interpolation cost at all.
+		for prop, value in pairs(props) do instance[prop] = value end
+		return { Completed = instantSignalStub() }
+	end
+	local info = TweenInfo.new((duration or 0.2) * scale, style or Enum.EasingStyle.Quad, direction or Enum.EasingDirection.Out)
+	local tween = TweenService:Create(instance, info, props)
+	tween:Play()
+	return tween
+end
 
--- =====================================================================
--- 07 · QUICK ACTION BAR
--- Always visible horizontal strip (top-left). 5 pinnable shortcuts.
--- GBO.QuickBar.Pin(featureKey, icon, label, col)
--- =====================================================================
-local QuickBar = {}
-QuickBar._pins = {}        -- ordered list of {key, label, icon, col}
-QuickBar._MAX  = 5
+-- Hover feedback as a translucent overlay instead of swapping the real
+-- BackgroundColor3. Any button whose base color is theme-bound can safely
+-- use this: refreshTheme() writes the base color directly and will never
+-- race against / get fought by a hover tween again, no matter what color
+-- the user picks via Custom UI.
+function Utility.AddHoverDarken(button, amount, cornerRadius)
+	amount = amount or 0.15
+	local Overlay -- created lazily on first hover
+	local function ensureOverlay()
+		if Overlay then return Overlay end
+		Overlay = Utility.Create("Frame", {
+			Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0),
+			BackgroundTransparency = 1, ZIndex = (button.ZIndex or 1) + 1, Parent = button,
+		})
+		if cornerRadius then Utility.Corner(cornerRadius).Parent = Overlay end
+		return Overlay
+	end
+	button.MouseEnter:Connect(function() Utility.Tween(ensureOverlay(), { BackgroundTransparency = 1 - amount }, 0.15) end)
+	button.MouseLeave:Connect(function()
+		if Overlay then Utility.Tween(Overlay, { BackgroundTransparency = 1 }, 0.15) end
+	end)
+end
 
--- Bar frame
-local _qbFrame = NEW("Frame", {
-    Size=UDim2.new(0,300,0,42), Position=UDim2.new(0,8,0,8),
-    BackgroundColor3=BG2, BorderSizePixel=0, ZIndex=400
-}, ExtGui)
-CORNER(10, _qbFrame); STROKE(GOLD, 1, 0.45, _qbFrame)
+-- Momentary highlight flash (used by search-reveal) via a throwaway overlay,
+-- instead of tweening the instance's own BackgroundColor3. Rows use `card()`,
+-- which theme-binds BackgroundColor3 to "Panel" — tweening that property
+-- directly races refreshTheme() the same way the old hover-darken bug did:
+-- if the theme changes mid-flash, the tween's captured end-color is stale
+-- and the row visibly gets stuck on the wrong color. An overlay sidesteps
+-- the bound property entirely, so it can never get stuck.
+function Utility.FlashHighlight(instance, color, cornerRadius)
+	local Overlay = Utility.Create("Frame", {
+		Size = UDim2.fromScale(1, 1), BackgroundColor3 = color, BackgroundTransparency = 1,
+		ZIndex = (instance.ZIndex or 1) + 1, Parent = instance,
+	})
+	if cornerRadius then Utility.Corner(cornerRadius).Parent = Overlay end
+	Utility.Tween(Overlay, { BackgroundTransparency = 0.55 }, 0.15)
+	task.delay(0.4, function()
+		if not Overlay.Parent then return end
+		local fade = Utility.Tween(Overlay, { BackgroundTransparency = 1 }, 0.3)
+		fade.Completed:Wait()
+		if Overlay.Parent then Overlay:Destroy() end
+	end)
+end
 
--- Background shimmer
-local _qbGrad = Instance.new("UIGradient")
-_qbGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, C(14,12,28)),
-    ColorSequenceKeypoint.new(1, C(8,7,20))
+--====================================================
+-- CENTRAL RENDERSTEPPED BUS (one connection for the whole hub)
+--====================================================
+local RenderBus = {}
+local renderBusConn = nil
+local function pushRenderBus(fn) table.insert(RenderBus, fn); return fn end
+local function popRenderBus(fn)
+	for i = #RenderBus, 1, -1 do if RenderBus[i] == fn then table.remove(RenderBus, i); break end end
+end
+local function ensureRenderBus()
+	if renderBusConn then return end
+	renderBusConn = RunService.RenderStepped:Connect(function(dt)
+		for _, fn in ipairs(RenderBus) do fn(dt) end
+	end)
+end
+
+--====================================================
+-- VECTOR ICON SET
+-- Hand-built with Frames/UIStroke/rotation instead of imported
+-- image assets — guarantees consistent style, no broken icons,
+-- and avoids generic "brand" glyphs.
+--====================================================
+local Icons = {}
+
+local function iconBase(size)
+	return Utility.Create("Frame", { Size = UDim2.fromOffset(size, size), BackgroundTransparency = 1 })
+end
+
+-- Dashboard: 2x2 grid of rounded squares
+-- Dashboard: 2x2 grid of outlined rounded squares (Lucide "layout-dashboard" style)
+-- Dashboard: matches Lucide's "layout-dashboard" rect layout exactly
+-- (tall-left, short-top-right, tall-bottom-right, short-bottom-left)
+function Icons.dashboard(size, color)
+	size = size or 18
+	local root = iconBase(size)
+	local u = size / 24
+	local rects = {
+		{ x = 3, y = 3, w = 7, h = 9 },
+		{ x = 14, y = 3, w = 7, h = 5 },
+		{ x = 14, y = 12, w = 7, h = 9 },
+		{ x = 3, y = 16, w = 7, h = 5 },
+	}
+	for _, r in ipairs(rects) do
+		Utility.Create("Frame", {
+			Size = UDim2.fromOffset(r.w * u, r.h * u),
+			Position = UDim2.fromOffset(r.x * u, r.y * u),
+			BackgroundTransparency = 1,
+		}, { Utility.Corner(2), Utility.Stroke(color, 1.6, 0) }).Parent = root
+	end
+	return root
+end
+
+-- Auto farm: crossed swords (Lucide "swords" style) — shorter blades than a
+-- corner-to-corner X (which reads too much like the Close glyph at 18px),
+-- plus a crossguard near each tip and a pommel dot at the handle end so it
+-- unmistakably reads as swords rather than a close/X icon.
+function Icons.swords(size, color)
+	size = size or 18
+	local root = iconBase(size)
+	for _, angle in ipairs({ -45, 45 }) do
+		local rad = math.rad(angle)
+		Utility.Create("Frame", {
+			Size = UDim2.fromScale(0.72, 0.1), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+			Rotation = angle, BackgroundColor3 = color,
+		}, { Utility.Corner(2) }).Parent = root
+
+		-- Crossguard sits near the blade tip, not the center, so it reads
+		-- as a hilt rather than just thickening the middle of an X.
+		local gx, gy = 0.5 + math.cos(rad) * 0.3, 0.5 + math.sin(rad) * 0.3
+		Utility.Create("Frame", {
+			Size = UDim2.fromScale(0.06, 0.24), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(gx, gy),
+			Rotation = angle + 90, BackgroundColor3 = color,
+		}, { Utility.Corner(2) }).Parent = root
+
+		-- Pommel dot at the opposite (handle) end
+		local px, py = 0.5 - math.cos(rad) * 0.38, 0.5 - math.sin(rad) * 0.38
+		Utility.Create("Frame", {
+			Size = UDim2.fromScale(0.13, 0.13), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(px, py),
+			BackgroundColor3 = color,
+		}, { Utility.Corner(6) }).Parent = root
+	end
+	return root
+end
+
+-- Auto farm (legacy): lightning bolt (two overlapping rotated rectangles)
+function Icons.bolt(size, color)
+	size = size or 18
+	local root = iconBase(size)
+	local top = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.34, size * 0.6),
+		Position = UDim2.fromScale(0.58, 0.05),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Rotation = 18, BackgroundColor3 = color,
+	}, { Utility.Corner(2) })
+	top.Parent = root
+	local bottom = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.34, size * 0.6),
+		Position = UDim2.fromScale(0.42, 0.95),
+		AnchorPoint = Vector2.new(0.5, 1),
+		Rotation = 18, BackgroundColor3 = color,
+	}, { Utility.Corner(2) })
+	bottom.Parent = root
+	return root
+end
+
+-- Analytics: ascending bar chart, outline style (Lucide "bar-chart-3")
+function Icons.chart(size, color)
+	size = size or 18
+	local root = iconBase(size)
+	local heights = { 0.4, 0.7, 1.0 }
+	local barW = size * 0.2
+	local gap = size * 0.12
+	for i, h in ipairs(heights) do
+		Utility.Create("Frame", {
+			Size = UDim2.fromOffset(barW, size * h),
+			Position = UDim2.new(0, (i - 1) * (barW + gap), 1, 0),
+			AnchorPoint = Vector2.new(0, 1),
+			BackgroundTransparency = 1,
+		}, { Utility.Corner(2), Utility.Stroke(color, 1.6, 0) }).Parent = root
+	end
+	return root
+end
+
+-- Settings: gear/flower (Lucide "settings" style) — ring with rounded
+-- petal-shaped teeth around it, plus a center circle sized to match
+-- Lucide's actual proportions (radius 3 out of a 24 viewBox).
+-- Crosshair/target — used for section headers like "Targeting".
+function Icons.target(size, color)
+	size = size or 16
+	local root = iconBase(size)
+	Utility.Create("Frame", {
+		Size = UDim2.fromScale(0.82, 0.82), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		BackgroundTransparency = 1,
+	}, { Utility.Corner(1000), Utility.Stroke(color, 1.4, 0.1) }).Parent = root
+	Utility.Create("Frame", {
+		Size = UDim2.fromScale(0.16, 0.16), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		BackgroundColor3 = color,
+	}, { Utility.Corner(1000) }).Parent = root
+	for _, spec in ipairs({
+		{ Size = UDim2.fromScale(0.08, 0.2), Pos = UDim2.fromScale(0.5, 0.02) },
+		{ Size = UDim2.fromScale(0.08, 0.2), Pos = UDim2.fromScale(0.5, 0.98) },
+		{ Size = UDim2.fromScale(0.2, 0.08), Pos = UDim2.fromScale(0.02, 0.5) },
+		{ Size = UDim2.fromScale(0.2, 0.08), Pos = UDim2.fromScale(0.98, 0.5) },
+	}) do
+		Utility.Create("Frame", {
+			Size = spec.Size, AnchorPoint = Vector2.new(0.5, 0.5), Position = spec.Pos, BackgroundColor3 = color,
+		}, { Utility.Corner(2) }).Parent = root
+	end
+	return root
+end
+
+-- Toast notification glyphs: check (Success), alert (Warning/Error — shape
+-- is the same for both, color already tells them apart), info (Info).
+function Icons.check(size, color)
+	size = size or 14
+	local root = iconBase(size)
+	Utility.Create("Frame", {
+		Size = UDim2.fromScale(0.35, 0.1), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.36, 0.58), Rotation = 45, BackgroundColor3 = color,
+	}, { Utility.Corner(1) }).Parent = root
+	Utility.Create("Frame", {
+		Size = UDim2.fromScale(0.62, 0.1), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.6, 0.42), Rotation = -45, BackgroundColor3 = color,
+	}, { Utility.Corner(1) }).Parent = root
+	return root
+end
+
+function Icons.alert(size, color)
+	size = size or 14
+	local root = iconBase(size)
+	Utility.Create("Frame", {
+		Size = UDim2.fromScale(0.14, 0.42), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.36), BackgroundColor3 = color,
+	}, { Utility.Corner(2) }).Parent = root
+	Utility.Create("Frame", {
+		Size = UDim2.fromScale(0.14, 0.14), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.8), BackgroundColor3 = color,
+	}, { Utility.Corner(4) }).Parent = root
+	return root
+end
+
+function Icons.info(size, color)
+	size = size or 14
+	local root = iconBase(size)
+	Utility.Create("Frame", {
+		Size = UDim2.fromScale(0.14, 0.14), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.22), BackgroundColor3 = color,
+	}, { Utility.Corner(4) }).Parent = root
+	Utility.Create("Frame", {
+		Size = UDim2.fromScale(0.14, 0.42), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.62), BackgroundColor3 = color,
+	}, { Utility.Corner(2) }).Parent = root
+	return root
+end
+
+function Icons.settings(size, color)
+	size = size or 18
+	local root = iconBase(size)
+	Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.56, size * 0.56), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), BackgroundTransparency = 1,
+	}, { Utility.Corner(size), Utility.Stroke(color, 2, 0) }).Parent = root
+
+	local cx, cy = size / 2, size / 2
+	local petalSize = size * 0.2
+	for i = 0, 5 do
+		local angle = math.rad(i * 60 + 15)
+		local px = cx + math.cos(angle) * (size * 0.4)
+		local py = cy + math.sin(angle) * (size * 0.4)
+		Utility.Create("Frame", {
+			Size = UDim2.fromOffset(petalSize, petalSize), AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(px, py), BackgroundColor3 = color,
+		}, { Utility.Corner(4) }).Parent = root
+	end
+
+	Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.25, size * 0.25), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), BackgroundColor3 = color,
+	}, { Utility.Corner(size) }).Parent = root
+	return root
+end
+
+function Icons.search(size, color)
+	size = size or 14
+	local root = iconBase(size)
+	Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.62, size * 0.62), Position = UDim2.fromOffset(0, 0),
+		BackgroundTransparency = 1,
+	}, { Utility.Corner(size), Utility.Stroke(color, 1.6, 0) }).Parent = root
+	Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.42, 1.6),
+		Position = UDim2.fromOffset(size * 0.46, size * 0.78), Rotation = 45,
+		BackgroundColor3 = color,
+	}).Parent = root
+	return root
+end
+
+-- Close (X) and minimize (—) drawn as vector shapes — avoids relying on a
+-- text glyph ("✕") that doesn't render consistently on every font/device.
+function Icons.close(size, color)
+	size = size or 14
+	local root = iconBase(size)
+	Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.86, 1.3), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), Rotation = 45, BackgroundColor3 = color,
+	}, { Utility.Corner(1) }).Parent = root
+	Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.86, 1.3), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), Rotation = -45, BackgroundColor3 = color,
+	}, { Utility.Corner(1) }).Parent = root
+	return root
+end
+
+function Icons.minimize(size, color)
+	size = size or 14
+	local root = iconBase(size)
+	Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.8, 1.3), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.72), BackgroundColor3 = color,
+	}, { Utility.Corner(1) }).Parent = root
+	return root
+end
+
+-- Maximize: single square outline (Lucide "square" style)
+function Icons.maximize(size, color)
+	size = size or 14
+	local root = iconBase(size)
+	Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.7, size * 0.7), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), BackgroundTransparency = 1,
+	}, { Utility.Corner(2), Utility.Stroke(color, 1.2, 0.1) }).Parent = root
+	return root
+end
+
+-- Restore: two overlapping square outlines — the universal "un-maximize"
+-- glyph. Positioned with Scale + AnchorPoint (not Offset) specifically
+-- because this icon gets stretched to fill a 30x30 button in the TopBar
+-- (Size overridden to UDim2.fromScale(1,1)); Offset-based children don't
+-- scale with that stretch and end up squashed into a corner instead of
+-- staying centered — that was the rendering bug.
+function Icons.restore(size, color)
+	size = size or 14
+	local root = iconBase(size)
+	Utility.Create("Frame", {
+		Size = UDim2.fromScale(0.55, 0.55), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.66, 0.34), BackgroundTransparency = 1,
+	}, { Utility.Corner(2), Utility.Stroke(color, 1.1, 0.1) }).Parent = root
+	Utility.Create("Frame", {
+		Size = UDim2.fromScale(0.55, 0.55), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.4, 0.62), BackgroundTransparency = 1,
+	}, { Utility.Corner(2), Utility.Stroke(color, 1.1, 0.1) }).Parent = root
+	return root
+end
+
+-- Reset: circular arrow (Lucide "rotate-ccw" style) — a ring with a gap
+-- plus a small arrowhead, built from a stroked circle + two short bars.
+function Icons.reset(size, color)
+	size = size or 16
+	local root = iconBase(size)
+	local Ring = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.7, size * 0.7), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), BackgroundTransparency = 1,
+	}, { Utility.Corner(size), Utility.Stroke(color, 1.6, 0.25) })
+	Ring.Parent = root
+	-- Arrowhead suggesting rotation direction
+	local Arrow = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(size * 0.2, size * 0.2), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.82, 0.22), Rotation = 45, BackgroundColor3 = color,
+	})
+	Arrow.Parent = root
+	return root
+end
+
+-- Normalizes a pasted asset id: accepts "123456", "rbxassetid://123456",
+-- or a full asset URL, and always returns the "rbxassetid://123456" form.
+local function normalizeAssetId(input)
+	input = tostring(input or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	if input == "" then return "" end
+	if input:match("^rbxassetid://%d+$") then return input end
+	local digits = input:match("(%d+)")
+	if digits then return "rbxassetid://" .. digits end
+	return input
+end
+
+local IconBuilders = {
+	dashboard = Icons.dashboard,
+	bolt = Icons.bolt,
+	swords = Icons.swords,
+	chart = Icons.chart,
+	settings = Icons.settings,
+	target = Icons.target,
+}
+
+--====================================================
+-- ROOT SCREENGUI
+--====================================================
+local ScreenGui = Utility.Create("ScreenGui", {
+	Name = "ZiliHubEngine", ResetOnSpawn = false,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 100, Parent = PlayerGui,
 })
-_qbGrad.Rotation = 90
-_qbGrad.Parent = _qbFrame
 
-local _qbList = NEW("Frame", {Size=UDim2.new(1,-10,1,0), Position=UDim2.new(0,5,0,0),
-    BackgroundTransparency=1, ZIndex=401}, _qbFrame)
-NEW("UIListLayout", {FillDirection=Enum.FillDirection.Horizontal,
-    HorizontalAlignment=Enum.HorizontalAlignment.Left,
-    VerticalAlignment=Enum.VerticalAlignment.Center,
-    Padding=UDim.new(0,4), SortOrder=Enum.SortOrder.LayoutOrder}, _qbList)
+--====================================================
+-- LOADING SCREEN  (adapted from reference: letter reveal,
+-- floating embers, gradient progress bar, cycling status text)
+--====================================================
+local function buildLoadingScreen(titleWord, statusLines)
+	titleWord = titleWord or "ZILI"
+	statusLines = statusLines or { "initializing core...", "loading modules...", "ready." }
 
--- Drag for quick bar
-local _qd, _qds, _qsp
-_qbFrame.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then _qd=true;_qds=i.Position;_qsp=_qbFrame.Position end end)
-UIS.InputChanged:Connect(function(i) if _qd and i.UserInputType==Enum.UserInputType.MouseMovement then local d=i.Position-_qds;_qbFrame.Position=UDim2.new(_qsp.X.Scale,_qsp.X.Offset+d.X,_qsp.Y.Scale,_qsp.Y.Offset+d.Y) end end)
-UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then _qd=false end end)
+	-- Reuse a single named BlurEffect instead of stacking duplicates if
+	-- this ever runs more than once — duplicate PostEffects compound their
+	-- blur strength and quietly leak Lighting children over time.
+	local Blur = Lighting:FindFirstChild("ZiliHubBlur")
+	if not Blur then
+		Blur = Instance.new("BlurEffect")
+		Blur.Name = "ZiliHubBlur"
+		Blur.Parent = Lighting
+	end
+	Blur.Size = 0
+	-- Note: BlurEffect only affects the 3D viewport render — Roblox's own
+	-- CoreGui (top menu, chat, currency display) is a separate compositor
+	-- layer that no LocalScript can blur. That sharp strip at the very top
+	-- of the screen during loading is expected Roblox behavior, not a bug.
 
-local function _qbRebuild()
-    -- Clear all button children
-    for _, ch in ipairs(_qbList:GetChildren()) do
-        if ch:IsA("TextButton") or ch:IsA("Frame") then ch:Destroy() end
-    end
-    local btnW = math.floor(((_qbFrame.AbsoluteSize.X - 10) / math.max(1, #QuickBar._pins)) - 4)
-    btnW = math.clamp(btnW, 44, 80)
-    _qbFrame.Size = UDim2.new(0, (#QuickBar._pins * (btnW+4)) + 10, 0, 42)
+	local Overlay = Utility.Create("Frame", {
+		Name = "LoadingOverlay", Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Theme.Background, BackgroundTransparency = 1,
+		ZIndex = 1000, Parent = ScreenGui,
+	})
 
-    for _, pin in ipairs(QuickBar._pins) do
-        local col = pin.col or GOLD2
-        local btn = NEW("TextButton", {Size=UDim2.new(0,btnW,0,32), BackgroundColor3=BG3,
-            Text="", AutoButtonColor=false, ZIndex=402}, _qbList)
-        CORNER(7, btn); STROKE(col, 1, 0.45, btn)
-        NEW("TextLabel", {Text=pin.icon or "⬡", Size=UDim2.new(1,0,0,14), Position=UDim2.new(0,0,0,4),
-            BackgroundTransparency=1, TextColor3=col, Font=Enum.Font.GothamBold, TextSize=11,
-            TextXAlignment=Enum.TextXAlignment.Center, ZIndex=403}, btn)
-        NEW("TextLabel", {Text=pin.label, Size=UDim2.new(1,0,0,12), Position=UDim2.new(0,0,0,18),
-            BackgroundTransparency=1, TextColor3=TEXT3, Font=Enum.Font.Gotham, TextSize=8,
-            TextXAlignment=Enum.TextXAlignment.Center, ZIndex=403}, btn)
+	local EmberLayer = Utility.Create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = Overlay })
 
-        -- Active state glow
-        local activeStroke = btn:FindFirstChildWhichIsA("UIStroke")
-        local function _updateActive()
-            local td = GetToggles()
-            local active = td[pin.key] and td[pin.key].Active
-            if active then
-                TWEEN(btn, 0.2, {BackgroundColor3=C(math.floor(col.R*255*0.12+4), math.floor(col.G*255*0.12+4), math.floor(col.B*255*0.12+4))})
-                if activeStroke then TWEEN(activeStroke, 0.2, {Color=col, Transparency=0}) end
-            else
-                TWEEN(btn, 0.2, {BackgroundColor3=BG3})
-                if activeStroke then TWEEN(activeStroke, 0.2, {Color=col, Transparency=0.45}) end
-            end
-        end
-        _updateActive()
+	-- Single fixed-size container holds title + bar + status together so
+	-- spacing stays consistent across resolutions (no more giant gaps).
+	local Center = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(360, 170), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.46), BackgroundTransparency = 1, ZIndex = 1001, Parent = Overlay,
+	})
 
-        btn.MouseEnter:Connect(function() TWEEN(btn, 0.12, {BackgroundColor3=BG4}) end)
-        btn.MouseLeave:Connect(function() _updateActive() end)
-        btn.MouseButton1Click:Connect(function()
-            local td = GetToggles()
-            if td[pin.key] and td[pin.key].Btn then
-                pcall(function() td[pin.key].Btn:activate() end)
-                Profile.AddUse(pin.key)
-                task.delay(0.1, _updateActive)
-            end
-        end)
+	local letterSpacing = 38
+	local TitleHolder = Utility.Create("Frame", {
+		Size = UDim2.new(1, 0, 0, 70), Position = UDim2.fromOffset(0, 0),
+		BackgroundTransparency = 1, Parent = Center,
+	})
 
-        -- Poll active state every 2s
-        task.spawn(function()
-            while btn and btn.Parent do task.wait(2); _updateActive() end
-        end)
-    end
+	local letters = {}
+	local totalWidth = #titleWord * letterSpacing
+	for i = 1, #titleWord do
+		local ch = titleWord:sub(i, i)
+		local LetterHolder = Utility.Create("Frame", {
+			Size = UDim2.fromOffset(34, 56),
+			Position = UDim2.new(0.5, (i - 1) * letterSpacing - totalWidth / 2 + letterSpacing / 2, 0, 30),
+			AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Parent = TitleHolder,
+		})
+		local Label = Utility.Create("TextLabel", {
+			Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = ch,
+			Font = FONT_BLACK, TextSize = 36, TextColor3 = Theme.Text, TextTransparency = 1, Parent = LetterHolder,
+		})
+		local Glow = Utility.Create("UIStroke", { Thickness = 1.5, Color = Theme.Accent, Transparency = 1, Parent = Label })
+		Utility.Create("UIGradient", {
+			Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Theme.Accent), ColorSequenceKeypoint.new(1, Theme.AccentDim) }),
+			Rotation = 45, Parent = Glow,
+		})
+		table.insert(letters, { Holder = LetterHolder, Label = Label, Glow = Glow, BaseY = 0 })
+	end
+
+	local function spawnEmber()
+		local size = math.random(4, 8)
+		local Ember = Utility.Create("Frame", {
+			Size = UDim2.fromOffset(size, size),
+			Position = UDim2.new(math.random(20, 80) / 100, 0, 1.05, 0),
+			BackgroundColor3 = Theme.Accent, BackgroundTransparency = 0.3, Parent = EmberLayer,
+		}, { Utility.Corner(size) })
+		local life = math.random(3, 5)
+		Utility.Tween(Ember, {
+			Position = UDim2.new(Ember.Position.X.Scale, math.random(-40, 40), -0.05, 0),
+			BackgroundTransparency = 1,
+		}, life, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+		Debris:AddItem(Ember, life)
+	end
+
+	local BarTrack = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(240, 5), AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 100), BackgroundColor3 = Theme.PanelLight, BackgroundTransparency = 1, ZIndex = 1001, Parent = Center,
+	}, { Utility.Corner(3) })
+	local BarFill = Utility.Create("Frame", {
+		Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = Theme.Accent, ZIndex = 1001, Parent = BarTrack,
+	}, { Utility.Corner(3) })
+	Utility.Create("UIGradient", {
+		Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Theme.AccentDim), ColorSequenceKeypoint.new(1, Theme.Accent) }),
+		Parent = BarFill,
+	})
+
+	local StatusLabel = Utility.Create("TextLabel", {
+		Size = UDim2.fromOffset(300, 20), Position = UDim2.new(0.5, 0, 0, 122), AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundTransparency = 1, Text = "", Font = FONT, TextSize = 13, TextColor3 = Theme.MutedText,
+		TextTransparency = 1, ZIndex = 1001, Parent = Center,
+	})
+
+	local function run(onDone)
+		local q = currentQuality()
+		-- BlurEffect is a full-viewport post-process; skip it outright on
+		-- Low instead of just tweening it faster, since the cost comes from
+		-- the effect being active at all, not from how it animates in.
+		if q ~= "Low" then
+			Utility.Tween(Blur, { Size = 28 }, 1.2)
+		end
+		Utility.Tween(Overlay, { BackgroundTransparency = 0.45 }, 0.5)
+
+		-- Ember spawn rate scales down with quality; skip entirely on Low
+		-- so we're not creating/tweening/destroying Frames every frame on
+		-- top of a game that's already struggling to hold its frame time.
+		local emberChance = q == "Balanced" and 0.97 or 0.93
+		local emberConn = pushRenderBus(function()
+			if q ~= "Low" and math.random() > emberChance then spawnEmber() end
+		end)
+		ensureRenderBus()
+
+		for i, letter in ipairs(letters) do
+			task.wait(0.05)
+			local startY = letter.Holder.Position.Y.Offset
+			letter.Holder.Position = UDim2.new(letter.Holder.Position.X.Scale, letter.Holder.Position.X.Offset, 0, startY + 24)
+			Utility.Tween(letter.Label, { TextTransparency = 0 }, 0.35)
+			Utility.Tween(letter.Glow, { Transparency = 0.2 }, 0.35)
+			Utility.Tween(letter.Holder, { Position = UDim2.new(letter.Holder.Position.X.Scale, letter.Holder.Position.X.Offset, 0, startY) }, 0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		end
+
+		task.wait(0.25)
+		Utility.Tween(BarTrack, { BackgroundTransparency = 0.5 }, 0.35)
+		Utility.Tween(StatusLabel, { TextTransparency = 0 }, 0.35)
+
+		local segments = #statusLines
+		for i, text in ipairs(statusLines) do
+			StatusLabel.Text = text
+			Utility.Tween(BarFill, { Size = UDim2.new(i / segments, 0, 1, 0) }, 0.55, Enum.EasingStyle.Quad)
+			task.wait(0.55)
+		end
+
+		task.wait(0.35)
+		popRenderBus(emberConn)
+
+		for _, letter in ipairs(letters) do
+			local y = letter.Holder.Position.Y.Offset
+			Utility.Tween(letter.Holder, { Position = UDim2.new(letter.Holder.Position.X.Scale, letter.Holder.Position.X.Offset, 0, y - 30) }, 0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+			Utility.Tween(letter.Label, { TextTransparency = 1 }, 0.4)
+			Utility.Tween(letter.Glow, { Transparency = 1 }, 0.4)
+			task.wait(0.03)
+		end
+		Utility.Tween(BarTrack, { BackgroundTransparency = 1 }, 0.35)
+		Utility.Tween(BarFill, { BackgroundTransparency = 1 }, 0.35)
+		Utility.Tween(StatusLabel, { TextTransparency = 1 }, 0.35)
+		local fade = Utility.Tween(Overlay, { BackgroundTransparency = 1 }, 0.5)
+		if q ~= "Low" then Utility.Tween(Blur, { Size = 0 }, 0.6) end
+
+		fade.Completed:Wait()
+		Overlay:Destroy()
+		Blur:Destroy()
+		if onDone then onDone() end
+	end
+
+	return run
 end
 
-function QuickBar.Pin(key, icon, label, col)
-    -- No duplicates
-    for _, p in ipairs(QuickBar._pins) do if p.key == key then return end end
-    if #QuickBar._pins >= QuickBar._MAX then
-        Toast("Quick Bar is full (" .. QuickBar._MAX .. " max). Unpin one first.", AMBER, "⚡")
-        return
-    end
-    table.insert(QuickBar._pins, {key=key, icon=icon, label=label or key, col=col})
-    _qbRebuild()
+--====================================================
+-- MINIMIZED LOGO BUTTON (logo only, drag + click to restore)
+--====================================================
+local function buildMinimizedLogo(logoId, onRestore)
+	-- Pure logo image, no circular backdrop/border — just the artwork,
+	-- bigger than before so it reads clearly as a standalone icon.
+	local LogoBtn = Utility.Create("ImageButton", {
+		Name = "ZiliHubLogo", Size = UDim2.fromOffset(66, 66), Position = UDim2.fromOffset(24, 24),
+		BackgroundTransparency = 1, Image = logoId, ScaleType = Enum.ScaleType.Fit,
+		AutoButtonColor = false, Visible = false, ZIndex = 999, Parent = ScreenGui,
+	})
+
+	local dragging, dragStart, startPos, moved = false, nil, nil, false
+	LogoBtn.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging, moved = true, false
+			dragStart, startPos = input.Position, LogoBtn.Position
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			moved = true
+			local delta = input.Position - dragStart
+			LogoBtn.Position = UDim2.new(0, startPos.X.Offset + delta.X, 0, startPos.Y.Offset + delta.Y)
+		end
+	end)
+	local lastClickTime = 0
+	LogoBtn.MouseButton1Click:Connect(function()
+		if moved then return end
+		local now = tick()
+		if now - lastClickTime <= 0.35 then
+			lastClickTime = 0
+			onRestore()
+		else
+			lastClickTime = now
+		end
+	end)
+	LogoBtn.MouseEnter:Connect(function() Utility.Tween(LogoBtn, { Size = UDim2.fromOffset(72, 72) }, 0.15) end)
+	LogoBtn.MouseLeave:Connect(function() Utility.Tween(LogoBtn, { Size = UDim2.fromOffset(66, 66) }, 0.15) end)
+
+	return LogoBtn
 end
 
-function QuickBar.Unpin(key)
-    for i, p in ipairs(QuickBar._pins) do
-        if p.key == key then table.remove(QuickBar._pins, i); _qbRebuild(); return end
-    end
+--====================================================
+-- WINDOW (MAIN HUB)
+--====================================================
+function Library:CreateWindow(config)
+	config = config or {}
+	local LogoId = normalizeAssetId(config.LogoId) ~= "" and normalizeAssetId(config.LogoId) or "rbxassetid://129001357397487"
+
+	local NORMAL_SIZE, MAXIMIZED_SIZE = UDim2.new(0.78, 0, 0.82, 0), UDim2.new(0.96, 0, 0.94, 0)
+	local NORMAL_MAX, MAXIMIZED_MAX = Vector2.new(960, 640), Vector2.new(1500, 960)
+	local isMaximized = false
+
+	local SizeConstraint = Utility.Create("UISizeConstraint", { MinSize = Vector2.new(420, 360), MaxSize = NORMAL_MAX })
+	local MainFrame = Utility.Create("Frame", {
+		Name = "MainHub", Size = NORMAL_SIZE, AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), ClipsDescendants = true, Visible = false, Parent = ScreenGui,
+	}, {
+		Utility.Corner(16), Utility.Stroke(Theme.Stroke, 1, 0.88), SizeConstraint,
+	})
+	bindTheme(MainFrame, "BackgroundColor3", "Background")
+
+	-- Background layer order matters here: everything decorative goes
+	-- BELOW BackgroundImage, so a custom image (set via Custom UI) blends
+	-- OVER this moody base through its own ImageTransparency, instead of
+	-- getting hidden underneath an opaque layer created after it.
+	local DepthGradient = Utility.Create("Frame", {
+		Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(11, 15, 20), ZIndex = -3, Parent = MainFrame,
+	}, { Utility.Corner(16) })
+	Utility.Create("UIGradient", {
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(10, 13, 18)),
+			ColorSequenceKeypoint.new(0.55, Color3.fromRGB(13, 17, 23)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(16, 21, 29)),
+		}),
+		Rotation = 105, Parent = DepthGradient,
+	})
+
+	-- Blueprint / tech grid: a faint vector grid instead of soft color
+	-- blobs — an "engineering HUD" feel that fits a hub/tool better than a
+	-- marketing-page color wash, and is genuinely a different visual
+	-- language, not just a recolor. Every line is Scale-positioned, so the
+	-- grid automatically adapts to any window size (including the
+	-- maximize/restore feature) with zero recomputation needed on resize.
+	local GRID_COLS, GRID_ROWS = 9, 7
+	for i = 1, GRID_COLS - 1 do
+		local Line = Utility.Create("Frame", {
+			Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(i / GRID_COLS, 0, 0, 0),
+			BackgroundTransparency = 1, ZIndex = -2, Parent = MainFrame,
+		})
+		bindTheme(Line, "BackgroundColor3", "AccentMuted")
+		Line.BackgroundTransparency = 0.94
+	end
+	for i = 1, GRID_ROWS - 1 do
+		local Line = Utility.Create("Frame", {
+			Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, i / GRID_ROWS, 0),
+			BackgroundTransparency = 1, ZIndex = -2, Parent = MainFrame,
+		})
+		bindTheme(Line, "BackgroundColor3", "AccentMuted")
+		Line.BackgroundTransparency = 0.94
+	end
+
+	-- One focused accent glow (not scattered blobs) — like a single "power
+	-- indicator" light source anchored at a corner, more restrained and
+	-- purposeful than a multi-color wash.
+	local FocusGlow = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(360, 360), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.05, 0.02),
+		BackgroundTransparency = 0.87, ZIndex = -2, Parent = MainFrame,
+	}, { Utility.Corner(180) })
+	bindTheme(FocusGlow, "BackgroundColor3", "Accent")
+
+	-- A couple of thin accent-colored "circuit trace" corner brackets —
+	-- small, sharp, technical details rather than soft shapes. Two opposite
+	-- corners (not all four) keeps it a deliberate accent, not clutter.
+	local TraceTL_H = Utility.Create("Frame", { Size = UDim2.new(0, 90, 0, 1.5), Position = UDim2.fromOffset(0, 90), BackgroundTransparency = 0.55, ZIndex = -2, Parent = MainFrame })
+	bindTheme(TraceTL_H, "BackgroundColor3", "AccentMuted")
+	local TraceTL_V = Utility.Create("Frame", { Size = UDim2.new(0, 1.5, 0, 90), Position = UDim2.fromOffset(90, 0), BackgroundTransparency = 0.55, ZIndex = -2, Parent = MainFrame })
+	bindTheme(TraceTL_V, "BackgroundColor3", "AccentMuted")
+	local TraceBR_H = Utility.Create("Frame", { Size = UDim2.new(0, 90, 0, 1.5), AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, 0, 1, -90), BackgroundTransparency = 0.55, ZIndex = -2, Parent = MainFrame })
+	bindTheme(TraceBR_H, "BackgroundColor3", "AccentMuted")
+	local TraceBR_V = Utility.Create("Frame", { Size = UDim2.new(0, 1.5, 0, 90), AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -90, 1, 0), BackgroundTransparency = 0.55, ZIndex = -2, Parent = MainFrame })
+	bindTheme(TraceBR_V, "BackgroundColor3", "AccentMuted")
+
+	-- Subtle vignette: four corner-anchored gradients darken just the very
+	-- edges, pulling focus toward the center content — a classic, cheap
+	-- (fully static) "premium panel" trick. Sits above the grid/glow but
+	-- still below BackgroundImage.
+	for _, corner in ipairs({
+		{ pos = UDim2.fromScale(0, 0), rot = 135 }, { pos = UDim2.fromScale(1, 0), rot = 225 },
+		{ pos = UDim2.fromScale(0, 1), rot = 45 },  { pos = UDim2.fromScale(1, 1), rot = 315 },
+	}) do
+		local VignetteCorner = Utility.Create("Frame", {
+			Size = UDim2.fromOffset(220, 220), AnchorPoint = Vector2.new(corner.pos.X.Scale, corner.pos.Y.Scale),
+			Position = corner.pos, BackgroundColor3 = Color3.new(0, 0, 0), ZIndex = -1, Parent = MainFrame,
+		})
+		Utility.Create("UIGradient", {
+			Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.72), NumberSequenceKeypoint.new(1, 1) }),
+			Rotation = corner.rot, Parent = VignetteCorner,
+		})
+	end
+
+	local BackgroundImage = Utility.Create("ImageLabel", {
+		Name = "CustomBackground", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = "",
+		ScaleType = Enum.ScaleType.Crop, ImageTransparency = Theme.BackgroundImageTransparency, ZIndex = 0, Parent = MainFrame,
+	}, { Utility.Corner(16) })
+
+	--==========================
+	-- TOP BAR
+	--==========================
+	local TopBar = Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, 48), BackgroundTransparency = 0.42, ZIndex = 5, Parent = MainFrame }, { Utility.Corner(16) })
+	bindTheme(TopBar, "BackgroundColor3", "Panel")
+	local TopBarMask = Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 1, -14), BorderSizePixel = 0, Parent = TopBar })
+	bindTheme(TopBarMask, "BackgroundColor3", "Panel")
+
+	-- Thin accent hairline under the TopBar — a small, cheap detail (one
+	-- Frame + one UIGradient, no extra connections) that reads as a much
+	-- more "premium suite" separator than a flat border.
+	local TopBarHairline = Utility.Create("Frame", {
+		Size = UDim2.new(1, 0, 0, 2), Position = UDim2.new(0, 0, 0, 47), BorderSizePixel = 0, ZIndex = 2, Parent = MainFrame,
+	})
+	local HairlineGradient = Utility.Create("UIGradient", {
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.35), NumberSequenceKeypoint.new(1, 1),
+		}),
+		Parent = TopBarHairline,
+	})
+	bindTheme(TopBarHairline, "BackgroundColor3", "Accent")
+
+	-- Soft static glow behind the logo — a small, one-time detail (no
+	-- animation, no continuous cost) that reads as "brand", not just an icon.
+	local LogoGlow = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(34, 34), Position = UDim2.fromOffset(9, 7),
+		BackgroundColor3 = Theme.Accent, BackgroundTransparency = 0.82, Parent = TopBar,
+	}, { Utility.Corner(17) })
+	bindTheme(LogoGlow, "BackgroundColor3", "Accent")
+
+	local LogoIcon = Utility.Create("ImageLabel", {
+		Size = UDim2.fromOffset(22, 22), Position = UDim2.fromOffset(15, 13), BackgroundTransparency = 1, Image = LogoId, Parent = TopBar,
+	})
+	bindTheme(LogoIcon, "ImageColor3", "Accent")
+
+	local TitleLabel = Utility.Create("TextLabel", {
+		Size = UDim2.fromOffset(0, 48), AutomaticSize = Enum.AutomaticSize.X, Position = UDim2.fromOffset(46, 0), BackgroundTransparency = 1,
+		Text = config.Title or "Zili Hub", Font = FONT_BLACK, TextSize = 19,
+		TextXAlignment = Enum.TextXAlignment.Left, Parent = TopBar,
+	})
+	TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	local TitleGradient = Utility.Create("UIGradient", {
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Theme.Accent),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+		}),
+		Parent = TitleLabel,
+	})
+	Utility.Create("UIStroke", { Thickness = 1, Color = Color3.new(0, 0, 0), Transparency = 0.6, Parent = TitleLabel })
+
+	-- Search bar — its left edge gets bound to the Sidebar's width below
+	-- (once Sidebar exists) so it lines up exactly with where content rows
+	-- like "Hub active" start, instead of trailing the title text.
+	local SearchHolder = Utility.Create("Frame", { Size = UDim2.fromOffset(230, 30), Position = UDim2.fromOffset(200, 9), Parent = TopBar }, { Utility.Corner(8) })
+	bindTheme(SearchHolder, "BackgroundColor3", "PanelLight")
+	Utility.Stroke(Theme.Stroke, 1, 0.85).Parent = SearchHolder
+	local SearchIcon = Icons.search(13, Theme.Accent)
+	SearchIcon.Position = UDim2.fromOffset(10, 9)
+	SearchIcon.Parent = SearchHolder
+
+	local SearchBox = Utility.Create("TextBox", {
+		Size = UDim2.new(1, -38, 1, 0), Position = UDim2.fromOffset(32, 0), BackgroundTransparency = 1,
+		PlaceholderText = L("SearchPlaceholder"), Text = "", Font = FONT, TextSize = 12,
+		ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, Parent = SearchHolder,
+	})
+	bindTheme(SearchBox, "TextColor3", "Text")
+	SearchBox.PlaceholderColor3 = Theme.MutedText
+
+	-- Minimize + Maximize/Restore + Close (vector icons, not text glyphs)
+	local MinimizeBtn = Utility.Create("TextButton", { Size = UDim2.fromOffset(30, 30), Position = UDim2.new(1, -116, 0, 9), Text = "", Parent = TopBar }, { Utility.Corner(8) })
+	bindTheme(MinimizeBtn, "BackgroundColor3", "PanelLight")
+	local MinimizeIcon = Icons.minimize(14, Theme.MutedText)
+	MinimizeIcon.Size = UDim2.fromScale(1, 1)
+	MinimizeIcon.Parent = MinimizeBtn
+
+	local MaximizeBtn = Utility.Create("TextButton", { Size = UDim2.fromOffset(30, 30), Position = UDim2.new(1, -78, 0, 9), Text = "", Parent = TopBar }, { Utility.Corner(8) })
+	bindTheme(MaximizeBtn, "BackgroundColor3", "PanelLight")
+	local MaximizeIcon = Icons.maximize(13, Theme.MutedText)
+	MaximizeIcon.Size = UDim2.fromScale(1, 1)
+	MaximizeIcon.Parent = MaximizeBtn
+
+	local CloseBtn = Utility.Create("TextButton", { Size = UDim2.fromOffset(30, 30), Position = UDim2.new(1, -40, 0, 9), Text = "", Parent = TopBar }, { Utility.Corner(8) })
+	bindTheme(CloseBtn, "BackgroundColor3", "PanelLight")
+	local CloseIcon = Icons.close(13, Theme.MutedText)
+	CloseIcon.Size = UDim2.fromScale(1, 1)
+	CloseIcon.Parent = CloseBtn
+
+	local function recolorIcon(iconRoot, color)
+		for _, d in ipairs(iconRoot:GetDescendants()) do
+			if d:IsA("Frame") and d.BackgroundTransparency < 1 then d.BackgroundColor3 = color end
+			if d:IsA("UIStroke") then d.Color = color end
+		end
+	end
+
+	-- Toggles between the normal window size and a larger capped size —
+	-- same "restore vs maximize" behavior as a desktop window. Swaps the
+	-- UISizeConstraint's MaxSize too, so maximizing on a big monitor
+	-- actually gets bigger instead of immediately hitting the old cap.
+	local function setMaximized(state)
+		isMaximized = state
+		SizeConstraint.MaxSize = state and MAXIMIZED_MAX or NORMAL_MAX
+		Utility.Tween(MainFrame, { Size = state and MAXIMIZED_SIZE or NORMAL_SIZE }, 0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		MaximizeIcon:Destroy()
+		MaximizeIcon = (state and Icons.restore or Icons.maximize)(13, Theme.MutedText)
+		MaximizeIcon.Size = UDim2.fromScale(1, 1)
+		MaximizeIcon.Parent = MaximizeBtn
+	end
+	MaximizeBtn.MouseButton1Click:Connect(function() setMaximized(not isMaximized) end)
+	MaximizeBtn.MouseEnter:Connect(function() recolorIcon(MaximizeIcon, Theme.Text) end)
+	MaximizeBtn.MouseLeave:Connect(function() recolorIcon(MaximizeIcon, Theme.MutedText) end)
+
+	-- Hover feedback via overlay-darken, same fix as everywhere else: these
+	-- buttons are theme-bound (PanelLight) so directly swapping their
+	-- BackgroundColor3 on hover would race against refreshTheme() and get
+	-- visually "stuck" the same way Reset Theme used to.
+	local CloseOverlay = Utility.Create("Frame", {
+		Size = UDim2.fromScale(1, 1), BackgroundColor3 = Theme.Danger, BackgroundTransparency = 1, ZIndex = (CloseBtn.ZIndex or 1) + 1, Parent = CloseBtn,
+	}, { Utility.Corner(8) })
+
+	MinimizeBtn.MouseEnter:Connect(function() recolorIcon(MinimizeIcon, Theme.Text) end)
+	MinimizeBtn.MouseLeave:Connect(function() recolorIcon(MinimizeIcon, Theme.MutedText) end)
+	CloseBtn.MouseEnter:Connect(function()
+		Utility.Tween(CloseOverlay, { BackgroundTransparency = 0 }, 0.18)
+		recolorIcon(CloseIcon, Color3.new(1, 1, 1))
+	end)
+	CloseBtn.MouseLeave:Connect(function()
+		Utility.Tween(CloseOverlay, { BackgroundTransparency = 1 }, 0.18)
+		recolorIcon(CloseIcon, Theme.MutedText)
+	end)
+
+	do
+		local dragging, dragStart, startPos = false, nil, nil
+		local targetPos = nil
+
+		local function pointInGui(pos, gui)
+			local p, s = gui.AbsolutePosition, gui.AbsoluteSize
+			return pos.X >= p.X and pos.X <= p.X + s.X and pos.Y >= p.Y and pos.Y <= p.Y + s.Y
+		end
+
+		TopBar.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				local pos = input.Position
+				-- Clicks on the window controls / search box are handled by
+				-- their own signals; don't also treat them as a drag.
+				if pointInGui(pos, MinimizeBtn) or pointInGui(pos, MaximizeBtn) or pointInGui(pos, CloseBtn) or pointInGui(pos, SearchHolder) then
+					return
+				end
+				dragging = true
+				dragStart, startPos = pos, MainFrame.Position
+				targetPos = startPos
+			end
+		end)
+
+		-- Global listeners (not TopBar-scoped) so the drag never "sticks":
+		-- a GuiObject's own InputChanged stops firing the moment the cursor
+		-- leaves its bounds during a fast drag — UserInputService doesn't.
+		UserInputService.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = false
+			end
+		end)
+		UserInputService.InputChanged:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				local delta = input.Position - dragStart
+				targetPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+			end
+		end)
+
+		-- Apply on the shared RenderBus (one connection for the whole hub)
+		-- instead of writing Position on every raw input event — smoother
+		-- and cheaper than mutating layout properties dozens of times/sec.
+		pushRenderBus(function()
+			if dragging and targetPos then
+				MainFrame.Position = targetPos
+			end
+		end)
+		ensureRenderBus()
+	end
+
+	local LogoBubble
+	local function restore()
+		LogoBubble.Visible = false
+		MainFrame.Visible = true
+		MainFrame.Rotation = -12
+		MainFrame.Size = UDim2.fromOffset(40, 40)
+		MainFrame.Position = LogoBubble.Position
+		Utility.Tween(MainFrame, { Size = isMaximized and MAXIMIZED_SIZE or NORMAL_SIZE, Rotation = 0, Position = UDim2.fromScale(0.5, 0.5) }, 0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	end
+	LogoBubble = buildMinimizedLogo(LogoId, restore)
+
+	MinimizeBtn.MouseButton1Click:Connect(function()
+		local savedPos = MainFrame.Position
+		local tween = Utility.Tween(MainFrame, {
+			Size = UDim2.fromOffset(40, 40), Rotation = 12, Position = LogoBubble.Position,
+		}, 0.32, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+		tween.Completed:Wait()
+		MainFrame.Visible = false
+		MainFrame.Rotation = 0
+		MainFrame.Size = isMaximized and MAXIMIZED_SIZE or NORMAL_SIZE
+		MainFrame.Position = savedPos
+		LogoBubble.Visible = true
+		Utility.Tween(LogoBubble, { Size = UDim2.fromOffset(76, 76) }, 0.12)
+		task.delay(0.12, function() Utility.Tween(LogoBubble, { Size = UDim2.fromOffset(66, 66) }, 0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out) end)
+	end)
+
+	-- Close confirmation modal (Yes/No) instead of closing instantly
+	local ConfirmOverlay = Utility.Create("Frame", {
+		Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1,
+		Visible = false, ZIndex = 50, Parent = MainFrame,
+	}, { Utility.Corner(16) })
+	local ConfirmBox = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(280, 150), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		ZIndex = 51, Parent = ConfirmOverlay,
+	}, { Utility.Corner(12), Utility.Stroke(Theme.Stroke, 1, 0.85) })
+	bindTheme(ConfirmBox, "BackgroundColor3", "Panel")
+
+	-- Warning icon: a ring with an exclamation mark, tinted Danger
+	local WarnIconHolder = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(34, 34), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 16),
+		BackgroundTransparency = 1, ZIndex = 51, Parent = ConfirmBox,
+	}, { Utility.Corner(17), Utility.Stroke(Theme.Danger, 2, 0.15) })
+	Utility.Create("Frame", { Size = UDim2.fromOffset(3, 12), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0.2), BackgroundColor3 = Theme.Danger, ZIndex = 51, Parent = WarnIconHolder }, { Utility.Corner(2) })
+	Utility.Create("Frame", { Size = UDim2.fromOffset(3, 3), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0.68), BackgroundColor3 = Theme.Danger, ZIndex = 51, Parent = WarnIconHolder }, { Utility.Corner(2) })
+
+	local ConfirmText = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, -24, 0, 22), Position = UDim2.fromOffset(12, 58), BackgroundTransparency = 1,
+		Text = "Close the hub?", Font = FONT_BOLD, TextSize = 15, TextWrapped = true, ZIndex = 51, Parent = ConfirmBox,
+	})
+	bindTheme(ConfirmText, "TextColor3", "Text")
+	local ConfirmSubtext = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, -24, 0, 16), Position = UDim2.fromOffset(12, 80), BackgroundTransparency = 1,
+		Text = "This will fully shut down the UI.", Font = FONT, TextSize = 11, TextWrapped = true, ZIndex = 51, Parent = ConfirmBox,
+	})
+	bindTheme(ConfirmSubtext, "TextColor3", "MutedText")
+
+	local YesBtn = Utility.Create("TextButton", { Size = UDim2.fromOffset(118, 36), Position = UDim2.fromOffset(12, 102), AutoButtonColor = false, Font = FONT_BOLD, Text = "Yes", TextSize = 13, ZIndex = 51, Parent = ConfirmBox }, { Utility.Corner(8) })
+	YesBtn.BackgroundColor3 = Theme.Danger
+	YesBtn.TextColor3 = Color3.new(1, 1, 1)
+	Utility.AddHoverDarken(YesBtn, 0.15, 8)
+
+	local NoBtn = Utility.Create("TextButton", { Size = UDim2.fromOffset(118, 36), Position = UDim2.new(1, -130, 0, 102), AutoButtonColor = false, Font = FONT_BOLD, Text = "No", TextSize = 13, ZIndex = 51, Parent = ConfirmBox }, { Utility.Corner(8) })
+	bindTheme(NoBtn, "BackgroundColor3", "PanelLight")
+	bindTheme(NoBtn, "TextColor3", "Text")
+	Utility.AddHoverDarken(NoBtn, 0.1, 8)
+
+	CloseBtn.MouseButton1Click:Connect(function()
+		ConfirmOverlay.Visible = true
+		ConfirmBox.Size = UDim2.fromOffset(252, 135)
+		Utility.Tween(ConfirmOverlay, { BackgroundTransparency = 0.4 }, 0.15)
+		Utility.Tween(ConfirmBox, { Size = UDim2.fromOffset(280, 150) }, 0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	end)
+	NoBtn.MouseButton1Click:Connect(function()
+		local fade = Utility.Tween(ConfirmOverlay, { BackgroundTransparency = 1 }, 0.15)
+		fade.Completed:Wait()
+		ConfirmOverlay.Visible = false
+	end)
+	YesBtn.MouseButton1Click:Connect(function()
+		ConfirmOverlay.Visible = false
+		local tween = Utility.Tween(MainFrame, { Size = UDim2.fromOffset(0, 0), Rotation = 8 }, 0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+		tween.Completed:Wait()
+		MainFrame.Visible = false
+	end)
+
+	--==========================
+	-- SIDEBAR + CONTENT AREA
+	--==========================
+	local Sidebar = Utility.Create("Frame", { Size = UDim2.new(0.22, 0, 1, -48), Position = UDim2.fromOffset(0, 48), BackgroundTransparency = 0.42, Parent = MainFrame }, {
+		Utility.Create("UISizeConstraint", { MinSize = Vector2.new(150, 0), MaxSize = Vector2.new(220, math.huge) }),
+		Utility.Corner(16),
+	})
+	bindTheme(Sidebar, "BackgroundColor3", "Panel")
+	Utility.Create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Sidebar })
+	Utility.Padding(14).Parent = Sidebar
+
+	local ContentArea = Utility.Create("Frame", { Size = UDim2.new(1, 0, 1, -48), Position = UDim2.fromOffset(0, 48), BackgroundTransparency = 1, ClipsDescendants = true, Parent = MainFrame }, { Utility.Corner(16) })
+	local function repositionContentArea()
+		ContentArea.Position = UDim2.new(0, Sidebar.AbsoluteSize.X, 0, 48)
+		ContentArea.Size = UDim2.new(1, -Sidebar.AbsoluteSize.X, 1, -48)
+		-- Search bar lines up with the same left edge as content rows,
+		-- and shrinks responsively so it never reaches the window buttons
+		local availableWidth = TopBar.AbsoluteSize.X - (Sidebar.AbsoluteSize.X + 16) - 100
+		SearchHolder.Position = UDim2.fromOffset(Sidebar.AbsoluteSize.X + 16, 9)
+		SearchHolder.Size = UDim2.fromOffset(math.clamp(availableWidth, 120, 260), 30)
+	end
+	Sidebar:GetPropertyChangedSignal("AbsoluteSize"):Connect(repositionContentArea)
+	TopBar:GetPropertyChangedSignal("AbsoluteSize"):Connect(repositionContentArea)
+	task.defer(repositionContentArea)
+
+	local Window = setmetatable({
+		ScreenGui = ScreenGui, MainFrame = MainFrame, Sidebar = Sidebar, ContentArea = ContentArea,
+		BackgroundImage = BackgroundImage, Tabs = {}, ActiveTabButton = nil, SearchIndex = {},
+	}, Library)
+
+	-- Sidebar collapse-to-icons: a small chevron pinned to the bottom-left,
+	-- parented to MainFrame (not Sidebar) so it's never swept into
+	-- Sidebar's own UIListLayout alongside the tab buttons. ContentArea and
+	-- the search bar already auto-follow Sidebar's width via the
+	-- AbsoluteSize listener above — collapsing needs no extra wiring there.
+	local sidebarCollapsed = false
+	local NORMAL_SIDEBAR_SIZE = UDim2.new(0.22, 0, 1, -48)
+	local COLLAPSED_SIDEBAR_SIZE = UDim2.new(0, 64, 1, -48)
+
+	local CollapseBtn = Utility.Create("TextButton", {
+		Size = UDim2.fromOffset(24, 24), Position = UDim2.new(0, 5, 1, -34), Text = "", Parent = MainFrame, ZIndex = 2,
+	}, { Utility.Corner(6) })
+	bindTheme(CollapseBtn, "BackgroundColor3", "PanelLight")
+	local function buildChevron(pointingLeft)
+		local Icon = Utility.Create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = CollapseBtn })
+		Utility.Create("Frame", {
+			Size = UDim2.fromOffset(7, 1.3), AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(pointingLeft and 0.42 or 0.58, 0.38), Rotation = pointingLeft and -40 or 40, BackgroundColor3 = Theme.MutedText,
+		}, { Utility.Corner(1) }).Parent = Icon
+		Utility.Create("Frame", {
+			Size = UDim2.fromOffset(7, 1.3), AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(pointingLeft and 0.42 or 0.58, 0.62), Rotation = pointingLeft and 40 or -40, BackgroundColor3 = Theme.MutedText,
+		}, { Utility.Corner(1) }).Parent = Icon
+		return Icon
+	end
+	local ChevronIcon = buildChevron(true)
+	Utility.AddHoverDarken(CollapseBtn, 0.1, 6)
+
+	local function setSidebarCollapsed(state)
+		sidebarCollapsed = state
+		Utility.Tween(Sidebar, { Size = state and COLLAPSED_SIDEBAR_SIZE or NORMAL_SIDEBAR_SIZE }, 0.22)
+		for _, t in ipairs(Window.Tabs) do
+			Utility.Tween(t.Label, { TextTransparency = state and 1 or 0 }, 0.15)
+		end
+		ChevronIcon:Destroy()
+		ChevronIcon = buildChevron(not state)
+	end
+	CollapseBtn.MouseButton1Click:Connect(function() setSidebarCollapsed(not sidebarCollapsed) end)
+
+	--==========================
+	-- TOAST NOTIFICATIONS
+	-- Stack lives directly on ScreenGui (not MainFrame) so a toast can
+	-- still be seen even while the hub is minimized to its logo bubble.
+	--==========================
+	local NotifyLayer = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(300, 1), AutomaticSize = Enum.AutomaticSize.Y,
+		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 16),
+		BackgroundTransparency = 1, ZIndex = 500, Parent = ScreenGui,
+	})
+	Utility.Create("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Right, Parent = NotifyLayer })
+
+	local NOTIFY_COLORS = {
+		Info = "Accent", Success = Color3.fromRGB(90, 200, 130),
+		Warning = Color3.fromRGB(230, 175, 60), Error = "Danger",
+	}
+	local NOTIFY_ICONS = { Info = Icons.info, Success = Icons.check, Warning = Icons.alert, Error = Icons.alert }
+
+	-- opts: { Title, Message, Type = "Info"|"Success"|"Warning"|"Error", Duration }
+	function Window:Notify(opts)
+		opts = opts or {}
+		local kindColor = NOTIFY_COLORS[opts.Type] or NOTIFY_COLORS.Info
+		local resolvedColor = typeof(kindColor) == "string" and Theme[kindColor] or kindColor
+
+		local Toast = Utility.Create("Frame", {
+			Size = UDim2.fromOffset(300, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
+			ClipsDescendants = true, Parent = NotifyLayer,
+		}, { Utility.Corner(10), Utility.Stroke(Theme.Stroke, 1, 0.85), Utility.Padding(12) })
+		bindTheme(Toast, "BackgroundColor3", "Panel")
+
+		local AccentBar = Utility.Create("Frame", { Size = UDim2.new(0, 3, 1, 0), BackgroundTransparency = 1, Parent = Toast }, { Utility.Corner(2) })
+		if typeof(kindColor) == "string" then bindTheme(AccentBar, "BackgroundColor3", kindColor) else AccentBar.BackgroundColor3 = kindColor end
+		AccentBar.BackgroundTransparency = 0
+
+		local IconHolder = Utility.Create("Frame", { Size = UDim2.fromOffset(16, 16), Position = UDim2.fromOffset(14, 1), BackgroundTransparency = 1, Parent = Toast })
+		local iconBuilder = NOTIFY_ICONS[opts.Type] or NOTIFY_ICONS.Info
+		local Glyph = iconBuilder(14, resolvedColor)
+		Glyph.Size = UDim2.fromScale(1, 1)
+		Glyph.Parent = IconHolder
+
+		local TextHolder = Utility.Create("Frame", {
+			Size = UDim2.new(1, -38, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+			Position = UDim2.fromOffset(38, 0), BackgroundTransparency = 1, Parent = Toast,
+		})
+		Utility.Create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = TextHolder })
+
+		local Title = Utility.Create("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1, Text = opts.Title or "Notification",
+			Font = FONT_BOLD, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = TextHolder,
+		})
+		bindTheme(Title, "TextColor3", "Text")
+
+		if opts.Message and opts.Message ~= "" then
+			local Msg = Utility.Create("TextLabel", {
+				Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
+				TextWrapped = true, Text = opts.Message, Font = FONT, TextSize = 12,
+				TextXAlignment = Enum.TextXAlignment.Left, Parent = TextHolder,
+			})
+			bindTheme(Msg, "TextColor3", "MutedText")
+		end
+
+		-- Slide in from the right + fade, hold, then slide out + fade.
+		Toast.Position = UDim2.fromOffset(40, 0)
+		Utility.Tween(Toast, { Position = UDim2.fromOffset(0, 0), BackgroundTransparency = 0.05 }, 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+		task.delay(opts.Duration or 3.5, function()
+			if not Toast.Parent then return end
+			local fade = Utility.Tween(Toast, { Position = UDim2.fromOffset(40, 0), BackgroundTransparency = 1 }, 0.18)
+			fade.Completed:Wait()
+			if Toast.Parent then Toast:Destroy() end
+		end)
+
+		return Toast
+	end
+
+	--==========================
+	-- SHARED COLOR PICKER MODAL
+	-- A single modal lives directly under MainFrame (built last, so it's
+	-- naturally the top-most sibling — no cross-branch ZIndex tricks).
+	-- Every CreateColorPicker swatch reuses this one instance instead of
+	-- spawning its own floating popup, which is what caused both the
+	-- "overlaps other rows" and "can't click the picker" bugs.
+	--==========================
+	local ColorScrim = Utility.Create("Frame", {
+		Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1,
+		Visible = false, ZIndex = 60, Parent = MainFrame,
+	}, { Utility.Corner(16) })
+	local ColorScrimBtn = Utility.Create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", AutoButtonColor = false, ZIndex = 60, Parent = ColorScrim })
+
+	local ColorBox = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(220, 312), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		ZIndex = 61, Parent = ColorScrim,
+	}, { Utility.Corner(12), Utility.Stroke(Theme.Stroke, 1, 0.8), Utility.Padding(14) })
+	bindTheme(ColorBox, "BackgroundColor3", "PanelLight")
+
+	local ColorTitle = Utility.Create("TextLabel", { Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 61, Parent = ColorBox })
+	bindTheme(ColorTitle, "TextColor3", "Text")
+
+	local CSVSquare = Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, 150), Position = UDim2.fromOffset(0, 26), BackgroundColor3 = Color3.fromHSV(0, 1, 1), ZIndex = 61, Parent = ColorBox }, { Utility.Corner(8) })
+	local CWhiteOverlay = Utility.Create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(1, 1, 1), ZIndex = 62, Parent = CSVSquare }, { Utility.Corner(8) })
+	Utility.Create("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }), Parent = CWhiteOverlay })
+	local CBlackOverlay = Utility.Create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), ZIndex = 63, Parent = CSVSquare }, { Utility.Corner(8) })
+	Utility.Create("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) }), Parent = CBlackOverlay })
+	local CSVCursor = Utility.Create("Frame", { Size = UDim2.fromOffset(10, 10), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(1, 0), BackgroundTransparency = 1, ZIndex = 64, Parent = CSVSquare }, { Utility.Stroke(Color3.new(1, 1, 1), 2, 0) })
+
+	local CHueTrack = Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 184), ZIndex = 61, Parent = ColorBox }, { Utility.Corner(8) })
+	do
+		local stops = {}
+		for h = 0, 6 do table.insert(stops, ColorSequenceKeypoint.new(h / 6, Color3.fromHSV(h / 6, 1, 1))) end
+		Utility.Create("UIGradient", { Color = ColorSequence.new(stops), Parent = CHueTrack })
+	end
+	local CHueCursor = Utility.Create("Frame", { Size = UDim2.fromOffset(4, 20), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0, 0.5), BackgroundColor3 = Color3.new(1, 1, 1), ZIndex = 62, Parent = CHueTrack }, { Utility.Corner(2), Utility.Stroke(Color3.new(0, 0, 0), 1, 0.4) })
+
+	local CHexBox = Utility.Create("TextBox", { Size = UDim2.new(1, 0, 0, 32), Position = UDim2.fromOffset(0, 212), Text = "", Font = FONT, TextSize = 13, ClearTextOnFocus = false, ZIndex = 61, Parent = ColorBox }, { Utility.Corner(6) })
+	bindTheme(CHexBox, "BackgroundColor3", "Panel")
+	bindTheme(CHexBox, "TextColor3", "Text")
+
+	local CCancelBtn = Utility.Create("TextButton", { Size = UDim2.new(0.46, 0, 0, 32), Position = UDim2.fromOffset(0, 252), AutoButtonColor = false, Font = FONT, TextSize = 13, Text = "Cancel", ZIndex = 61, Parent = ColorBox }, { Utility.Corner(6) })
+	bindTheme(CCancelBtn, "BackgroundColor3", "Panel")
+	bindTheme(CCancelBtn, "TextColor3", "MutedText")
+
+	local COkBtn = Utility.Create("TextButton", { Size = UDim2.new(0.46, 0, 0, 32), Position = UDim2.new(0.54, 0, 0, 252), AutoButtonColor = false, Font = FONT_BOLD, TextSize = 13, Text = "OK", ZIndex = 61, Parent = ColorBox }, { Utility.Corner(6) })
+	bindTheme(COkBtn, "BackgroundColor3", "Accent")
+	bindTheme(COkBtn, "TextColor3", "Background")
+	COkBtn.MouseEnter:Connect(function() Utility.Tween(COkBtn, { BackgroundColor3 = Theme.AccentDim }, 0.15) end)
+	COkBtn.MouseLeave:Connect(function() Utility.Tween(COkBtn, { BackgroundColor3 = Theme.Accent }, 0.15) end)
+	CCancelBtn.MouseEnter:Connect(function() Utility.Tween(CCancelBtn, { BackgroundColor3 = Theme.PanelLight }, 0.15) end)
+	CCancelBtn.MouseLeave:Connect(function() Utility.Tween(CCancelBtn, { BackgroundColor3 = Theme.Panel }, 0.15) end)
+
+	-- Dragging the SV square / hue strip only updates the LIVE PREVIEW
+	-- inside the modal (square, cursor, hex). The actual Theme write +
+	-- refreshTheme() + user callback only fire once OK is pressed —
+	-- that's "commit". Cancel / clicking outside discards the preview.
+	local colorModalState = { hue = 0, sat = 0, val = 0, onApply = nil }
+
+	local function colorModalPreview()
+		local newColor = Color3.fromHSV(colorModalState.hue, colorModalState.sat, colorModalState.val)
+		local hex = string.format("#%02X%02X%02X", math.floor(newColor.R * 255 + 0.5), math.floor(newColor.G * 255 + 0.5), math.floor(newColor.B * 255 + 0.5))
+		CHexBox.Text = hex
+		CSVSquare.BackgroundColor3 = Color3.fromHSV(colorModalState.hue, 1, 1)
+		CSVCursor.Position = UDim2.fromScale(colorModalState.sat, 1 - colorModalState.val)
+		CHueCursor.Position = UDim2.fromScale(colorModalState.hue, 0.5)
+		return newColor
+	end
+
+	local function closeColorModal()
+		ColorScrim.Visible = false
+	end
+
+	function Window:OpenColorPicker(title, startColor, onApply)
+		colorModalState.hue, colorModalState.sat, colorModalState.val = Color3.toHSV(startColor)
+		colorModalState.onApply = onApply
+		ColorTitle.Text = title or "Edit color"
+		colorModalPreview()
+		ColorScrim.Visible = true
+		ColorScrim.BackgroundTransparency = 1
+		Utility.Tween(ColorScrim, { BackgroundTransparency = 0.45 }, 0.15)
+	end
+
+	local draggingSV, draggingHue = false, false
+	CSVSquare.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then draggingSV = true end end)
+	CHueTrack.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then draggingHue = true end end)
+	UserInputService.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			draggingSV, draggingHue = false, false
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(i)
+		if i.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+		if draggingSV then
+			colorModalState.sat = math.clamp((i.Position.X - CSVSquare.AbsolutePosition.X) / CSVSquare.AbsoluteSize.X, 0, 1)
+			colorModalState.val = 1 - math.clamp((i.Position.Y - CSVSquare.AbsolutePosition.Y) / CSVSquare.AbsoluteSize.Y, 0, 1)
+			colorModalPreview()
+		elseif draggingHue then
+			colorModalState.hue = math.clamp((i.Position.X - CHueTrack.AbsolutePosition.X) / CHueTrack.AbsoluteSize.X, 0, 1)
+			colorModalPreview()
+		end
+	end)
+	CHexBox.FocusLost:Connect(function()
+		local hexStr = CHexBox.Text:gsub("#", "")
+		if #hexStr == 6 and hexStr:match("^%x+$") then
+			local r, g, b = tonumber(hexStr:sub(1, 2), 16), tonumber(hexStr:sub(3, 4), 16), tonumber(hexStr:sub(5, 6), 16)
+			colorModalState.hue, colorModalState.sat, colorModalState.val = Color3.toHSV(Color3.fromRGB(r, g, b))
+			colorModalPreview()
+		end
+	end)
+
+	-- The modal now closes ONLY via OK / Cancel. There is deliberately no
+	-- "click outside to close" anymore — that's what kept causing the
+	-- picker to slam shut whenever a drag-release happened to land past
+	-- the SV square / hue strip edge, no matter how the misfire was
+	-- patched at the input-event level. ColorScrimBtn stays Active (so it
+	-- still blocks clicks from reaching the sidebar/tabs behind it) but
+	-- has no click handler — clicking it is now a harmless no-op.
+	CCancelBtn.MouseButton1Click:Connect(closeColorModal)
+	COkBtn.MouseButton1Click:Connect(function()
+		local finalColor = colorModalPreview()
+		if colorModalState.onApply then colorModalState.onApply(finalColor) end
+		closeColorModal()
+	end)
+
+	--==========================
+	-- SHARED CONFIRMATION MODAL
+	-- Same pattern as the color picker: one modal built once, reused by
+	-- every caller (e.g. "Reset to defaults") instead of each spot building
+	-- its own popup. Use for anything destructive/irreversible.
+	--==========================
+	local ConfirmScrim = Utility.Create("Frame", {
+		Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1,
+		Visible = false, ZIndex = 70, Parent = MainFrame,
+	}, { Utility.Corner(16) })
+	Utility.Create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", AutoButtonColor = false, ZIndex = 70, Parent = ConfirmScrim })
+
+	local ConfirmBox = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(300, 0), AutomaticSize = Enum.AutomaticSize.Y, AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), ZIndex = 71, Parent = ConfirmScrim,
+	}, { Utility.Corner(12), Utility.Stroke(Theme.Stroke, 1, 0.85), Utility.Padding(18) })
+	bindTheme(ConfirmBox, "BackgroundColor3", "PanelLight")
+
+	local ConfirmTitle = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 15,
+		TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 71, Parent = ConfirmBox,
+	})
+	bindTheme(ConfirmTitle, "TextColor3", "Text")
+
+	local ConfirmMessage = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Position = UDim2.fromOffset(0, 24),
+		BackgroundTransparency = 1, Font = FONT, TextSize = 13, TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 71, Parent = ConfirmBox,
+	})
+	bindTheme(ConfirmMessage, "TextColor3", "MutedText")
+
+	local ConfirmBtnRow = Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, 34), Position = UDim2.fromOffset(0, 56), BackgroundTransparency = 1, ZIndex = 71, Parent = ConfirmBox })
+	local ConfirmCancelBtn = Utility.Create("TextButton", { Size = UDim2.new(0.46, 0, 1, 0), AutoButtonColor = false, Font = FONT, TextSize = 13, Text = "Cancel", ZIndex = 71, Parent = ConfirmBtnRow }, { Utility.Corner(7) })
+	bindTheme(ConfirmCancelBtn, "BackgroundColor3", "Panel")
+	bindTheme(ConfirmCancelBtn, "TextColor3", "MutedText")
+	local ConfirmOkBtn = Utility.Create("TextButton", { Size = UDim2.new(0.46, 0, 1, 0), Position = UDim2.new(0.54, 0, 0, 0), AutoButtonColor = false, Font = FONT_BOLD, TextSize = 13, Text = "Confirm", ZIndex = 71, Parent = ConfirmBtnRow }, { Utility.Corner(7) })
+	bindTheme(ConfirmOkBtn, "TextColor3", "Background")
+	Utility.AddHoverDarken(ConfirmCancelBtn, 0.08, 7)
+	Utility.AddHoverDarken(ConfirmOkBtn, 0.12, 7)
+
+	local confirmOnAccept = nil
+	local function closeConfirm() ConfirmScrim.Visible = false end
+	ConfirmCancelBtn.MouseButton1Click:Connect(closeConfirm)
+	ConfirmOkBtn.MouseButton1Click:Connect(function()
+		local cb = confirmOnAccept
+		closeConfirm()
+		if cb then task.spawn(cb) end
+	end)
+
+	-- opts: { Title, Message, ConfirmText, CancelText, Danger (bool), OnConfirm }
+	function Window:Confirm(opts)
+		opts = opts or {}
+		ConfirmTitle.Text = opts.Title or "Are you sure?"
+		ConfirmMessage.Text = opts.Message or ""
+		ConfirmOkBtn.Text = opts.ConfirmText or "Confirm"
+		ConfirmCancelBtn.Text = opts.CancelText or "Cancel"
+		ConfirmOkBtn.BackgroundColor3 = opts.Danger and Theme.Danger or Theme.Accent
+		confirmOnAccept = opts.OnConfirm
+		ConfirmScrim.Visible = true
+		ConfirmScrim.BackgroundTransparency = 1
+		Utility.Tween(ConfirmScrim, { BackgroundTransparency = 0.45 }, 0.15)
+	end
+
+	--==========================
+	-- SHARED TOOLTIP
+	-- One bubble for the entire hub, reused/repositioned per hover instead
+	-- of creating a new label per tooltip — attaching tooltips to dozens of
+	-- rows still costs exactly one extra Instance, not one each.
+	--==========================
+	local TooltipBubble = Utility.Create("TextLabel", {
+		Size = UDim2.fromOffset(0, 0), AutomaticSize = Enum.AutomaticSize.XY, BackgroundTransparency = 0.05,
+		Font = FONT, TextSize = 12, Visible = false, ZIndex = 200, Parent = MainFrame,
+	}, { Utility.Corner(6), Utility.Padding(8) })
+	bindTheme(TooltipBubble, "BackgroundColor3", "PanelLight")
+	bindTheme(TooltipBubble, "TextColor3", "Text")
+
+	-- Attach a hover tooltip to any GuiObject inside this hub.
+	function Window:AddTooltip(instance, text)
+		instance.MouseEnter:Connect(function()
+			TooltipBubble.Text = text
+			TooltipBubble.Visible = true
+		end)
+		instance.MouseMoved:Connect(function(x, y)
+			local base = MainFrame.AbsolutePosition
+			TooltipBubble.Position = UDim2.fromOffset(x - base.X + 14, y - base.Y + 14)
+		end)
+		instance.MouseLeave:Connect(function() TooltipBubble.Visible = false end)
+	end
+
+	-- Search preview list: shows up to 6 matches as you type instead of
+	-- silently jumping straight to whichever happened to match first.
+	local SearchPreview = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(280, 0), AutomaticSize = Enum.AutomaticSize.Y,
+		Position = UDim2.fromOffset(0, 38), Visible = false, ZIndex = 50, Parent = SearchHolder,
+	}, { Utility.Corner(8), Utility.Stroke(Theme.Stroke, 1, 0.85), Utility.Padding(6) })
+	bindTheme(SearchPreview, "BackgroundColor3", "PanelLight")
+	Utility.Create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = SearchPreview })
+
+	local function closeSearchPreview() SearchPreview.Visible = false end
+
+	local function showSearchPreview(query)
+		for _, c in ipairs(SearchPreview:GetChildren()) do
+			if c:IsA("TextButton") then c:Destroy() end
+		end
+		local shown = 0
+		for _, entry in ipairs(Window.SearchIndex) do
+			if shown >= 6 then break end
+			if entry.KeywordsLower:find(query, 1, true) then
+				shown = shown + 1
+				local OptBtn = Utility.Create("TextButton", {
+					Size = UDim2.new(1, 0, 0, 26), AutoButtonColor = false, Font = FONT, TextSize = 12,
+					Text = "  " .. entry.Keywords, TextXAlignment = Enum.TextXAlignment.Left, Parent = SearchPreview,
+				}, { Utility.Corner(5) })
+				bindTheme(OptBtn, "TextColor3", "Text")
+				Utility.AddHoverDarken(OptBtn, 0.12, 5)
+				OptBtn.MouseButton1Click:Connect(function()
+					entry.Reveal()
+					closeSearchPreview()
+					SearchBox.Text = ""
+				end)
+			end
+		end
+		SearchPreview.Visible = shown > 0
+		return shown > 0
+	end
+
+	-- Self-contained outside-click-close (not the shared dropdown registry
+	-- near CreateDropdown — that's declared later in the file than this
+	-- closure, so it isn't visible as an upvalue here).
+	UserInputService.InputBegan:Connect(function(input)
+		if not SearchPreview.Visible then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+		local pos, p, s = input.Position, SearchHolder.AbsolutePosition, SearchHolder.AbsoluteSize
+		if not (pos.X >= p.X and pos.X <= p.X + s.X and pos.Y >= p.Y and pos.Y <= p.Y + s.Y) then
+			closeSearchPreview()
+		end
+	end)
+
+	local searchQueued = false
+	local searchNoResults = nil
+	SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+		if searchQueued then return end
+		searchQueued = true
+		task.defer(function()
+			searchQueued = false
+			local query = SearchBox.Text:lower()
+			if searchNoResults then searchNoResults.Visible = false end
+			if query == "" then closeSearchPreview(); return end
+			local found = showSearchPreview(query)
+			if not found then
+				-- Give feedback instead of silently doing nothing — the
+				-- label is created lazily once and just reused/repositioned.
+				if not searchNoResults then
+					searchNoResults = Utility.Create("TextLabel", {
+						Size = UDim2.fromOffset(0, 20), AutomaticSize = Enum.AutomaticSize.X,
+						Position = UDim2.new(0, 340, 0, 14), BackgroundTransparency = 1,
+						Font = FONT, TextSize = 12, Text = "No results found", ZIndex = 3, Parent = TopBar,
+					})
+					bindTheme(searchNoResults, "TextColor3", "MutedText")
+				end
+				searchNoResults.Visible = true
+			end
+		end)
+	end)
+
+	return Window
 end
 
--- Default pins
-QuickBar.Pin("AutoFarmLevel",    "⚔", "Farm",    ORANGE)
-QuickBar.Pin("AutoFishMerchant", "🐟", "Fish",    BLUE_A)
-QuickBar.Pin("AutoGetBuso",      "👊", "Buso",    PURPLE)
-QuickBar.Pin("ESP_Island",       "🗺", "ESP",     CYAN)
+--====================================================
+-- TAB (sidebar entry, top-level) — now takes an icon kind:
+-- "dashboard" | "bolt" | "chart" | "settings"
+--====================================================
+-- Remembers which tab was last active across sessions (opt-in via
+-- Window:RestoreLastTab(), called once after all CreateTab calls). Kept
+-- self-contained here (own filename, own availability check) rather than
+-- reusing the config manager's file helpers, since those are declared
+-- later in the file than CreateTab and wouldn't be visible as upvalues yet.
+local LASTTAB_FILE = "ZiliHub_LastTab.txt"
+local function lastTabIOAvailable()
+	return typeof(writefile) == "function" and typeof(readfile) == "function" and typeof(isfile) == "function"
+end
+local function saveLastTabIndex(index)
+	if not lastTabIOAvailable() then return end
+	pcall(writefile, LASTTAB_FILE, tostring(index))
+end
+local function loadLastTabIndex()
+	if not lastTabIOAvailable() then return nil end
+	local ok1, exists = pcall(isfile, LASTTAB_FILE)
+	if not ok1 or not exists then return nil end
+	local ok2, raw = pcall(readfile, LASTTAB_FILE)
+	if not ok2 then return nil end
+	return tonumber(raw)
+end
 
--- Misc button in quick bar (opens Misc panel)
-task.defer(function()
-    local miscBtn = NEW("TextButton", {Size=UDim2.new(0,44,0,32), BackgroundColor3=BG3,
-        Text="", AutoButtonColor=false, ZIndex=402}, _qbList)
-    CORNER(7, miscBtn); STROKE(MISC_COL, 1, 0.35, miscBtn)
-    NEW("TextLabel", {Text="✦", Size=UDim2.new(1,0,0,14), Position=UDim2.new(0,0,0,4),
-        BackgroundTransparency=1, TextColor3=MISC_COL, Font=Enum.Font.GothamBold, TextSize=11,
-        TextXAlignment=Enum.TextXAlignment.Center, ZIndex=403}, miscBtn)
-    NEW("TextLabel", {Text="Misc", Size=UDim2.new(1,0,0,12), Position=UDim2.new(0,0,0,18),
-        BackgroundTransparency=1, TextColor3=TEXT3, Font=Enum.Font.Gotham, TextSize=8,
-        TextXAlignment=Enum.TextXAlignment.Center, ZIndex=403}, miscBtn)
-    miscBtn.MouseButton1Click:Connect(function()
-        if type(GBO.MiscPanel) == "function" then GBO.MiscPanel() end
-    end)
-    _qbFrame.Size = UDim2.new(0, (#QuickBar._pins * 56) + 52, 0, 42)
+-- Cascading entrance for the first ~14 rows when a tab/subtab page becomes
+-- visible. Uses UIScale (a separate transform layer) + BackgroundTransparency
+-- rather than Position — UIListLayout re-asserts every child's Position on
+-- every layout pass, so animating Position directly would just get fought
+-- and snapped back, the same class of bug as the theme-color race elsewhere
+-- in this file. Capped at 14 rows so opening a huge tab doesn't visibly
+-- trickle in for a long time or spawn dozens of tweens at once.
+local STAGGER_CAP = 14
+local function staggerReveal(container)
+	local i = 0
+	for _, row in ipairs(container:GetChildren()) do
+		if row:IsA("Frame") or row:IsA("TextButton") then
+			i = i + 1
+			if i > STAGGER_CAP then break end
+			local scaleObj = Utility.Create("UIScale", { Scale = 0.94, Parent = row })
+			local originalTransparency = row.BackgroundTransparency
+			row.BackgroundTransparency = 1
+			task.delay((i - 1) * 0.025, function()
+				if not row.Parent then return end
+				Utility.Tween(row, { BackgroundTransparency = originalTransparency }, 0.18)
+				Utility.Tween(scaleObj, { Scale = 1 }, 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+				task.delay(0.25, function() if scaleObj.Parent then scaleObj:Destroy() end end)
+			end)
+		end
+	end
+end
+
+function Library:CreateTab(name, iconKind)
+	local Sidebar, ContentArea, Window = self.Sidebar, self.ContentArea, self
+
+	local Button = Utility.Create("TextButton", { Size = UDim2.new(1, 0, 0, 38), AutoButtonColor = false, Text = "", Parent = Sidebar }, { Utility.Corner(8) })
+	bindTheme(Button, "BackgroundColor3", "Panel")
+
+	-- Active-state highlight lives on its own overlay rather than tweening
+	-- Button's own theme-bound BackgroundColor3 — avoids the "tween fights
+	-- refreshTheme(), ends up stuck on a stale color" bug class (see
+	-- AddHoverDarken / FlashHighlight above).
+	local ActiveHighlight = Utility.Create("Frame", {
+		Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = Button,
+	}, { Utility.Corner(8) })
+	bindTheme(ActiveHighlight, "BackgroundColor3", "PanelLight")
+	Utility.AddHoverDarken(Button, 0.05, 8)
+
+	-- Small accent bar on the left edge of the active tab — grows in/out
+	-- from the middle, a common "premium sidebar" detail.
+	local Indicator = Utility.Create("Frame", {
+		Size = UDim2.new(0, 3, 0, 0), Position = UDim2.fromOffset(0, 19), AnchorPoint = Vector2.new(0, 0.5),
+		BackgroundTransparency = 1, Parent = Button,
+	}, { Utility.Corner(2) })
+	bindTheme(Indicator, "BackgroundColor3", "Accent")
+
+	local IconHolder = Utility.Create("Frame", { Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(12, 10), BackgroundTransparency = 1, Parent = Button })
+	local builder = IconBuilders[iconKind] or IconBuilders.dashboard
+	local IconGlyph = builder(18, Theme.MutedText)
+	IconGlyph.Size = UDim2.fromScale(1, 1)
+	IconGlyph.Parent = IconHolder
+	-- True path-morphing isn't really feasible for these vector-Frame icons
+	-- without a lot of per-icon custom work — a quick scale "pop" via
+	-- UIScale is the cheap, general-purpose stand-in for "the icon feels
+	-- alive when it becomes active" instead of a flat instant color swap.
+	local IconScale = Utility.Create("UIScale", { Scale = 1, Parent = IconHolder })
+
+	-- "Live" indicator — a small pulsing dot on the icon corner, e.g. to
+	-- show "Auto farm is currently running" without needing to open the
+	-- tab. Toggled via Tab:SetLive(true/false); the pulse loop only runs
+	-- while actually visible, so an unused hub pays nothing for this.
+	local LiveDot = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(7, 7), Position = UDim2.fromOffset(23, 6), BackgroundColor3 = Theme.Accent,
+		Visible = false, ZIndex = 3, Parent = Button,
+	}, { Utility.Corner(4) })
+	bindTheme(LiveDot, "BackgroundColor3", "Accent")
+	local livePulsing = false
+	local function setLive(state)
+		LiveDot.Visible = state
+		if state and not livePulsing then
+			livePulsing = true
+			task.spawn(function()
+				while LiveDot.Visible and LiveDot.Parent do
+					local t1 = Utility.Tween(LiveDot, { BackgroundTransparency = 0.65 }, 0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+					t1.Completed:Wait()
+					if not (LiveDot.Visible and LiveDot.Parent) then break end
+					local t2 = Utility.Tween(LiveDot, { BackgroundTransparency = 0 }, 0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+					t2.Completed:Wait()
+				end
+				livePulsing = false
+			end)
+		end
+	end
+
+	local Label = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, -42, 1, 0), Position = UDim2.fromOffset(40, 0), BackgroundTransparency = 1,
+		Text = name, Font = FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = Button,
+	})
+	bindTheme(Label, "TextColor3", "MutedText")
+
+	local function setIconColor(color)
+		for _, d in ipairs(IconGlyph:GetDescendants()) do
+			if d:IsA("Frame") and d.BackgroundTransparency < 1 then d.BackgroundColor3 = color end
+			if d:IsA("UIStroke") then d.Color = color end
+		end
+	end
+
+	local Page = Utility.Create("CanvasGroup", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, GroupTransparency = 1, Visible = false, Parent = ContentArea })
+
+	local SubTabStrip = Utility.Create("Frame", { Size = UDim2.new(1, -32, 0, 34), Position = UDim2.fromOffset(16, 10), BackgroundTransparency = 1, Visible = false, Parent = Page })
+	Utility.Create("UIListLayout", { Padding = UDim.new(0, 6), FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Parent = SubTabStrip })
+
+	local SubTabBody = Utility.Create("Frame", { Size = UDim2.new(1, 0, 1, -44), Position = UDim2.fromOffset(0, 44), BackgroundTransparency = 1, Parent = Page })
+	local FlatScroll = Utility.Create("ScrollingFrame", {
+		Size = UDim2.new(1, -8, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(0, 0, 0, 0), Parent = SubTabBody,
+	})
+	bindTheme(FlatScroll, "ScrollBarImageColor3", "Accent")
+	Utility.Create("UIListLayout", { Padding = UDim.new(0, 16), SortOrder = Enum.SortOrder.LayoutOrder, Parent = FlatScroll })
+	Utility.Padding(16).Parent = FlatScroll
+
+	local function activate()
+		if Window.ActiveTabButton == Button then return end
+		for _, t in ipairs(Window.Tabs) do
+			if t.Button ~= Button then
+				Utility.Tween(t.ActiveHighlight, { BackgroundTransparency = 1 }, 0.18)
+				Utility.Tween(t.Indicator, { Size = UDim2.new(0, 3, 0, 0), BackgroundTransparency = 1 }, 0.18)
+				Utility.Tween(t.Label, { TextColor3 = Theme.MutedText }, 0.18)
+				t.SetIconColor(Theme.MutedText)
+				if t.Page.Visible then
+					Utility.Tween(t.Page, { GroupTransparency = 1, Position = UDim2.fromScale(-0.03, 0) }, 0.16)
+					task.delay(0.16, function() t.Page.Visible = false end)
+				end
+			end
+		end
+		Utility.Tween(ActiveHighlight, { BackgroundTransparency = 0 }, 0.18)
+		Utility.Tween(Indicator, { Size = UDim2.new(0, 3, 0, 20), BackgroundTransparency = 0 }, 0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		Utility.Tween(Label, { TextColor3 = Theme.Accent }, 0.18)
+		setIconColor(Theme.Accent)
+		IconScale.Scale = 0.8
+		Utility.Tween(IconScale, { Scale = 1 }, 0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		Page.Visible = true
+		Page.Position = UDim2.fromScale(0.03, 0)
+		Page.GroupTransparency = 1
+		Utility.Tween(Page, { GroupTransparency = 0, Position = UDim2.fromScale(0, 0) }, 0.22)
+		staggerReveal(FlatScroll)
+		Window.ActiveTabButton = Button
+	end
+
+	local Tab = {
+		Window = Window, Button = Button, Label = Label, Page = Page, ActiveHighlight = ActiveHighlight, Indicator = Indicator,
+		SubTabStrip = SubTabStrip, SubTabBody = SubTabBody, ContentPage = FlatScroll,
+		SubTabs = {}, ActiveSubTabButton = nil, Activate = activate, SetIconColor = setIconColor, SetLive = setLive,
+	}
+	table.insert(Window.Tabs, Tab)
+	local tabIndex = #Window.Tabs
+	if tabIndex == 1 then task.defer(activate) end
+
+	Button.MouseButton1Click:Connect(function()
+		activate()
+		saveLastTabIndex(tabIndex) -- only on a deliberate click, not the auto-open of tab 1
+	end)
+
+	function Tab:CreateSubTab(subName)
+		SubTabStrip.Visible = true
+		FlatScroll.Visible = false
+		local Pill = Utility.Create("TextButton", { Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X, AutoButtonColor = false, Text = "", Parent = SubTabStrip }, { Utility.Corner(7) })
+		bindTheme(Pill, "BackgroundColor3", "PanelLight")
+		local PillLabel = Utility.Create("TextLabel", { Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1, Text = "  " .. subName .. "  ", Font = FONT, TextSize = 12, Parent = Pill })
+		bindTheme(PillLabel, "TextColor3", "MutedText")
+
+		local SubPage = Utility.Create("ScrollingFrame", {
+			Size = UDim2.new(1, -8, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
+			AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(0, 0, 0, 0), Visible = false, Parent = SubTabBody,
+		})
+		bindTheme(SubPage, "ScrollBarImageColor3", "Accent")
+		Utility.Create("UIListLayout", { Padding = UDim.new(0, 16), SortOrder = Enum.SortOrder.LayoutOrder, Parent = SubPage })
+		Utility.Padding(16).Parent = SubPage
+
+		local function activateSub()
+			if Tab.ActiveSubTabButton == Pill then return end
+			for _, s in ipairs(Tab.SubTabs) do
+				Utility.Tween(s.Pill, { BackgroundColor3 = Theme.PanelLight }, 0.15)
+				Utility.Tween(s.Label, { TextColor3 = Theme.MutedText }, 0.15)
+				s.SubPage.Visible = false
+			end
+			Utility.Tween(Pill, { BackgroundColor3 = Theme.AccentDim }, 0.15)
+			Utility.Tween(PillLabel, { TextColor3 = Theme.Accent }, 0.15)
+			SubPage.Visible = true
+			staggerReveal(SubPage)
+			Tab.ActiveSubTabButton = Pill
+		end
+		Pill.MouseButton1Click:Connect(activateSub)
+		table.insert(Tab.SubTabs, { Pill = Pill, Label = PillLabel, SubPage = SubPage, Activate = activateSub })
+		if #Tab.SubTabs == 1 then task.defer(activateSub) end
+
+		local SubTabObj = { Page = SubPage, Window = Window }
+		setmetatable(SubTabObj, { __index = Library.SectionFactory })
+		return SubTabObj
+	end
+
+	setmetatable(Tab, { __index = Library.SectionFactory })
+	return Tab
+end
+
+-- Call once after all Window:CreateTab(...) calls, e.g.:
+--   Window:RestoreLastTab()
+-- Restores whichever tab the user last clicked into, across sessions.
+-- Silently does nothing if no file was saved yet or file I/O isn't
+-- available in this environment.
+function Library:RestoreLastTab()
+	local idx = loadLastTabIndex()
+	local tab = idx and self.Tabs[idx]
+	if tab then tab.Activate() end
+end
+
+--====================================================
+-- SECTION + COMPONENT FACTORY
+--====================================================
+Library.SectionFactory = {}
+
+-- Tracks how many sections exist per content area so we can add breathing
+-- room *between* logical groups without also padding the very first one
+-- against the top edge. Weak-keyed so it doesn't outlive destroyed tabs.
+local SectionCounts = setmetatable({}, { __mode = "k" })
+
+-- iconKind is optional — e.g. Tab:CreateSection("Targeting", "target") to
+-- get an icon + uppercase header like a settings-panel group title.
+function Library.SectionFactory:CreateSection(title, iconKind)
+	local parent = self.ContentPage or self.Page
+	local count = (SectionCounts[parent] or 0) + 1
+	SectionCounts[parent] = count
+	if count > 1 then
+		Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, 8), BackgroundTransparency = 1, Parent = parent })
+	end
+
+	local HeaderHolder = Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, Parent = parent })
+
+	-- Fixed offsets (not a UIListLayout) — a horizontal UIListLayout doesn't
+	-- shrink Scale-sized siblings to fit remaining space, so a Scale-width
+	-- text label placed after an icon would overflow past the container
+	-- instead of accounting for the icon's width. Manual offsets sidestep
+	-- that entirely and are just as simple here (only ever 0 or 1 icon).
+	local textOffset = 0
+	if iconKind then
+		local IconHolder = Utility.Create("Frame", { Size = UDim2.fromOffset(15, 15), Position = UDim2.fromOffset(0, 4), BackgroundTransparency = 1, Parent = HeaderHolder })
+		local builder = IconBuilders[iconKind] or IconBuilders.settings
+		-- AccentMuted, not full Accent — section icons repeat on every group,
+		-- so the hero accent stays reserved for the active tab + key values.
+		local Glyph = builder(15, Theme.AccentMuted)
+		Glyph.Size = UDim2.fromScale(1, 1)
+		Glyph.Parent = IconHolder
+		textOffset = 22
+	end
+
+	local Header = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, -textOffset, 0, 24), Position = UDim2.fromOffset(textOffset, 0), BackgroundTransparency = 1,
+		Text = string.upper(title), Font = FONT_BLACK, TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left, Parent = HeaderHolder,
+	})
+	bindTheme(Header, "TextColor3", "MutedText")
+
+	-- Thin divider under the header reinforces the group boundary without
+	-- needing a full card/box around it.
+	local Divider = Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.fromOffset(0, 23), BackgroundTransparency = 0.88, Parent = HeaderHolder })
+	bindTheme(Divider, "BackgroundColor3", "Stroke")
+
+	local Section = { Page = parent, Window = self.Window, Header = Header }
+	setmetatable(Section, { __index = Library.ComponentFactory })
+	return Section
+end
+
+Library.ComponentFactory = {}
+
+local function card(parent, height)
+	local Holder = Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, height or 52), BackgroundTransparency = 0.06, Parent = parent }, { Utility.Corner(10), Utility.Padding(18) })
+	bindTheme(Holder, "BackgroundColor3", "Panel")
+
+	-- Softer border (~6% white opacity) than before, with a faint AccentMuted
+	-- edge-light (not full Accent — this repeats on every single row) and a
+	-- top-to-bottom transparency ramp that fakes a subtle inset light source
+	-- without needing an extra Instance for it.
+	local Stroke = Utility.Stroke(Theme.Stroke, 1, 0.94)
+	Stroke.Parent = Holder
+	Utility.Create("UIGradient", {
+		Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Theme.Stroke), ColorSequenceKeypoint.new(1, Theme.AccentMuted) }),
+		Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 0.45) }),
+		Rotation = 75, Parent = Stroke,
+	})
+
+	-- Whole-row hover "lift": border brightens + the fill itself becomes a
+	-- touch more opaque — reads as raised depth without any resize or
+	-- reposition (which would jitter sibling rows in the shared
+	-- UIListLayout the way a real hover-scale would).
+	Holder.MouseEnter:Connect(function()
+		Utility.Tween(Stroke, { Transparency = 0.5 }, 0.15)
+		Utility.Tween(Holder, { BackgroundTransparency = 0 }, 0.15)
+	end)
+	Holder.MouseLeave:Connect(function()
+		Utility.Tween(Stroke, { Transparency = 0.94 }, 0.2)
+		Utility.Tween(Holder, { BackgroundTransparency = 0.06 }, 0.2)
+	end)
+
+	return Holder
+end
+
+local function registerSearch(window, keywords, revealFn)
+	if window and window.SearchIndex then
+		table.insert(window.SearchIndex, { Keywords = keywords, KeywordsLower = keywords:lower(), Reveal = revealFn })
+	end
+end
+
+-- Shared "title (+ optional description)" text block used by Toggle/Slider/
+-- Dropdown rows. When a description is given, the title gets bolder/larger
+-- and a smaller muted line sits underneath — the two-line settings-row style.
+-- Returns the row height the caller should use for its card().
+local function buildLabelBlock(parent, title, description, rightGutter, baseHeight)
+	rightGutter = rightGutter or 70
+	if description and description ~= "" then
+		local TitleLabel = Utility.Create("TextLabel", {
+			Size = UDim2.new(1, -rightGutter, 0, 18), BackgroundTransparency = 1, Text = title or "",
+			Font = FONT_BOLD, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent,
+		})
+		bindTheme(TitleLabel, "TextColor3", "Text")
+		local DescLabel = Utility.Create("TextLabel", {
+			Size = UDim2.new(1, -rightGutter, 0, 15), Position = UDim2.fromOffset(0, 19), BackgroundTransparency = 1,
+			Text = description, Font = FONT, TextSize = 12, TextTransparency = 0.15, TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left, Parent = parent,
+		})
+		bindTheme(DescLabel, "TextColor3", "MutedText")
+		return TitleLabel, DescLabel, (baseHeight or 52) + 12
+	else
+		local TitleLabel = Utility.Create("TextLabel", {
+			Size = UDim2.new(1, -rightGutter, 0, 16), BackgroundTransparency = 1, Text = title or "",
+			Font = FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = parent,
+		})
+		bindTheme(TitleLabel, "TextColor3", "Text")
+		return TitleLabel, nil, baseHeight or 52
+	end
+end
+
+function Library.ComponentFactory:CreateToggle(opts)
+	opts = opts or {}
+	local state = opts.Default or false
+	local Holder = card(self.Page, 52)
+	local _, _, neededHeight = buildLabelBlock(Holder, opts.Title or "Toggle", opts.Description, 70)
+	Holder.Size = UDim2.new(1, 0, 0, neededHeight)
+
+	local Track = Utility.Create("Frame", { Size = UDim2.fromOffset(44, 24), Position = UDim2.new(1, -44, 0.5, -12), BackgroundColor3 = state and Theme.AccentDim or Theme.PanelLight, Parent = Holder }, { Utility.Corner(12) })
+	-- Soft glow behind the knob, created before Knob so sibling render order
+	-- puts it underneath. Fades in on ON — a "premium" touch that costs one
+	-- static Frame per toggle, not a continuous animation. Uses AccentMuted
+	-- (not full Accent) — toggles are common/repeated, so the hero accent
+	-- stays reserved for the active tab and key numeric values.
+	local Glow = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(30, 30), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = state and UDim2.new(1, -12.5, 0.5, 0) or UDim2.new(0, 12.5, 0.5, 0),
+		BackgroundColor3 = Theme.AccentMuted, BackgroundTransparency = state and 0.72 or 1, Parent = Track,
+	}, { Utility.Corner(15) })
+	local Knob = Utility.Create("Frame", { Size = UDim2.fromOffset(19, 19), Position = state and UDim2.new(1, -22, 0.5, -9.5) or UDim2.new(0, 3, 0.5, -9.5), BackgroundColor3 = state and Theme.AccentMuted or Theme.MutedText, Parent = Track }, { Utility.Corner(10) })
+	local Btn = Utility.Create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = Holder })
+
+	local function set(newState, fireCallback)
+		state = newState
+		Utility.Tween(Track, { BackgroundColor3 = state and Theme.AccentDim or Theme.PanelLight }, 0.18)
+		Utility.Tween(Knob, { Position = state and UDim2.new(1, -22, 0.5, -9.5) or UDim2.new(0, 3, 0.5, -9.5), BackgroundColor3 = state and Theme.AccentMuted or Theme.MutedText }, 0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		Utility.Tween(Glow, { Position = state and UDim2.new(1, -12.5, 0.5, 0) or UDim2.new(0, 12.5, 0.5, 0), BackgroundTransparency = state and 0.72 or 1 }, 0.2)
+		if fireCallback ~= false and opts.Callback then task.spawn(opts.Callback, state) end
+	end
+	Btn.MouseButton1Click:Connect(function() set(not state) end)
+
+	registerSearch(self.Window, opts.Title or "", function() Utility.FlashHighlight(Holder, Theme.Accent, 10) end)
+
+	return { Instance = Holder, Set = set, Get = function() return state end }
+end
+
+-- Pins a live-synced shortcut to an existing toggle onto another section
+-- (typically the Dashboard), so common features can be flipped without
+-- navigating into their actual tab. Usage:
+--   local AutoLevel = LevelSection:CreateToggle({ Title = "Auto level grind", ... })
+--   Library:PinToggle(QuickSection, AutoLevel, { Title = "Auto level grind" })
+-- Both copies drive the exact same state — flipping either one updates the
+-- other. A cheap poll (2x/sec, only while the pin exists) keeps the pinned
+-- copy honest if the original changes some other way (e.g. loaded from a
+-- config file) — simpler and more robust than wiring a full event system
+-- through every component just for this one feature.
+function Library:PinToggle(targetSection, originalToggleAPI, opts)
+	opts = opts or {}
+	local pinned = targetSection:CreateToggle({
+		Title = opts.Title or "Pinned", Description = opts.Description,
+		Default = originalToggleAPI.Get(),
+		Callback = function(v) originalToggleAPI.Set(v, true) end,
+	})
+	task.spawn(function()
+		local lastKnown = originalToggleAPI.Get()
+		while pinned.Instance.Parent do
+			task.wait(0.5)
+			local current = originalToggleAPI.Get()
+			if current ~= lastKnown then
+				lastKnown = current
+				pinned.Set(current, false)
+			end
+		end
+	end)
+	return pinned
+end
+
+-- Shared slider-drag state: ONE UserInputService connection handles
+-- dragging for every slider in the hub, instead of each slider adding its
+-- own permanent InputChanged/InputEnded listener. Previously, a hub with
+-- (say) 40 sliders meant 40 separate global listeners all evaluating on
+-- *every single mouse-move event in the whole game*, forever — a real,
+-- measurable cost that scales directly with hub size. Now it's always 1.
+local ActiveSlider = nil -- { Update = fn(x), OnEnd = fn() }
+UserInputService.InputChanged:Connect(function(i)
+	if ActiveSlider and i.UserInputType == Enum.UserInputType.MouseMovement then
+		ActiveSlider.Update(i.Position.X)
+	end
+end)
+UserInputService.InputEnded:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 and ActiveSlider then
+		if ActiveSlider.OnEnd then ActiveSlider.OnEnd() end
+		ActiveSlider = nil
+	end
 end)
 
-GBO.QuickBar = QuickBar
+function Library.ComponentFactory:CreateSlider(opts)
+	opts = opts or {}
+	local min, max = opts.Min or 0, opts.Max or 100
+	local value = opts.Default or min
+	local hasDesc = opts.Description and opts.Description ~= ""
 
--- =====================================================================
--- 08 · MINI STATS OVERLAY
--- Corner HUD for EXP/hr and Fish/hr. Only visible when farm/fish ON.
--- =====================================================================
-local StatsOverlay = {}
-StatsOverlay._expTotal   = 0
-StatsOverlay._fishTotal  = 0
-StatsOverlay._startTick  = nil
-StatsOverlay._visible    = false
+	local Holder = card(self.Page, hasDesc and 78 or 60)
+	local Label = Utility.Create("TextLabel", { Size = UDim2.new(1, -50, 0, 16), BackgroundTransparency = 1, Text = opts.Title or "Slider", Font = hasDesc and FONT_BOLD or FONT, TextSize = hasDesc and 14 or 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = Holder })
+	bindTheme(Label, "TextColor3", "Text")
 
-local _sovFrame = NEW("Frame", {
-    Size=UDim2.new(0,196,0,90), Position=UDim2.new(0,8,1,-108),
-    BackgroundColor3=BG1, BorderSizePixel=0, ZIndex=300, Visible=false
-}, ExtGui)
-CORNER(10, _sovFrame); STROKE(AMBER, 1.2, 0.3, _sovFrame)
+	-- Value shown as a small pill badge, not bare floating text — reads as
+	-- a distinct, "designed" element rather than an afterthought number.
+	local ValueBadge = Utility.Create("Frame", { Size = UDim2.fromOffset(40, 20), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, -2), Parent = Holder }, { Utility.Corner(6) })
+	bindTheme(ValueBadge, "BackgroundColor3", "PanelLight")
+	local ValueLabel = Utility.Create("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = tostring(value), Font = FONT_MONO, TextSize = 13, Parent = ValueBadge })
+	bindTheme(ValueLabel, "TextColor3", "Accent")
 
--- Gradient tint
-local _sovGrad = Instance.new("UIGradient")
-_sovGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, C(14,12,28)),
-    ColorSequenceKeypoint.new(1, C(8,6,18))
-})
-_sovGrad.Rotation = 135; _sovGrad.Parent = _sovFrame
+	local trackY = 30
+	if hasDesc then
+		local DescLabel = Utility.Create("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 15), Position = UDim2.fromOffset(0, 19), BackgroundTransparency = 1,
+			Text = opts.Description, Font = FONT, TextSize = 12, TextTransparency = 0.15, TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left, Parent = Holder,
+		})
+		bindTheme(DescLabel, "TextColor3", "MutedText")
+		trackY = 48
+	end
 
-NEW("TextLabel", {Text="◆ LIVE STATS", Size=UDim2.new(1,-10,0,16), Position=UDim2.new(0,8,0,6),
-    BackgroundTransparency=1, TextColor3=AMBER, Font=Enum.Font.GothamBold, TextSize=9,
-    TextXAlignment=Enum.TextXAlignment.Left, ZIndex=301}, _sovFrame)
+	local Track = Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, 5), Position = UDim2.fromOffset(0, trackY), BackgroundColor3 = Theme.PanelLight, Parent = Holder }, { Utility.Corner(3) })
+	local Fill = Utility.Create("Frame", { Size = UDim2.fromScale((value - min) / (max - min), 1), BackgroundColor3 = Theme.AccentMuted, Parent = Track }, { Utility.Corner(3) })
+	bindTheme(Fill, "BackgroundColor3", "AccentMuted")
+	Utility.Create("UIGradient", {
+		Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)), ColorSequenceKeypoint.new(1, Theme.AccentMuted) }),
+		Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.65), NumberSequenceKeypoint.new(1, 0) }),
+		Parent = Fill,
+	})
+	-- Soft glow behind the thumb (same technique as the Toggle knob glow) —
+	-- one static Frame, no continuous cost. AccentMuted, same reasoning as
+	-- the toggle: sliders are a repeated control, not the hero accent spot.
+	local KnobGlow = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(22, 22), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new((value - min) / (max - min), 0, 0.5, 0),
+		BackgroundColor3 = Theme.AccentMuted, BackgroundTransparency = 0.7, Parent = Track,
+	}, { Utility.Corner(11) })
+	local Knob = Utility.Create("Frame", { Size = UDim2.fromOffset(13, 13), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new((value - min) / (max - min), 0, 0.5, 0), Parent = Track }, { Utility.Corner(7) })
+	bindTheme(Knob, "BackgroundColor3", "AccentMuted")
 
-local _sovExpLbl  = NEW("TextLabel", {Text="EXP/hr  ·  --", Size=UDim2.new(1,-10,0,18), Position=UDim2.new(0,8,0,28),
-    BackgroundTransparency=1, TextColor3=TEXT1, Font=Enum.Font.GothamBold, TextSize=12,
-    TextXAlignment=Enum.TextXAlignment.Left, ZIndex=301}, _sovFrame)
-local _sovFishLbl = NEW("TextLabel", {Text="Fish/hr  ·  --", Size=UDim2.new(1,-10,0,18), Position=UDim2.new(0,8,0,50),
-    BackgroundTransparency=1, TextColor3=BLUE_A, Font=Enum.Font.GothamBold, TextSize=12,
-    TextXAlignment=Enum.TextXAlignment.Left, ZIndex=301}, _sovFrame)
-local _sovTimeLbl = NEW("TextLabel", {Text="", Size=UDim2.new(1,-10,0,12), Position=UDim2.new(0,8,0,74),
-    BackgroundTransparency=1, TextColor3=TEXT3, Font=Enum.Font.Gotham, TextSize=9,
-    TextXAlignment=Enum.TextXAlignment.Left, ZIndex=301}, _sovFrame)
+	-- Drag value bubble: floats above the knob while dragging, common on
+	-- premium slider UIs so you can read the exact value without staring
+	-- across at the small ValueLabel on the other side of the row.
+	local Bubble = Utility.Create("Frame", {
+		Size = UDim2.fromOffset(32, 20), AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new((value - min) / (max - min), 0, 0, -10),
+		Visible = false, ZIndex = 10, Parent = Track,
+	}, { Utility.Corner(6), Utility.Stroke(Theme.Stroke, 1, 0.8) })
+	bindTheme(Bubble, "BackgroundColor3", "PanelLight")
+	local BubbleLabel = Utility.Create("TextLabel", {
+		Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 12,
+		Text = tostring(value), Parent = Bubble,
+	})
+	bindTheme(BubbleLabel, "TextColor3", "Accent")
 
-function StatsOverlay.Show()
-    if StatsOverlay._visible then return end
-    StatsOverlay._visible   = true
-    StatsOverlay._startTick = tick()
-    _sovFrame.Visible = true
-    _sovFrame.Position = UDim2.new(0,-210,1,-108)
-    TWEEN(_sovFrame, 0.35, {Position=UDim2.new(0,8,1,-108)})
+	local function setFromX(x)
+		local rel = math.clamp((x - Track.AbsolutePosition.X) / Track.AbsoluteSize.X, 0, 1)
+		value = math.floor(min + (max - min) * rel)
+		ValueLabel.Text = tostring(value)
+		BubbleLabel.Text = tostring(value)
+		Fill.Size = UDim2.fromScale(rel, 1)
+		Knob.Position = UDim2.new(rel, 0, 0.5, 0)
+		KnobGlow.Position = UDim2.new(rel, 0, 0.5, 0)
+		Bubble.Position = UDim2.new(rel, 0, 0, -10)
+		if opts.Callback then task.spawn(opts.Callback, value) end
+	end
+	local sliderHandle = { Update = setFromX, OnEnd = function() Bubble.Visible = false end }
+	Knob.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			Bubble.Visible = true
+			ActiveSlider = sliderHandle
+		end
+	end)
+	Track.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			setFromX(i.Position.X)
+			Bubble.Visible = true
+			ActiveSlider = sliderHandle
+		end
+	end)
+	-- If this exact slider is destroyed mid-drag, release the shared
+	-- pointer so the next mouse move doesn't call into a dead instance.
+	Holder.AncestryChanged:Connect(function(_, p)
+		if not p and ActiveSlider == sliderHandle then ActiveSlider = nil end
+	end)
+
+	registerSearch(self.Window, opts.Title or "", function() Utility.FlashHighlight(Holder, Theme.Accent, 10) end)
+
+	return { Instance = Holder, Get = function() return value end }
 end
 
-function StatsOverlay.Hide()
-    if not StatsOverlay._visible then return end
-    StatsOverlay._visible = false
-    TWEEN(_sovFrame, 0.28, {Position=UDim2.new(0,-210,1,-108)})
-    task.delay(0.3, function() _sovFrame.Visible = false end)
+-- Click-outside-to-close for ALL dropdowns via one shared global listener,
+-- instead of each dropdown registering its own permanent InputBegan hook —
+-- same "one connection, not N" philosophy as the slider drag state above.
+local OpenDropdowns = {} -- [OptionsFrame] = { trigger = SelectBtn, close = fn }
+local function registerOpenDropdown(optionsFrame, triggerBtn, closeFn)
+	OpenDropdowns[optionsFrame] = { trigger = triggerBtn, close = closeFn }
 end
-
-function StatsOverlay.AddEXP(amount)  StatsOverlay._expTotal  += (amount or 0) end
-function StatsOverlay.AddFish(amount) StatsOverlay._fishTotal += (amount or 0) end
-
--- Internal update loop
-task.spawn(function()
-    while true do
-        task.wait(5)
-        if StatsOverlay._visible and StatsOverlay._startTick then
-            local elapsed = math.max(1, tick() - StatsOverlay._startTick)
-            local expHr  = math.floor(StatsOverlay._expTotal  / elapsed * 3600)
-            local fishHr = math.floor(StatsOverlay._fishTotal / elapsed * 3600)
-            local mins   = math.floor(elapsed / 60)
-            _sovExpLbl.Text  = "EXP/hr  ·  " .. (expHr  > 0 and tostring(expHr)  or "--")
-            _sovFishLbl.Text = "Fish/hr  ·  " .. (fishHr > 0 and tostring(fishHr) or "--")
-            _sovTimeLbl.Text = "Running: " .. mins .. "m"
-        end
-    end
+local function pointInsideGui(pos, gui)
+	local p, s = gui.AbsolutePosition, gui.AbsoluteSize
+	return pos.X >= p.X and pos.X <= p.X + s.X and pos.Y >= p.Y and pos.Y <= p.Y + s.Y
+end
+UserInputService.InputBegan:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+	for optionsFrame, entry in pairs(OpenDropdowns) do
+		if optionsFrame.Visible and not pointInsideGui(input.Position, optionsFrame) and not pointInsideGui(input.Position, entry.trigger) then
+			entry.close()
+		end
+	end
 end)
 
--- Auto-show/hide based on active features
-task.spawn(function()
-    while true do
-        task.wait(3)
-        local td = GetToggles()
-        local anyActive = (td.AutoFarmLevel and td.AutoFarmLevel.Active)
-                       or (td.AutoFishMerchant and td.AutoFishMerchant.Active)
-        if anyActive then StatsOverlay.Show() else StatsOverlay.Hide() end
-    end
-end)
+function Library.ComponentFactory:CreateDropdown(opts)
+	opts = opts or {}
+	local options = opts.Options or {}
+	local selected = opts.Default or options[1]
+	local open = false
+	local hasDesc = opts.Description and opts.Description ~= ""
 
--- Export hooks for modules to call
-_G._GBO_AddEXP  = function(n) StatsOverlay.AddEXP(n) end
-_G._GBO_AddFish = function(n) StatsOverlay.AddFish(n) end
+	local Holder = card(self.Page, hasDesc and 62 or 52)
+	local Label = Utility.Create("TextLabel", { Size = UDim2.new(0.5, 0, 0, 18), BackgroundTransparency = 1, Text = opts.Title or "Dropdown", Font = hasDesc and FONT_BOLD or FONT, TextSize = hasDesc and 14 or 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = Holder })
+	bindTheme(Label, "TextColor3", "Text")
+	if hasDesc then
+		local DescLabel = Utility.Create("TextLabel", {
+			Size = UDim2.new(0.5, 0, 0, 15), Position = UDim2.fromOffset(0, 19), BackgroundTransparency = 1,
+			Text = opts.Description, Font = FONT, TextSize = 12, TextTransparency = 0.15, TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left, Parent = Holder,
+		})
+		bindTheme(DescLabel, "TextColor3", "MutedText")
+	else
+		Label.Size = UDim2.new(0.5, 0, 1, 0)
+	end
 
-GBO.StatsOverlay = StatsOverlay
+	local SelectBtn = Utility.Create("TextButton", { Size = UDim2.fromOffset(170, 30), Position = UDim2.new(1, -170, 0.5, -15), AutoButtonColor = false, Font = FONT, Text = "  " .. tostring(selected), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = Holder }, { Utility.Corner(7) })
+	bindTheme(SelectBtn, "BackgroundColor3", "PanelLight")
+	bindTheme(SelectBtn, "TextColor3", "Text")
 
--- =====================================================================
--- 09 · MYTHIC CHEST LOG
--- Tracks time since last Mythic Chest event. No spam logging.
--- Hook: call GBO.MythicLog.OnChest() when a mythic chest is received.
--- =====================================================================
-local MythicLog = {}
-MythicLog._lastChestTick = nil
-MythicLog._startTick     = tick()
-MythicLog._count         = 0
+	-- Chevron — previously nothing distinguished this from a plain button.
+	local ChevronHolder = Utility.Create("Frame", { Size = UDim2.fromOffset(10, 10), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -9, 0.5, 0), BackgroundTransparency = 1, Parent = SelectBtn })
+	local function buildDropdownChevron()
+		local Icon = Utility.Create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = ChevronHolder })
+		Utility.Create("Frame", {
+			Size = UDim2.fromOffset(6, 1.2), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.28, 0.4), Rotation = 45, BackgroundColor3 = Theme.MutedText,
+		}, { Utility.Corner(1) }).Parent = Icon
+		Utility.Create("Frame", {
+			Size = UDim2.fromOffset(6, 1.2), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.72, 0.4), Rotation = -45, BackgroundColor3 = Theme.MutedText,
+		}, { Utility.Corner(1) }).Parent = Icon
+		return Icon
+	end
+	local ChevronIcon = buildDropdownChevron()
 
--- HUD card (bottom-right, above stats overlay)
-local _mlFrame = NEW("Frame", {
-    Size=UDim2.new(0,210,0,56), Position=UDim2.new(1,-222,1,-170),
-    BackgroundColor3=BG2, BorderSizePixel=0, ZIndex=300, Visible=true
-}, ExtGui)
-CORNER(10, _mlFrame); STROKE(AMBER, 1.2, 0.35, _mlFrame)
+	local OptionsFrame = Utility.Create("Frame", { Size = UDim2.fromOffset(170, #options * 28), Position = UDim2.new(1, -170, 1, 4), ClipsDescendants = true, Visible = false, ZIndex = 5, Parent = Holder }, { Utility.Corner(7), Utility.Stroke(Theme.Stroke, 1, 0.85) })
+	bindTheme(OptionsFrame, "BackgroundColor3", "PanelLight")
+	Utility.Create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Parent = OptionsFrame })
 
-NEW("TextLabel", {Text="◈ MYTHIC CHEST", Size=UDim2.new(1,-10,0,14), Position=UDim2.new(0,10,0,6),
-    BackgroundTransparency=1, TextColor3=AMBER, Font=Enum.Font.GothamBold, TextSize=9,
-    TextXAlignment=Enum.TextXAlignment.Left, ZIndex=301}, _mlFrame)
-local _mlTimeLbl = NEW("TextLabel", {Text="Waiting for data...", Size=UDim2.new(1,-10,0,16),
-    Position=UDim2.new(0,10,0,22), BackgroundTransparency=1, TextColor3=TEXT1,
-    Font=Enum.Font.GothamBold, TextSize=11, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=301}, _mlFrame)
-local _mlCntLbl  = NEW("TextLabel", {Text="", Size=UDim2.new(1,-10,0,12),
-    Position=UDim2.new(0,10,0,40), BackgroundTransparency=1, TextColor3=TEXT3,
-    Font=Enum.Font.Gotham, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=301}, _mlFrame)
+	for i, opt in ipairs(options) do
+		local OptBtn = Utility.Create("TextButton", { Size = UDim2.new(1, 0, 0, 28), AutoButtonColor = false, Font = FONT, Text = "  " .. tostring(opt), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6, LayoutOrder = i, Parent = OptionsFrame })
+		bindTheme(OptBtn, "BackgroundColor3", "PanelLight")
+		bindTheme(OptBtn, "TextColor3", "MutedText")
+		Utility.AddHoverDarken(OptBtn, 0.12)
+		OptBtn.MouseButton1Click:Connect(function()
+			selected = opt
+			SelectBtn.Text = "  " .. tostring(opt)
+			open = false
+			OptionsFrame.Visible = false
+			Holder.ZIndex = 1
+			Utility.Tween(ChevronIcon, { Rotation = 0 }, 0.15)
+			if opts.Callback then task.spawn(opts.Callback, opt) end
+		end)
+	end
+	-- Under Sibling ZIndexBehavior, a nested child's ZIndex only outranks
+	-- ITS OWN siblings — it can't draw over an unrelated card lower in the
+	-- list unless that card's *container* (Holder) also has a higher
+	-- ZIndex than the other row cards. That's what was causing the popup
+	-- to render behind the next row instead of over it.
+	SelectBtn.MouseButton1Click:Connect(function()
+		open = not open
+		OptionsFrame.Visible = open
+		Holder.ZIndex = open and 10 or 1
+		Utility.Tween(ChevronIcon, { Rotation = open and 180 or 0 }, 0.15)
+	end)
 
-function MythicLog.OnChest()
-    MythicLog._lastChestTick = tick()
-    MythicLog._count += 1
-    Toast("MYTHIC CHEST received! (#" .. MythicLog._count .. ")", AMBER, "◈")
+	-- Click-outside-to-close, via the one shared global listener below
+	-- rather than each dropdown adding its own permanent InputBegan hook.
+	registerOpenDropdown(OptionsFrame, SelectBtn, function()
+		open = false
+		OptionsFrame.Visible = false
+		Holder.ZIndex = 1
+		Utility.Tween(ChevronIcon, { Rotation = 0 }, 0.15)
+	end)
+
+	registerSearch(self.Window, opts.Title or "", function() Utility.FlashHighlight(Holder, Theme.Accent, 10) end)
+
+	return { Instance = Holder, Get = function() return selected end }
 end
 
--- Update loop
-task.spawn(function()
-    while _mlFrame and _mlFrame.Parent do
-        task.wait(15)
-        local now = tick()
-        if MythicLog._lastChestTick then
-            local ago = math.floor((now - MythicLog._lastChestTick) / 60)
-            _mlTimeLbl.Text = "Last: " .. ago .. "m ago"
-            _mlTimeLbl.TextColor3 = ago < 30 and GREEN or ago < 60 and AMBER or RED
-        else
-            local sinceStart = math.floor((now - MythicLog._startTick) / 60)
-            _mlTimeLbl.Text = "None yet (" .. sinceStart .. "m since start)"
-            _mlTimeLbl.TextColor3 = TEXT2
-        end
-        _mlCntLbl.Text = "Total this session: " .. MythicLog._count
-    end
-end)
+-- Free-text input row. opts: { Title, Description, Placeholder, Default,
+-- Numeric (bool — rejects non-numbers on blur), Callback(text) }
+function Library.ComponentFactory:CreateTextbox(opts)
+	opts = opts or {}
+	local hasDesc = opts.Description and opts.Description ~= ""
+	local Holder = card(self.Page, hasDesc and 62 or 52)
+	buildLabelBlock(Holder, opts.Title or "Input", opts.Description, 190)
 
--- Export hook
-_G._GBO_MythicChest = function() MythicLog.OnChest() end
+	local Box = Utility.Create("TextBox", {
+		Size = UDim2.fromOffset(170, 30), Position = UDim2.new(1, -170, 0.5, -15),
+		Text = tostring(opts.Default or ""), PlaceholderText = opts.Placeholder or "",
+		Font = FONT, TextSize = 12, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = Holder,
+	}, { Utility.Corner(7), Utility.Padding(8) })
+	bindTheme(Box, "BackgroundColor3", "PanelLight")
+	bindTheme(Box, "TextColor3", "Text")
+	bindTheme(Box, "PlaceholderColor3", "MutedText")
 
-GBO.MythicLog = MythicLog
+	-- Focus highlight — previously nothing showed which field currently has
+	-- focus, easy to lose track of when a row has both a description and
+	-- an input right next to each other.
+	local BoxStroke = Utility.Stroke(Theme.AccentMuted, 1.3, 1)
+	BoxStroke.Parent = Box
+	Box.Focused:Connect(function() Utility.Tween(BoxStroke, { Transparency = 0.3 }, 0.15) end)
+	Box.FocusLost:Connect(function() Utility.Tween(BoxStroke, { Transparency = 1 }, 0.2) end)
 
--- =====================================================================
--- 10 · LEVEL XP PROGRESS BAR
--- Reads Stats from ReplicatedStorage (same pattern as main hub).
--- Shows realtime XP bar in a small overlay card.
--- =====================================================================
-local XPBar = {}
-XPBar._level = 0; XPBar._xp = 0; XPBar._xpMax = 100
+	Box.FocusLost:Connect(function()
+		if opts.Numeric then
+			local n = tonumber(Box.Text)
+			if not n then
+				Box.Text = tostring(opts.Default or 0)
+				return
+			end
+			Box.Text = tostring(n)
+		end
+		if opts.Callback then task.spawn(opts.Callback, Box.Text) end
+	end)
 
--- Level/XP tables (example — adjust to match your game)
-local XP_TABLE = {}
-for i = 1, 700 do XP_TABLE[i] = math.floor(100 * (1.08 ^ i)) end
+	registerSearch(self.Window, opts.Title or "", function() Utility.FlashHighlight(Holder, Theme.Accent, 10) end)
 
-local function _getXPNeeded(level)
-    return XP_TABLE[level] or math.floor(100 * (1.08 ^ level))
+	return { Instance = Holder, Get = function() return Box.Text end, Set = function(v) Box.Text = tostring(v) end }
 end
 
-local _xpFrame = NEW("Frame", {
-    Size=UDim2.new(0,210,0,62), Position=UDim2.new(1,-222,1,-106),
-    BackgroundColor3=BG2, BorderSizePixel=0, ZIndex=300
-}, ExtGui)
-CORNER(10, _xpFrame); STROKE(GREEN, 1.2, 0.35, _xpFrame)
+-- Keybind picker: click the pill, then press any key to bind it (Esc
+-- cancels). Only listens for input while actively "capturing" a key press —
+-- no permanent global listener, so having many keybinds costs nothing when
+-- idle. Note: this only lets the user *pick* a key and hands it back via
+-- Callback/Get — actually reacting to that key being pressed during
+-- gameplay is up to your own game-logic script, same as any other setting.
+-- opts: { Title, Description, Default (Enum.KeyCode), Callback(Enum.KeyCode) }
+function Library.ComponentFactory:CreateKeybind(opts)
+	opts = opts or {}
+	local hasDesc = opts.Description and opts.Description ~= ""
+	local Holder = card(self.Page, hasDesc and 62 or 52)
+	buildLabelBlock(Holder, opts.Title or "Keybind", opts.Description, 130)
 
-NEW("TextLabel", {Text="◉ LEVEL PROGRESS", Size=UDim2.new(1,-10,0,14), Position=UDim2.new(0,10,0,5),
-    BackgroundTransparency=1, TextColor3=GREEN, Font=Enum.Font.GothamBold, TextSize=9,
-    TextXAlignment=Enum.TextXAlignment.Left, ZIndex=301}, _xpFrame)
-local _xpLvlLbl = NEW("TextLabel", {Text="Level --", Size=UDim2.new(1,-10,0,16), Position=UDim2.new(0,10,0,20),
-    BackgroundTransparency=1, TextColor3=TEXT1, Font=Enum.Font.GothamBold, TextSize=12,
-    TextXAlignment=Enum.TextXAlignment.Left, ZIndex=301}, _xpFrame)
-local _xpTrack = NEW("Frame", {Size=UDim2.new(1,-20,0,6), Position=UDim2.new(0,10,0,40),
-    BackgroundColor3=BG5, BorderSizePixel=0, ZIndex=301}, _xpFrame); CORNER(3, _xpTrack)
-local _xpFill  = NEW("Frame", {Size=UDim2.new(0,0,1,0), BackgroundColor3=GREEN, BorderSizePixel=0, ZIndex=302}, _xpTrack); CORNER(3, _xpFill)
-local _xpGrad  = Instance.new("UIGradient")
-_xpGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, C(30,180,100)), ColorSequenceKeypoint.new(1, C(85,255,175))})
-_xpGrad.Parent = _xpFill
-local _xpPctLbl = NEW("TextLabel", {Text="0%", Size=UDim2.new(0,40,0,12), Position=UDim2.new(1,-44,0,50),
-    BackgroundTransparency=1, TextColor3=TEXT3, Font=Enum.Font.GothamBold, TextSize=8,
-    TextXAlignment=Enum.TextXAlignment.Right, ZIndex=301}, _xpFrame)
+	local currentKey = opts.Default
+	local listening = false
 
-function XPBar.Update(level, xp)
-    if not level or not xp then return end
-    XPBar._level = level; XPBar._xp = xp; XPBar._xpMax = _getXPNeeded(level)
-    local pct = math.clamp(xp / math.max(1, XPBar._xpMax), 0, 1)
-    _xpLvlLbl.Text = "Level " .. level .. "  ·  " .. tostring(xp) .. " XP"
-    TWEEN(_xpFill, 0.5, {Size=UDim2.new(pct, 0, 1, 0)})
-    _xpPctLbl.Text = math.floor(pct * 100) .. "%"
+	local KeyBtn = Utility.Create("TextButton", {
+		Size = UDim2.fromOffset(110, 30), Position = UDim2.new(1, -110, 0.5, -15), AutoButtonColor = false,
+		Font = FONT_BOLD, TextSize = 12, Text = currentKey and currentKey.Name or "None", Parent = Holder,
+	}, { Utility.Corner(7) })
+	bindTheme(KeyBtn, "BackgroundColor3", "PanelLight")
+	bindTheme(KeyBtn, "TextColor3", "Text")
+	Utility.AddHoverDarken(KeyBtn, 0.1, 7)
+
+	local KeyBtnStroke = Utility.Stroke(Theme.AccentMuted, 1.3, 1)
+	KeyBtnStroke.Parent = KeyBtn
+	local listeningPulse = false
+
+	KeyBtn.MouseButton1Click:Connect(function()
+		if listening then return end
+		listening = true
+		KeyBtn.Text = "..."
+		-- Pulsing border while waiting for a key press — much easier to
+		-- notice than a lone "..." text change buried in a busy panel.
+		listeningPulse = true
+		task.spawn(function()
+			while listeningPulse do
+				local t1 = Utility.Tween(KeyBtnStroke, { Transparency = 0.2 }, 0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+				t1.Completed:Wait()
+				if not listeningPulse then break end
+				local t2 = Utility.Tween(KeyBtnStroke, { Transparency = 0.8 }, 0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+				t2.Completed:Wait()
+			end
+			Utility.Tween(KeyBtnStroke, { Transparency = 1 }, 0.15)
+		end)
+		local conn
+		conn = UserInputService.InputBegan:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+			listening = false
+			listeningPulse = false
+			conn:Disconnect()
+			if input.KeyCode == Enum.KeyCode.Escape then
+				KeyBtn.Text = currentKey and currentKey.Name or "None"
+				return
+			end
+			currentKey = input.KeyCode
+			KeyBtn.Text = currentKey.Name
+			if opts.Callback then task.spawn(opts.Callback, currentKey) end
+		end)
+	end)
+
+	registerSearch(self.Window, opts.Title or "", function() Utility.FlashHighlight(Holder, Theme.Accent, 10) end)
+
+	return { Instance = Holder, Get = function() return currentKey end }
 end
 
--- Poll stats from ReplicatedStorage every 10s
-task.spawn(function()
-    local RS = game:GetService("ReplicatedStorage")
-    while _xpFrame and _xpFrame.Parent do
-        task.wait(10)
-        pcall(function()
-            local stats = RS:FindFirstChild("Stats" .. LocalPlayer.Name)
-            if not stats then return end
-            local lv  = stats:FindFirstChild("Level")
-            local xpV = stats:FindFirstChild("EXP")
-            if lv and xpV then XPBar.Update(lv.Value, xpV.Value) end
-        end)
-    end
-end)
+-- Multi-select: like Dropdown, but several options can stay picked at once.
+-- The button shows a summary ("2 selected") instead of a single value.
+-- opts: { Title, Description, Options, Default (array of picked strings), Callback(array) }
+function Library.ComponentFactory:CreateMultiSelect(opts)
+	opts = opts or {}
+	local options = opts.Options or {}
+	local selected = {}
+	for _, v in ipairs(opts.Default or {}) do selected[v] = true end
+	local open = false
+	local hasDesc = opts.Description and opts.Description ~= ""
 
-_G._GBO_XPBar = XPBar
+	local Holder = card(self.Page, hasDesc and 62 or 52)
+	buildLabelBlock(Holder, opts.Title or "Select", opts.Description, 190)
 
-GBO.XPBar = XPBar
+	local function summaryText()
+		local list, count = {}, 0
+		for k in pairs(selected) do table.insert(list, k); count = count + 1 end
+		if count == 0 then return "None" end
+		if count == 1 then return list[1] end
+		return count .. " selected"
+	end
 
--- =====================================================================
--- 11 · VISUAL EFFECTS
--- A) Ripple  — call GBO.FX.Ripple(button)  to wire it up
--- B) Cursor trail — global mouse trail in ExtGui
--- C) Card glow — GBO.FX.CardGlow(frame, on, accentColor)
--- =====================================================================
-local FX = {}
+	local SelectBtn = Utility.Create("TextButton", { Size = UDim2.fromOffset(170, 30), Position = UDim2.new(1, -170, 0.5, -15), AutoButtonColor = false, Font = FONT, Text = "  " .. summaryText(), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = Holder }, { Utility.Corner(7) })
+	bindTheme(SelectBtn, "BackgroundColor3", "PanelLight")
+	bindTheme(SelectBtn, "TextColor3", "Text")
 
--- A) RIPPLE ───────────────────────────────────────────────────────
-function FX.Ripple(btn, col)
-    col = col or C(255,255,255)
-    btn.MouseButton1Click:Connect(function()
-        local mouse = LocalPlayer:GetMouse()
-        local ap = btn.AbsolutePosition
-        local localX = mouse.X - ap.X
-        local localY = mouse.Y - ap.Y
-        local sz = math.max(btn.AbsoluteSize.X, btn.AbsoluteSize.Y) * 2.2
+	-- Chevron, matching Dropdown for visual consistency between the two
+	-- "opens a popup list" controls.
+	local ChevronHolder = Utility.Create("Frame", { Size = UDim2.fromOffset(10, 10), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -9, 0.5, 0), BackgroundTransparency = 1, Parent = SelectBtn })
+	local ChevronIcon = Utility.Create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = ChevronHolder })
+	Utility.Create("Frame", {
+		Size = UDim2.fromOffset(6, 1.2), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.28, 0.4), Rotation = 45, BackgroundColor3 = Theme.MutedText,
+	}, { Utility.Corner(1) }).Parent = ChevronIcon
+	Utility.Create("Frame", {
+		Size = UDim2.fromOffset(6, 1.2), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.72, 0.4), Rotation = -45, BackgroundColor3 = Theme.MutedText,
+	}, { Utility.Corner(1) }).Parent = ChevronIcon
 
-        local ripple = NEW("Frame", {
-            Size=UDim2.new(0,6,0,6),
-            Position=UDim2.new(0, localX-3, 0, localY-3),
-            BackgroundColor3=col,
-            BackgroundTransparency=0.55,
-            BorderSizePixel=0,
-            ZIndex=btn.ZIndex+1,
-            ClipsDescendants=false
-        }, btn)
-        CORNER(math.huge, ripple)
-        TweenService:Create(ripple, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            Size=UDim2.new(0,sz,0,sz),
-            Position=UDim2.new(0,localX-sz/2,0,localY-sz/2),
-            BackgroundTransparency=1
-        }):Play()
-        task.delay(0.5, function() pcall(function() ripple:Destroy() end) end)
-    end)
+	local OptionsFrame = Utility.Create("Frame", { Size = UDim2.fromOffset(170, #options * 28), Position = UDim2.new(1, -170, 1, 4), ClipsDescendants = true, Visible = false, ZIndex = 5, Parent = Holder }, { Utility.Corner(7), Utility.Stroke(Theme.Stroke, 1, 0.85) })
+	bindTheme(OptionsFrame, "BackgroundColor3", "PanelLight")
+	Utility.Create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Parent = OptionsFrame })
+
+	local function fireCallback()
+		if not opts.Callback then return end
+		local list = {}
+		for k in pairs(selected) do table.insert(list, k) end
+		task.spawn(opts.Callback, list)
+	end
+
+	for i, opt in ipairs(options) do
+		local OptBtn = Utility.Create("TextButton", { Size = UDim2.new(1, 0, 0, 28), AutoButtonColor = false, Font = FONT, Text = "  " .. tostring(opt), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6, LayoutOrder = i, Parent = OptionsFrame })
+		bindTheme(OptBtn, "BackgroundColor3", "PanelLight")
+		bindTheme(OptBtn, "TextColor3", "MutedText")
+		Utility.AddHoverDarken(OptBtn, 0.12)
+		local Check = Utility.Create("Frame", {
+			Size = UDim2.fromOffset(14, 14), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0),
+			BackgroundTransparency = selected[opt] and 0 or 1, ZIndex = 6, Parent = OptBtn,
+		}, { Utility.Corner(4) })
+		bindTheme(Check, "BackgroundColor3", "AccentMuted")
+		OptBtn.MouseButton1Click:Connect(function()
+			if selected[opt] then selected[opt] = nil else selected[opt] = true end
+			Check.BackgroundTransparency = selected[opt] and 0 or 1
+			SelectBtn.Text = "  " .. summaryText()
+			fireCallback()
+		end)
+	end
+	SelectBtn.MouseButton1Click:Connect(function()
+		open = not open
+		OptionsFrame.Visible = open
+		Holder.ZIndex = open and 10 or 1
+		Utility.Tween(ChevronIcon, { Rotation = open and 180 or 0 }, 0.15)
+	end)
+	registerOpenDropdown(OptionsFrame, SelectBtn, function()
+		open = false
+		OptionsFrame.Visible = false
+		Holder.ZIndex = 1
+		Utility.Tween(ChevronIcon, { Rotation = 0 }, 0.15)
+	end)
+
+	registerSearch(self.Window, opts.Title or "", function() Utility.FlashHighlight(Holder, Theme.Accent, 10) end)
+
+	return {
+		Instance = Holder,
+		Get = function()
+			local list = {}
+			for k in pairs(selected) do table.insert(list, k) end
+			return list
+		end,
+	}
 end
 
--- B) CURSOR TRAIL ─────────────────────────────────────────────────
-local _trail = {}
-local _trailActive = true
-local _trailGui = NEW("Frame", {Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
-    ZIndex=1, BorderSizePixel=0}, ExtGui)
+function Library.ComponentFactory:CreateButton(opts)
+	opts = opts or {}
+	local isSecondary = opts.Style == "secondary"
 
-task.spawn(function()
-    local mouse = LocalPlayer:GetMouse()
-    while true do
-        task.wait(0.03)
-        if not _trailActive then continue end
-        local dot = NEW("Frame", {
-            Size=UDim2.new(0,6,0,6),
-            Position=UDim2.new(0,mouse.X-3,0,mouse.Y-3),
-            BackgroundColor3=GOLD2,
-            BackgroundTransparency=0.5,
-            BorderSizePixel=0,
-            ZIndex=2
-        }, _trailGui)
-        CORNER(3, dot)
-        TWEEN(dot, 0.35, {BackgroundTransparency=1, Size=UDim2.new(0,2,0,2)})
-        task.delay(0.36, function() pcall(function() dot:Destroy() end) end)
-        table.insert(_trail, dot)
-        if #_trail > 12 then table.remove(_trail, 1) end
-    end
-end)
+	local Btn = Utility.Create("TextButton", {
+		Size = UDim2.new(1, 0, 0, 40), AutoButtonColor = false, Font = FONT_BOLD,
+		Text = "", TextSize = 13, Parent = self.Page,
+	}, { Utility.Corner(8), Utility.Stroke(Theme.Stroke, 1, 0.92) })
 
-function FX.SetTrailEnabled(on) _trailActive = on end
+	if isSecondary then
+		bindTheme(Btn, "BackgroundColor3", "PanelLight")
+	else
+		bindTheme(Btn, "BackgroundColor3", "Accent")
+	end
 
--- C) CARD GLOW ────────────────────────────────────────────────────
-function FX.CardGlow(frame, active, accentColor)
-    accentColor = accentColor or GOLD2
-    local existing = frame:FindFirstChildWhichIsA("UIStroke")
-    if not existing then
-        existing = STROKE(accentColor, 1.5, 0.8, frame)
-    end
-    if active then
-        TWEEN(existing, 0.3, {Color=accentColor, Transparency=0.15, Thickness=1.8})
-        -- Pulse animation
-        local conn; conn = task.spawn(function()
-            while frame and frame.Parent and active do
-                TWEEN(existing, 1.2, {Transparency=0.05})
-                task.wait(1.3)
-                TWEEN(existing, 1.2, {Transparency=0.3})
-                task.wait(1.3)
-            end
-        end)
-        frame:SetAttribute("GlowTask", true)
-    else
-        TWEEN(existing, 0.3, {Color=C(35,32,60), Transparency=0.7, Thickness=1})
-        frame:SetAttribute("GlowTask", false)
-    end
+	local hasIcon = opts.Icon ~= nil
+	local Label = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, hasIcon and -28 or 0, 1, 0), Position = UDim2.fromOffset(hasIcon and 24 or 0, 0),
+		BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 13, Text = opts.Title or "Button",
+		TextColor3 = isSecondary and (opts.Danger and Theme.Danger or Theme.Text) or Theme.Background,
+		Parent = Btn,
+	})
+	if isSecondary then
+		bindTheme(Label, "TextColor3", opts.Danger and "Danger" or "Text")
+	else
+		bindTheme(Label, "TextColor3", "Background")
+	end
+
+	if hasIcon then
+		local IconHolder = Utility.Create("Frame", { Size = UDim2.fromOffset(16, 16), AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 16, 0.5, 0), BackgroundTransparency = 1, Parent = Btn })
+		local iconColor = isSecondary and (opts.Danger and Theme.Danger or Theme.Text) or Theme.Background
+		local Glyph = opts.Icon(16, iconColor)
+		Glyph.Size = UDim2.fromScale(1, 1)
+		Glyph.Parent = IconHolder
+	end
+
+	-- Hover feedback via overlay (never fights with refreshTheme, no matter
+	-- what color the user customizes Accent/Panel to — see Utility.AddHoverDarken).
+	Utility.AddHoverDarken(Btn, isSecondary and 0.08 or 0.15, 8)
+
+	Btn.MouseButton1Click:Connect(function()
+		-- Press feedback via a throwaway overlay (Transparency only) instead
+		-- of resizing the button — Btn sits directly in the section's
+		-- UIListLayout, so shrinking/growing its own Size would visibly
+		-- shove every row below it up and back down on every click. Same
+		-- bug class as the old hover-scale-card idea ruled out earlier.
+		Utility.FlashHighlight(Btn, Color3.new(0, 0, 0), 8)
+		if opts.Callback then task.spawn(opts.Callback) end
+	end)
+	return { Instance = Btn }
 end
 
--- Export for main hub modules to call
-_G._GBO_CardGlow = FX.CardGlow
+-- Dashboard-style stat card: big number/value with a small label under it.
+-- Numeric values count up from their current text on :Set(), reusing
+-- Utility.Tween so it automatically snaps instantly under Low quality
+-- instead of animating a NumberValue every frame.
+function Library.ComponentFactory:CreateStat(opts)
+	opts = opts or {}
+	local hasSpark = opts.Sparkline == true
+	local Holder = card(self.Page, hasSpark and 86 or 64)
 
-GBO.FX = FX
+	local ValueLabel = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1, Font = FONT_MONO, TextSize = 20,
+		TextXAlignment = Enum.TextXAlignment.Left, Text = tostring(opts.Value or 0), Parent = Holder,
+	})
+	bindTheme(ValueLabel, "TextColor3", "Accent")
 
--- =====================================================================
--- 12 · MULTI-PROFILE CONFIG  +  IMPORT / EXPORT
--- ── Multi-Profile ──────────────────────────────────────────────────
--- Profiles saved to gbo_multiprofile.json
--- {profiles: {name: {toggleStates}}, active: "name"}
--- ── Import/Export ──────────────────────────────────────────────────
--- Encodes all toggle states to base64. Paste to restore.
--- =====================================================================
-local MultiConfig = {}
-local MP_FILE = "gbo_multiprofile.json"
-MultiConfig._data = ReadJSON(MP_FILE) or {profiles={}, active=nil}
+	local Label = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 26), BackgroundTransparency = 1,
+		Font = FONT, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Text = opts.Title or "Stat", Parent = Holder,
+	})
+	bindTheme(Label, "TextColor3", "MutedText")
 
--- ── Base64 encode/decode (pure Lua) ──────────────────────────────
-local B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-local function B64Encode(data)
-    local result, padding = {}, 0
-    local len = #data
-    for i = 1, len, 3 do
-        local b1 = data:byte(i)
-        local b2 = i+1 <= len and data:byte(i+1) or 0
-        local b3 = i+2 <= len and data:byte(i+2) or 0
-        local c1 = math.floor(b1 / 4)
-        local c2 = (b1 % 4) * 16 + math.floor(b2 / 16)
-        local c3 = (b2 % 16) * 4  + math.floor(b3 / 64)
-        local c4 = b3 % 64
-        table.insert(result, B64_CHARS:sub(c1+1,c1+1))
-        table.insert(result, B64_CHARS:sub(c2+1,c2+1))
-        table.insert(result, (i+1<=len) and B64_CHARS:sub(c3+1,c3+1) or "=")
-        table.insert(result, (i+2<=len) and B64_CHARS:sub(c4+1,c4+1) or "=")
-    end
-    return table.concat(result)
+	-- Optional mini sparkline: a row of thin bars, not a connected line —
+	-- much cheaper in Roblox UI (no per-segment rotation/length trig needed,
+	-- just Size.Y per bar) — shows the last N values at a glance.
+	local SparkBars
+	local SparkHistory = {}
+	local SPARK_COUNT = opts.SparklinePoints or 12
+	if hasSpark then
+		local SparkHolder = Utility.Create("Frame", {
+			Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 48), BackgroundTransparency = 1, Parent = Holder,
+		})
+		SparkBars = {}
+		for i = 1, SPARK_COUNT do
+			local Bar = Utility.Create("Frame", {
+				AnchorPoint = Vector2.new(0, 1), Position = UDim2.new((i - 1) / SPARK_COUNT, 1, 1, 0),
+				Size = UDim2.new(1 / SPARK_COUNT, -2, 0, 3), BackgroundTransparency = 0.35, Parent = SparkHolder,
+			}, { Utility.Corner(1) })
+			bindTheme(Bar, "BackgroundColor3", "AccentMuted")
+			SparkBars[i] = Bar
+		end
+	end
+	local function pushSparkPoint(value)
+		if not SparkBars then return end
+		table.insert(SparkHistory, value)
+		if #SparkHistory > SPARK_COUNT then table.remove(SparkHistory, 1) end
+		local maxVal = 1
+		for _, v in ipairs(SparkHistory) do if v > maxVal then maxVal = v end end
+		for i, Bar in ipairs(SparkBars) do
+			local v = SparkHistory[i]
+			local h = v and math.max(3, (v / maxVal) * 14) or 0
+			Utility.Tween(Bar, { Size = UDim2.new(1 / SPARK_COUNT, -2, 0, h) }, 0.25)
+		end
+	end
+
+	local api = { Instance = Holder, ValueLabel = ValueLabel }
+
+	function api:Set(value)
+		if type(value) == "number" then
+			local counter = Instance.new("NumberValue")
+			counter.Value = tonumber(ValueLabel.Text) or 0
+			counter.Changed:Connect(function(v) ValueLabel.Text = tostring(math.floor(v + 0.5)) end)
+			Utility.Tween(counter, { Value = value }, 0.5)
+			task.delay(0.55, function() counter:Destroy() end)
+			pushSparkPoint(value)
+			-- Threshold coloring (opts.DangerIf): flags an unhealthy value
+			-- instead of the number always looking the same regardless of
+			-- state. Note: this tweens the same property bindTheme manages
+			-- for the default case, same trade-off as the toggle/slider
+			-- controls elsewhere — acceptable since threshold flips are rare,
+			-- deliberate state changes, not a hover flicker.
+			if opts.DangerIf then
+				Utility.Tween(ValueLabel, { TextColor3 = opts.DangerIf(value) and Theme.Danger or Theme.Accent }, 0.2)
+			end
+		else
+			ValueLabel.Text = tostring(value)
+		end
+	end
+
+	if type(opts.Value) == "number" and opts.Value > 0 then
+		ValueLabel.Text = "0"
+		api:Set(opts.Value)
+	elseif hasSpark then
+		pushSparkPoint(opts.Value or 0)
+	end
+
+	return api
 end
 
-local function B64Decode(data)
-    data = data:gsub("[^"..B64_CHARS.."=]", "")
-    local result = {}
-    for i = 1, #data, 4 do
-        local s1 = B64_CHARS:find(data:sub(i,i), 1, true) or 1
-        local s2 = B64_CHARS:find(data:sub(i+1,i+1), 1, true) or 1
-        local s3 = data:sub(i+2,i+2) == "=" and 0 or (B64_CHARS:find(data:sub(i+2,i+2), 1, true) or 1)
-        local s4 = data:sub(i+3,i+3) == "=" and 0 or (B64_CHARS:find(data:sub(i+3,i+3), 1, true) or 1)
-        s1=s1-1;s2=s2-1;s3=s3-1;s4=s4-1
-        table.insert(result, string.char(s1*4 + math.floor(s2/16)))
-        if data:sub(i+2,i+2) ~= "=" then
-            table.insert(result, string.char((s2%16)*16 + math.floor(s3/4)))
-        end
-        if data:sub(i+3,i+3) ~= "=" then
-            table.insert(result, string.char((s3%4)*64 + s4))
-        end
-    end
-    return table.concat(result)
+-- Paint-style color picker row: a swatch button that opens the single
+-- shared modal (built once per Window in CreateWindow / OpenColorPicker).
+-- No more per-instance floating popups — fixes both the row-overlap bug
+-- and the click-through-blocking bug from the old cross-branch ZIndex hack.
+function Library.ComponentFactory:CreateColorPicker(opts)
+	opts = opts or {}
+	local role = opts.Role
+	local startColor = Theme[role]
+
+	local Holder = card(self.Page, 36)
+	Utility.Create("TextLabel", { Size = UDim2.new(1, -120, 1, 0), BackgroundTransparency = 1, Text = opts.Title or role, Font = FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = Holder })
+
+	local SwatchBtn = Utility.Create("TextButton", { Size = UDim2.fromOffset(70, 26), Position = UDim2.new(1, -70, 0.5, -13), AutoButtonColor = false, Text = "", BackgroundColor3 = startColor, Parent = Holder }, { Utility.Corner(6), Utility.Stroke(Theme.Stroke, 1, 0.8) })
+	Utility.AddHoverDarken(SwatchBtn, 0.1, 6)
+	local function contrastColor(c)
+		-- Perceived brightness (ITU-R BT.601) decides black-vs-white text —
+		-- previously hardcoded white, unreadable on light swatch colors
+		-- (e.g. the Azure/Emerald presets' lighter accent shades).
+		local brightness = c.R * 0.299 + c.G * 0.587 + c.B * 0.114
+		return brightness > 0.6 and Color3.new(0, 0, 0) or Color3.new(1, 1, 1)
+	end
+	local HexLabel = Utility.Create("TextLabel", {
+		Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = FONT, TextSize = 11,
+		Text = string.format("#%02X%02X%02X", math.floor(startColor.R * 255), math.floor(startColor.G * 255), math.floor(startColor.B * 255)),
+		TextColor3 = contrastColor(startColor), Parent = SwatchBtn,
+	})
+
+	SwatchBtn.MouseButton1Click:Connect(function()
+		self.Window:OpenColorPicker(opts.Title or role, Theme[role], function(newColor)
+			SwatchBtn.BackgroundColor3 = newColor
+			HexLabel.Text = string.format("#%02X%02X%02X", math.floor(newColor.R * 255 + 0.5), math.floor(newColor.G * 255 + 0.5), math.floor(newColor.B * 255 + 0.5))
+			HexLabel.TextColor3 = contrastColor(newColor)
+			Theme[role] = newColor
+			refreshTheme()
+			if opts.Callback then opts.Callback(newColor) end
+		end)
+	end)
+
+	return { Instance = Holder, Get = function() return Theme[role] end }
 end
 
-function MultiConfig.SnapshotToggles()
-    local td = GetToggles(); local snap = {}
-    for k, info in pairs(td) do
-        if type(info) == "table" then
-            snap[k] = info.Active or info.Value or false
-        end
-    end
-    return snap
+--====================================================
+-- BUILT-IN: SETTINGS > CUSTOM UI helper
+--====================================================
+--====================================================
+-- BUILT-IN: CONFIG MANAGER (save/load named .json profiles)
+-- Uses executor file functions (writefile/readfile/listfiles) when
+-- available, guarded by pcall so it never errors on environments
+-- without them. Wire opts.GetData / opts.OnLoad to your own settings
+-- table once your 12k-line config system is in place.
+--====================================================
+local CONFIG_FOLDER = "ZiliHubConfigs"
+
+local function configFileIOAvailable()
+	return typeof(writefile) == "function" and typeof(readfile) == "function" and typeof(isfile) == "function"
 end
 
-function MultiConfig.ApplySnapshot(snap)
-    local td = GetToggles()
-    for k, val in pairs(snap) do
-        local info = td[k]
-        if type(info) == "table" then
-            pcall(function()
-                if info.Callback then info.Callback(val) end
-                if info.Active ~= nil then info.Active = val end
-                if info.Value  ~= nil then info.Value  = val end
-                if info.Btn and info.Strk and info.Thumb then
-                    local col = info.AccentCol or GOLD2
-                    local dark = info.AccentDark or BG5
-                    TWEEN(info.Btn,  0.2, {BackgroundColor3= val and dark or BG5})
-                    TWEEN(info.Strk, 0.2, {Color=val and col or C(60,55,82), Transparency=val and 0 or 0.3})
-                    TWEEN(info.Thumb,0.2, {BackgroundColor3=val and col or C(60,55,82),
-                        Position=val and UDim2.new(1,-22,0.5,-9) or UDim2.new(0,4,0.5,-9)})
-                end
-            end)
-        end
-    end
+local function ensureConfigFolder()
+	if typeof(isfolder) == "function" and typeof(makefolder) == "function" then
+		if not isfolder(CONFIG_FOLDER) then
+			pcall(makefolder, CONFIG_FOLDER)
+		end
+	end
 end
 
-function MultiConfig.Save()
-    WriteJSON(MP_FILE, MultiConfig._data)
+local function listConfigNames()
+	local names = {}
+	if typeof(listfiles) ~= "function" then return names end
+	local ok, files = pcall(listfiles, CONFIG_FOLDER)
+	if ok and files then
+		for _, path in ipairs(files) do
+			local name = path:match("([^/\\]+)%.json$")
+			if name then table.insert(names, name) end
+		end
+	end
+	return names
 end
 
-function MultiConfig.CreateProfile(name)
-    if not name or name == "" then Toast("Enter a profile name", RED, "✕"); return end
-    MultiConfig._data.profiles[name] = MultiConfig.SnapshotToggles()
-    MultiConfig._data.active = name
-    MultiConfig.Save()
-    Toast("Profile saved: " .. name, GREEN, "✓")
+function Library:CreateConfigManager(ConfigSubTab, opts)
+	opts = opts or {}
+	local HttpService = game:GetService("HttpService")
+	ensureConfigFolder()
+
+	local Section = ConfigSubTab:CreateSection(L("Config"))
+
+	local NameHolder = card(Section.Page, 52)
+	Utility.Create("TextLabel", { Size = UDim2.new(0.4, 0, 1, 0), BackgroundTransparency = 1, Text = "Config name", Font = FONT, TextSize = 13, TextColor3 = Theme.Text, TextXAlignment = Enum.TextXAlignment.Left, Parent = NameHolder })
+	local NameBox = Utility.Create("TextBox", { Size = UDim2.fromOffset(180, 30), Position = UDim2.new(1, -180, 0.5, -15), Text = "", PlaceholderText = "e.g. default", Font = FONT, TextSize = 12, ClearTextOnFocus = false, Parent = NameHolder }, { Utility.Corner(7) })
+	bindTheme(NameBox, "BackgroundColor3", "PanelLight")
+	bindTheme(NameBox, "TextColor3", "Text")
+
+	local existing = listConfigNames()
+	local SelectHolder = Section:CreateDropdown({
+		Title = "Saved configs",
+		Options = #existing > 0 and existing or { "(none saved yet)" },
+		Default = existing[1] or "(none saved yet)",
+	})
+
+	if #existing == 0 then
+		local EmptyHint = Utility.Create("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1, Parent = Section.Page })
+		local EmptyIconHolder = Utility.Create("Frame", { Size = UDim2.fromOffset(16, 16), Position = UDim2.fromOffset(0, 2), BackgroundTransparency = 1, Parent = EmptyHint })
+		local EmptyGlyph = Icons.info(16, Theme.MutedText)
+		EmptyGlyph.Size = UDim2.fromScale(1, 1)
+		EmptyGlyph.Parent = EmptyIconHolder
+		local EmptyLabel = Utility.Create("TextLabel", {
+			Size = UDim2.new(1, -24, 0, 34), Position = UDim2.fromOffset(24, 0), BackgroundTransparency = 1, TextWrapped = true,
+			Text = "No configs saved yet — type a name above and hit Save to create your first one.",
+			Font = FONT, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = EmptyHint,
+		})
+		bindTheme(EmptyLabel, "TextColor3", "MutedText")
+	end
+
+	if not configFileIOAvailable() then
+		local Warn = Utility.Create("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, TextWrapped = true,
+			Text = "File saving isn't available in this environment (requires an executor with writefile/readfile).",
+			Font = FONT, TextSize = 11, TextColor3 = Theme.MutedText, Parent = Section.Page,
+		})
+	end
+
+	Section:CreateButton({
+		Title = "Save config",
+		Callback = function()
+			local name = NameBox.Text ~= "" and NameBox.Text or SelectHolder.Get()
+			if not configFileIOAvailable() or not name or name == "" or name == "(none saved yet)" then return end
+			local data = opts.GetData and opts.GetData() or {}
+			local ok, encoded = pcall(HttpService.JSONEncode, HttpService, data)
+			if ok then
+				pcall(writefile, CONFIG_FOLDER .. "/" .. name .. ".json", encoded)
+			end
+		end,
+	})
+
+	Section:CreateButton({
+		Title = "Load selected config",
+		Callback = function()
+			local name = SelectHolder.Get()
+			if not configFileIOAvailable() or not name or name == "(none saved yet)" then return end
+			local function doLoad()
+				local path = CONFIG_FOLDER .. "/" .. name .. ".json"
+				if not isfile(path) then return end
+				local ok, raw = pcall(readfile, path)
+				if not ok then return end
+				local ok2, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
+				if ok2 and opts.OnLoad then opts.OnLoad(decoded) end
+			end
+			local window = ConfigSubTab.Window
+			if window and window.Confirm then
+				window:Confirm({
+					Title = "Load \"" .. name .. "\"?", ConfirmText = "Load",
+					Message = "This overwrites your current settings with the saved config.",
+					OnConfirm = doLoad,
+				})
+			else
+				doLoad()
+			end
+		end,
+	})
+
+	return Section
 end
 
-function MultiConfig.LoadProfile(name)
-    local profile = MultiConfig._data.profiles[name]
-    if not profile then Toast("Profile not found: " .. name, RED, "✕"); return end
-    MultiConfig.ApplySnapshot(profile)
-    MultiConfig._data.active = name
-    MultiConfig.Save()
-    Toast("Profile loaded: " .. name, CYAN, "↺")
+-- Drop this into any tab/sub-tab, e.g.:
+--   local PerfTab = SettingsTab:CreateSubTab(L("Performance"))
+--   Window:ApplyPerformanceTab(PerfTab)
+function Library:ApplyPerformanceTab(PerfSubTab)
+	local Section = PerfSubTab:CreateSection(L("Performance"))
+
+	local StatusHolder = card(Section.Page, 58)
+	Utility.Create("TextLabel", {
+		Size = UDim2.new(0.6, 0, 0, 16), BackgroundTransparency = 1, Text = L("LiveFPS"),
+		Font = FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Theme.Text, Parent = StatusHolder,
+	})
+	local FPSLabel = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 22), Position = UDim2.fromOffset(0, 20), BackgroundTransparency = 1,
+		Text = "-- FPS  ·  High", Font = FONT_MONO, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, Parent = StatusHolder,
+	})
+	bindTheme(FPSLabel, "TextColor3", "Accent")
+
+	-- Only ticks while the row is actually on screen (Holder.Parent chain
+	-- visible) — updating Text less than every frame keeps TextService
+	-- measuring cost negligible even on huge hubs.
+	local alive = true
+	StatusHolder.AncestryChanged:Connect(function(_, parent) if not parent then alive = false end end)
+	task.spawn(function()
+		while alive do
+			FPSLabel.Text = string.format("%d FPS  ·  %s", math.floor(LiveFPS + 0.5), currentQuality())
+			task.wait(0.4)
+		end
+	end)
+
+	Section:CreateDropdown({
+		Title = L("QualityMode"),
+		Options = { "Auto", "High", "Balanced", "Low" },
+		Default = Quality.Mode,
+		Callback = function(choice) setQualityMode(choice) end,
+	})
+
+	local DescLabel = Utility.Create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, TextWrapped = true,
+		Text = L("QualityDesc"), Font = FONT, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, Parent = Section.Page,
+	})
+	bindTheme(DescLabel, "TextColor3", "MutedText")
+
+	return Section
 end
 
-function MultiConfig.DeleteProfile(name)
-    if not MultiConfig._data.profiles[name] then return end
-    MultiConfig._data.profiles[name] = nil
-    if MultiConfig._data.active == name then MultiConfig._data.active = nil end
-    MultiConfig.Save()
-    Toast("Profile deleted: " .. name, AMBER, "🗑")
+local THEME_PRESETS = {
+	{ Name = "Amber",   Accent = Color3.fromRGB(240, 180, 41), AccentDim = Color3.fromRGB(122, 92, 10),  AccentMuted = Color3.fromRGB(196, 168, 112), Background = Color3.fromRGB(15, 15, 17), Panel = Color3.fromRGB(23, 23, 26), PanelLight = Color3.fromRGB(32, 32, 36) },
+	{ Name = "Crimson", Accent = Color3.fromRGB(230, 70, 70),  AccentDim = Color3.fromRGB(110, 30, 30), AccentMuted = Color3.fromRGB(190, 120, 120), Background = Color3.fromRGB(16, 14, 15), Panel = Color3.fromRGB(24, 20, 21), PanelLight = Color3.fromRGB(34, 28, 29) },
+	{ Name = "Azure",   Accent = Color3.fromRGB(70, 150, 240), AccentDim = Color3.fromRGB(25, 60, 110), AccentMuted = Color3.fromRGB(120, 155, 200), Background = Color3.fromRGB(13, 15, 18), Panel = Color3.fromRGB(20, 23, 28), PanelLight = Color3.fromRGB(28, 32, 38) },
+	{ Name = "Emerald", Accent = Color3.fromRGB(70, 210, 140), AccentDim = Color3.fromRGB(25, 90, 60), AccentMuted = Color3.fromRGB(120, 180, 155), Background = Color3.fromRGB(13, 16, 15), Panel = Color3.fromRGB(19, 24, 22), PanelLight = Color3.fromRGB(27, 33, 30) },
+	{ Name = "Violet",  Accent = Color3.fromRGB(160, 110, 240), AccentDim = Color3.fromRGB(70, 45, 110), AccentMuted = Color3.fromRGB(165, 140, 200), Background = Color3.fromRGB(15, 14, 18), Panel = Color3.fromRGB(22, 21, 27), PanelLight = Color3.fromRGB(31, 29, 38) },
+}
+
+function Library:ApplyCustomUITab(CustomUISubTab, MainFrame, BackgroundImageInstance)
+	local PresetSection = CustomUISubTab:CreateSection(L("ThemePresets"))
+	local PresetHolder = card(PresetSection.Page, 58)
+	Utility.Create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 10),
+		VerticalAlignment = Enum.VerticalAlignment.Center, Parent = PresetHolder,
+	})
+	for _, preset in ipairs(THEME_PRESETS) do
+		local Swatch = Utility.Create("TextButton", {
+			Size = UDim2.fromOffset(30, 30), BackgroundColor3 = preset.Accent, Text = "", Parent = PresetHolder,
+		}, { Utility.Corner(15), Utility.Stroke(Color3.new(1, 1, 1), 1.3, 0.75) })
+		Utility.AddHoverDarken(Swatch, 0.15, 15)
+		Swatch.MouseButton1Click:Connect(function()
+			Theme.Accent, Theme.AccentDim, Theme.AccentMuted = preset.Accent, preset.AccentDim, preset.AccentMuted
+			Theme.Background, Theme.Panel, Theme.PanelLight = preset.Background, preset.Panel, preset.PanelLight
+			refreshTheme()
+		end)
+	end
+
+	local ColorSection = CustomUISubTab:CreateSection("Theme colors")
+	ColorSection:CreateColorPicker({ Title = L("Accent"), Role = "Accent" })
+	ColorSection:CreateColorPicker({ Title = L("Background"), Role = "Background" })
+	ColorSection:CreateColorPicker({ Title = L("Panel"), Role = "Panel" })
+
+	local ImgSection = CustomUISubTab:CreateSection(L("BackgroundImage"))
+	local ImgHolder = card(ImgSection.Page, 58)
+	Utility.Create("TextLabel", { Size = UDim2.new(0.55, 0, 1, 0), BackgroundTransparency = 1, Text = L("BackgroundImageDesc"), Font = FONT, TextSize = 12, TextColor3 = Theme.MutedText, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, Parent = ImgHolder })
+	local ImgBox = Utility.Create("TextBox", { Size = UDim2.fromOffset(180, 30), Position = UDim2.new(1, -180, 0.5, -15), Text = "", PlaceholderText = "rbxassetid://...", Font = FONT, TextSize = 12, ClearTextOnFocus = false, Parent = ImgHolder }, { Utility.Corner(7) })
+	bindTheme(ImgBox, "BackgroundColor3", "PanelLight")
+	bindTheme(ImgBox, "TextColor3", "Text")
+
+	ImgBox.FocusLost:Connect(function()
+		local normalized = normalizeAssetId(ImgBox.Text)
+		ImgBox.Text = normalized
+		BackgroundImageInstance.Image = normalized
+		BackgroundImageInstance.ImageTransparency = Theme.BackgroundImageTransparency
+	end)
+
+	local ResetSection = CustomUISubTab:CreateSection(" ")
+	ResetSection:CreateButton({
+		Title = L("ResetTheme"),
+		Style = "secondary",
+		Danger = true,
+		Icon = Icons.reset,
+		Callback = function()
+			local window = CustomUISubTab.Window
+			local function doReset()
+				Theme.Accent = Color3.fromRGB(240, 180, 41)
+				Theme.AccentDim = Color3.fromRGB(122, 92, 10)
+				Theme.AccentMuted = Color3.fromRGB(196, 168, 112)
+				Theme.Background = Color3.fromRGB(15, 15, 17)
+				Theme.Panel = Color3.fromRGB(23, 23, 26)
+				Theme.PanelLight = Color3.fromRGB(32, 32, 36)
+				refreshTheme()
+				ImgBox.Text = ""
+				BackgroundImageInstance.Image = ""
+			end
+			-- Destructive action → confirm first instead of firing instantly.
+			if window and window.Confirm then
+				window:Confirm({
+					Title = "Reset theme?", Danger = true, ConfirmText = "Reset",
+					Message = "This clears your custom colors and background image back to defaults.",
+					OnConfirm = doReset,
+				})
+			else
+				doReset()
+			end
+		end,
+	})
 end
 
-function MultiConfig.Export()
-    local snap = MultiConfig.SnapshotToggles()
-    local ok, js = pcall(function() return HttpService:JSONEncode(snap) end)
-    if not ok then Toast("Export failed", RED, "✕"); return "" end
-    return B64Encode(js)
+--====================================================
+-- ENTRY POINT
+--====================================================
+function Library:Init(config)
+	config = config or {}
+	local runLoading = buildLoadingScreen(config.LoadingTitle, config.LoadingStatusLines)
+	local Window = self:CreateWindow(config)
+	task.spawn(function()
+		runLoading(function()
+			Window.MainFrame.Visible = true
+			Window.MainFrame.Size = UDim2.fromOffset(0, 0)
+			Utility.Tween(Window.MainFrame, { Size = UDim2.new(0.78, 0, 0.82, 0) }, 0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		end)
+	end)
+	return Window
 end
 
-function MultiConfig.Import(encoded)
-    if not encoded or encoded == "" then Toast("Nothing to import", RED, "✕"); return end
-    local ok, snap = pcall(function()
-        return HttpService:JSONDecode(B64Decode(encoded))
-    end)
-    if not ok or type(snap) ~= "table" then
-        Toast("Invalid config string", RED, "✕"); return
-    end
-    MultiConfig.ApplySnapshot(snap)
-    Toast("Config imported successfully!", GREEN, "✓")
-end
-
-GBO.MultiConfig = MultiConfig
-GBO.B64Encode   = B64Encode
-GBO.B64Decode   = B64Decode
-
--- ── Multi-Config UI Panel ─────────────────────────────────────────
-function MultiConfig.OpenUI()
-    local old = ExtGui:FindFirstChild("MultiConfigPanel")
-    if old then old:Destroy(); return end
-
-    local panel = NEW("Frame", {
-        Name="MultiConfigPanel", Size=UDim2.new(0,400,0,480),
-        Position=UDim2.new(0.5,-200,0.5,-240), BackgroundColor3=BG2,
-        BorderSizePixel=0, ZIndex=600
-    }, ExtGui)
-    CORNER(12, panel); STROKE(GREEN, 1.5, 0.2, panel)
-    panel.GroupTransparency = 1; TWEEN_B(panel, 0.3, {GroupTransparency=0})
-
-    -- Header
-    local hdr = NEW("Frame",{Size=UDim2.new(1,0,0,44),BackgroundColor3=BG_HDR,ZIndex=601},panel)
-    CORNER(10,hdr); NEW("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=BG_HDR,BorderSizePixel=0,ZIndex=601},hdr)
-    NEW("TextLabel",{Text="⚙  CONFIG PROFILES  +  IMPORT / EXPORT",Size=UDim2.new(1,-50,1,0),Position=UDim2.new(0,14,0,0),BackgroundTransparency=1,TextColor3=GREEN,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=602},hdr)
-    local closeC=NEW("TextButton",{Text="✕",Size=UDim2.new(0,28,0,28),Position=UDim2.new(1,-36,0.5,-14),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=15,ZIndex=602},hdr)
-    closeC.MouseButton1Click:Connect(function() TWEEN(panel,0.15,{GroupTransparency=1}); task.delay(0.15,function() pcall(function() panel:Destroy() end) end) end)
-
-    -- Section: Create/Load Profile
-    local nameBox = NEW("TextBox",{Size=UDim2.new(1,-140,0,32),Position=UDim2.new(0,10,0,54),BackgroundColor3=BG5,PlaceholderText=" Profile name...",Text="",TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=11,ZIndex=602},panel); CORNER(7,nameBox); STROKE(GREEN,1,0.4,nameBox)
-    local saveBtn=NEW("TextButton",{Size=UDim2.new(0,116,0,32),Position=UDim2.new(1,-126,0,54),BackgroundColor3=C(6,30,12),TextColor3=GREEN,Font=Enum.Font.GothamBold,TextSize=11,Text="SAVE PROFILE",AutoButtonColor=false,ZIndex=602},panel); CORNER(7,saveBtn); STROKE(GREEN,1,0.2,saveBtn)
-    saveBtn.MouseButton1Click:Connect(function() MultiConfig.CreateProfile(nameBox.Text); nameBox.Text="" end)
-    FX.Ripple(saveBtn, GREEN)
-
-    -- Profile list
-    NEW("TextLabel",{Text="SAVED PROFILES",Size=UDim2.new(1,-20,0,14),Position=UDim2.new(0,10,0,96),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=602},panel)
-    local pList=NEW("ScrollingFrame",{Size=UDim2.new(1,-20,0,160),Position=UDim2.new(0,10,0,114),BackgroundColor3=BG1,ScrollBarThickness=2,ScrollBarImageColor3=GREEN,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,ZIndex=602},panel); CORNER(8,pList); STROKE(C(20,40,24),1,0.3,pList)
-    NEW("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,5),HorizontalAlignment=Enum.HorizontalAlignment.Center},pList)
-    NEW("UIPadding",{PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6)},pList)
-
-    local function refreshList()
-        for _,ch in ipairs(pList:GetChildren()) do if ch:IsA("Frame") then ch:Destroy() end end
-        local any = false
-        for pName, _ in pairs(MultiConfig._data.profiles) do
-            any = true
-            local row=NEW("Frame",{Size=UDim2.new(1,-10,0,36),BackgroundColor3=BG3,BorderSizePixel=0,ZIndex=603},pList); CORNER(7,row)
-            local isActive=(MultiConfig._data.active==pName)
-            STROKE(isActive and GREEN or C(28,40,28),1,isActive and 0 or 0.5,row)
-            NEW("TextLabel",{Text=(isActive and "▸ " or "  ")..pName,Size=UDim2.new(1,-90,1,0),Position=UDim2.new(0,10,0,0),BackgroundTransparency=1,TextColor3=isActive and GREEN or TEXT1,Font=Enum.Font.GothamBold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=604},row)
-            local loadB=NEW("TextButton",{Text="LOAD",Size=UDim2.new(0,50,0,24),Position=UDim2.new(1,-86,0.5,-12),BackgroundColor3=BG4,TextColor3=CYAN,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false,ZIndex=604},row); CORNER(5,loadB); STROKE(CYAN,1,0.3,loadB)
-            local delB =NEW("TextButton",{Text="✕",   Size=UDim2.new(0,28,0,24),Position=UDim2.new(1,-32,0.5,-12),BackgroundColor3=BG4,TextColor3=RED,Font=Enum.Font.GothamBold,TextSize=11,AutoButtonColor=false,ZIndex=604},row); CORNER(5,delB); STROKE(RED,1,0.4,delB)
-            local pn=pName
-            loadB.MouseButton1Click:Connect(function() MultiConfig.LoadProfile(pn); refreshList() end)
-            delB.MouseButton1Click:Connect(function()
-                Confirm("Delete Profile","Delete '"..pn.."'? This cannot be undone.",function() MultiConfig.DeleteProfile(pn); refreshList() end)
-            end)
-        end
-        if not any then
-            NEW("TextLabel",{Text="No saved profiles yet",Size=UDim2.new(1,-10,0,36),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=11,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=603},pList)
-        end
-    end
-    refreshList()
-
-    -- Import/Export section
-    NEW("Frame",{Size=UDim2.new(1,-20,0,1),Position=UDim2.new(0,10,0,285),BackgroundColor3=C(28,26,48),BorderSizePixel=0,ZIndex=602},panel)
-    NEW("TextLabel",{Text="IMPORT / EXPORT  (base64)",Size=UDim2.new(1,-20,0,14),Position=UDim2.new(0,10,0,292),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=602},panel)
-
-    local ieBox=NEW("TextBox",{Size=UDim2.new(1,-20,0,72),Position=UDim2.new(0,10,0,310),BackgroundColor3=BG5,PlaceholderText=" Paste config string here to import, or export to fill this...",Text="",TextColor3=TEXT1,Font=Enum.Font.Gotham,TextSize=10,TextWrapped=true,MultiLine=true,ZIndex=602},panel); CORNER(7,ieBox); STROKE(AMBER,1,0.4,ieBox)
-
-    local expB=NEW("TextButton",{Text="EXPORT CONFIG",Size=UDim2.new(0.5,-14,0,32),Position=UDim2.new(0,10,0,390),BackgroundColor3=C(30,26,6),TextColor3=AMBER,Font=Enum.Font.GothamBold,TextSize=10,AutoButtonColor=false,ZIndex=602},panel); CORNER(7,expB); STROKE(AMBER,1,0.2,expB)
-    local impB=NEW("TextButton",{Text="IMPORT CONFIG",Size=UDim2.new(0.5,-14,0,32),Position=UDim2.new(0.5,4,0,390),BackgroundColor3=C(8,18,40),TextColor3=CYAN,Font=Enum.Font.GothamBold,TextSize=10,AutoButtonColor=false,ZIndex=602},panel); CORNER(7,impB); STROKE(CYAN,1,0.2,impB)
-
-    expB.MouseButton1Click:Connect(function()
-        local encoded = MultiConfig.Export(); ieBox.Text = encoded
-        Toast("Config exported! Copy the string above.", AMBER, "↑")
-    end)
-    impB.MouseButton1Click:Connect(function()
-        MultiConfig.Import(ieBox.Text)
-    end)
-    FX.Ripple(expB, AMBER); FX.Ripple(impB, CYAN)
-
-    local statusLbl=NEW("TextLabel",{Text="Active: "..(MultiConfig._data.active or "none"),Size=UDim2.new(1,-20,0,14),Position=UDim2.new(0,10,0,432),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=602},panel)
-
-    -- Drag
-    local d,ds,sp
-    hdr.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then d=true;ds=i.Position;sp=panel.Position end end)
-    UIS.InputChanged:Connect(function(i) if d and i.UserInputType==Enum.UserInputType.MouseMovement then local dt=i.Position-ds;panel.Position=UDim2.new(sp.X.Scale,sp.X.Offset+dt.X,sp.Y.Scale,sp.Y.Offset+dt.Y) end end)
-    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then d=false end end)
-end
-
-GBO.MultiConfig.OpenUI = MultiConfig.OpenUI
-
--- =====================================================================
--- 13 · MISC PANEL
--- Draggable secondary window. Accent: MISC_COL (violet).
--- Sections: Change Character, Change Display Name, + Utility features.
--- =====================================================================
-local _miscOpen = false
-
-local function OpenMiscPanel()
-    local old = ExtGui:FindFirstChild("MiscPanel")
-    if old then
-        TWEEN(old, 0.15, {GroupTransparency=1})
-        task.delay(0.16, function() pcall(function() old:Destroy() end) end)
-        _miscOpen = false; return
-    end
-    _miscOpen = true
-
-    local panel = NEW("Frame", {
-        Name="MiscPanel", Size=UDim2.new(0,420,0,560),
-        Position=UDim2.new(0.5,-210,0.5,-280), BackgroundColor3=BG2,
-        BorderSizePixel=0, ZIndex=550
-    }, ExtGui)
-    CORNER(14, panel)
-    local pStrk = STROKE(MISC_COL, 1.8, 0.2, panel)
-    panel.GroupTransparency = 1; TWEEN_B(panel, 0.32, {GroupTransparency=0})
-
-    -- Gradient bg
-    local _mpGrad = Instance.new("UIGradient")
-    _mpGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0,C(11,8,24)),ColorSequenceKeypoint.new(1,C(7,5,16))})
-    _mpGrad.Rotation = 145; _mpGrad.Parent = panel
-
-    -- Stripe glow pulse
-    task.spawn(function()
-        while panel and panel.Parent do
-            TWEEN(pStrk, 1.5, {Transparency=0.05})
-            task.wait(1.7)
-            TWEEN(pStrk, 1.5, {Transparency=0.3})
-            task.wait(1.7)
-        end
-    end)
-
-    -- Header
-    local hdr = NEW("Frame",{Size=UDim2.new(1,0,0,50),BackgroundColor3=BG_HDR,ZIndex=551},panel)
-    CORNER(12,hdr); NEW("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=BG_HDR,BorderSizePixel=0,ZIndex=551},hdr)
-    -- Accent line
-    local acLine=NEW("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,1,-2),BackgroundColor3=MISC_COL,BorderSizePixel=0,ZIndex=552},hdr)
-    local acGrad=Instance.new("UIGradient"); acGrad.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,MISC_COL),ColorSequenceKeypoint.new(0.5,PINK),ColorSequenceKeypoint.new(1,BLUE_A)}); acGrad.Parent=acLine
-    -- Logo bar
-    NEW("Frame",{Size=UDim2.new(0,3,0.55,0),Position=UDim2.new(0,12,0.225,0),BackgroundColor3=MISC_COL,BorderSizePixel=0,ZIndex=553},hdr)
-    NEW("TextLabel",{Text="✦  MISC",Size=UDim2.new(0.55,0,1,0),Position=UDim2.new(0,22,0,0),BackgroundTransparency=1,TextColor3=MISC_COL,Font=Enum.Font.GothamBlack,TextSize=15,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=553},hdr)
-    NEW("TextLabel",{Text="Miscellaneous Utilities",Size=UDim2.new(0.45,0,1,0),Position=UDim2.new(0.4,0,0,0),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=10,TextXAlignment=Enum.TextXAlignment.Right,ZIndex=553},hdr)
-    local closeM=NEW("TextButton",{Text="✕",Size=UDim2.new(0,28,0,28),Position=UDim2.new(1,-36,0.5,-14),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.GothamBold,TextSize=15,ZIndex=553},hdr)
-    closeM.MouseButton1Click:Connect(function() TWEEN(panel,0.18,{GroupTransparency=1}); task.delay(0.2,function() pcall(function() panel:Destroy() end) end); _miscOpen=false end)
-
-    -- Scroll container
-    local scroll=NEW("ScrollingFrame",{Size=UDim2.new(1,-16,1,-58),Position=UDim2.new(0,8,0,56),BackgroundTransparency=1,ScrollBarThickness=2,ScrollBarImageColor3=MISC_COL,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,ZIndex=551},panel)
-    NEW("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,10),HorizontalAlignment=Enum.HorizontalAlignment.Center},scroll)
-    NEW("UIPadding",{PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,10)},scroll)
-
-    -- Helper: card builder
-    local function MCard(h)
-        local c=NEW("Frame",{Size=UDim2.new(1,-8,0,h),BackgroundColor3=BG3,BorderSizePixel=0,ZIndex=552},scroll); CORNER(10,c); STROKE(C(35,28,60),1,0.4,c); return c
-    end
-    local function MHeader(card, label, col)
-        col=col or MISC_COL
-        NEW("Frame",{Size=UDim2.new(0,3,0.5,0),Position=UDim2.new(0,0,0.25,0),BackgroundColor3=col,BorderSizePixel=0,ZIndex=553},card)
-        NEW("TextLabel",{Text=label,Size=UDim2.new(1,-12,0,18),Position=UDim2.new(0,12,0,8),BackgroundTransparency=1,TextColor3=col,Font=Enum.Font.GothamBold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=553},card)
-    end
-
-    -- Helper: dropdown builder
-    local function MakeDropdown(parent, yPos, items, onSelect, placeholder)
-        local bg=NEW("Frame",{Size=UDim2.new(1,-24,0,30),Position=UDim2.new(0,12,0,yPos),BackgroundColor3=BG5,BorderSizePixel=0,ZIndex=554},parent); CORNER(7,bg); local bgS=STROKE(MISC_COL,1,0.5,bg)
-        local lbl=NEW("TextLabel",{Text=placeholder or "Select...",Size=UDim2.new(1,-30,1,0),Position=UDim2.new(0,10,0,0),BackgroundTransparency=1,TextColor3=TEXT2,Font=Enum.Font.GothamSemibold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=555},bg)
-        NEW("TextLabel",{Text="▾",Size=UDim2.new(0,20,1,0),Position=UDim2.new(1,-22,0,0),BackgroundTransparency=1,TextColor3=MISC_COL,Font=Enum.Font.GothamBold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Center,ZIndex=555},bg)
-        local _ddOpen=false; local _ddList=nil
-        local function openDD()
-            if _ddList then pcall(function() _ddList:Destroy() end); _ddList=nil; _ddOpen=false; return end
-            _ddOpen=true; TWEEN(bgS,0.15,{Transparency=0,Color=MISC_COL})
-            local ddPos=bg.AbsolutePosition; local ddSz=bg.AbsoluteSize
-            _ddList=NEW("ScrollingFrame",{Size=UDim2.new(0,ddSz.X,0,math.min(#items*32,160)),Position=UDim2.new(0,ddPos.X,0,ddPos.Y+ddSz.Y+4),BackgroundColor3=BG1,ScrollBarThickness=2,ScrollBarImageColor3=MISC_COL,CanvasSize=UDim2.new(0,0,0,#items*32),ZIndex=700,BorderSizePixel=0},ExtGui)
-            CORNER(8,_ddList); STROKE(MISC_COL,1.2,0.2,_ddList)
-            for idx,item in ipairs(items) do
-                local ib=NEW("TextButton",{Size=UDim2.new(1,0,0,32),Position=UDim2.new(0,0,0,(idx-1)*32),BackgroundTransparency=1,Text=item,TextColor3=TEXT2,Font=Enum.Font.GothamSemibold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,AutoButtonColor=false,ZIndex=701},_ddList)
-                NEW("UIPadding",{PaddingLeft=UDim.new(0,12)},ib)
-                ib.MouseEnter:Connect(function() TWEEN(ib,0.1,{BackgroundTransparency=0.6,BackgroundColor3=MISC_COL}) end)
-                ib.MouseLeave:Connect(function() TWEEN(ib,0.1,{BackgroundTransparency=1}) end)
-                ib.MouseButton1Click:Connect(function()
-                    lbl.Text=item; lbl.TextColor3=TEXT1
-                    pcall(function() _ddList:Destroy() end); _ddList=nil; _ddOpen=false
-                    TWEEN(bgS,0.15,{Transparency=0.5}); if onSelect then onSelect(item) end
-                end)
-            end
-        end
-        bg.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then openDD() end end)
-        return {bg=bg, label=lbl}
-    end
-
-    -- ── CARD 1: CHANGE CHARACTER ───────────────────────────────────
-    local charCard = MCard(110)
-    MHeader(charCard, "👤  CHANGE CHARACTER", MISC_COL)
-
-    -- Character list — fill from ReplicatedStorage or use defaults
-    local charList = {}
-    pcall(function()
-        local RS = game:GetService("ReplicatedStorage")
-        local chars = RS:FindFirstChild("Characters")
-        if chars then
-            for _, ch in ipairs(chars:GetChildren()) do
-                table.insert(charList, ch.Name)
-            end
-        end
-    end)
-    if #charList == 0 then
-        charList = {"Default","Character_01","Character_02","Character_03",
-                    "Character_04","Character_05","Character_06"}
-    end
-    table.sort(charList)
-
-    local charDD = MakeDropdown(charCard, 36, charList, function(selected)
-        pcall(function()
-            local RS = game:GetService("ReplicatedStorage")
-            local setEv = RS:WaitForChild("Events"):WaitForChild("set")
-            setEv:FireServer("Character", selected)
-        end)
-        Toast("Character → " .. selected, MISC_COL, "👤")
-    end, "Select character...")
-
-    local applyCharBtn=NEW("TextButton",{Text="APPLY",Size=UDim2.new(0,80,0,26),Position=UDim2.new(1,-92,0,76),BackgroundColor3=C(20,10,40),TextColor3=MISC_COL,Font=Enum.Font.GothamBold,TextSize=10,AutoButtonColor=false,ZIndex=553},charCard); CORNER(7,applyCharBtn); STROKE(MISC_COL,1,0.3,applyCharBtn)
-    applyCharBtn.MouseButton1Click:Connect(function()
-        local sel = charDD.label.Text
-        if sel == "Select character..." then Toast("Please select a character first", AMBER, "⚠"); return end
-        pcall(function()
-            local RS=game:GetService("ReplicatedStorage")
-            local setEv=RS:WaitForChild("Events"):WaitForChild("set")
-            setEv:FireServer("Character", sel)
-        end)
-        Toast("Applied character: "..sel, MISC_COL, "✓")
-    end)
-    FX.Ripple(applyCharBtn, MISC_COL)
-
-    -- ── CARD 2: CHANGE DISPLAY NAME ───────────────────────────────
-    local nameCard = MCard(110)
-    MHeader(nameCard, "✏  CHANGE DISPLAY NAME", PINK)
-
-    -- Display name list
-    local nameList = {}
-    pcall(function()
-        local RS = game:GetService("ReplicatedStorage")
-        local names = RS:FindFirstChild("DisplayNames")
-        if names then
-            for _, n in ipairs(names:GetChildren()) do
-                table.insert(nameList, n.Name)
-            end
-        end
-    end)
-    if #nameList == 0 then
-        nameList = {"Player","Rookie","Explorer","Veteran","Champion",
-                    "Legend","Mythic","Supreme","Nova","Shadow","Zili"}
-    end
-    table.sort(nameList)
-
-    local nameDD = MakeDropdown(nameCard, 36, nameList, function(selected)
-        pcall(function()
-            local RS=game:GetService("ReplicatedStorage")
-            local setEv=RS:WaitForChild("Events"):WaitForChild("set")
-            setEv:FireServer("DisplayName", selected)
-        end)
-        Toast("Display Name → " .. selected, PINK, "✏")
-    end, "Select display name...")
-
-    local applyNameBtn=NEW("TextButton",{Text="APPLY",Size=UDim2.new(0,80,0,26),Position=UDim2.new(1,-92,0,76),BackgroundColor3=C(40,8,30),TextColor3=PINK,Font=Enum.Font.GothamBold,TextSize=10,AutoButtonColor=false,ZIndex=553},nameCard); CORNER(7,applyNameBtn); STROKE(PINK,1,0.3,applyNameBtn)
-    applyNameBtn.MouseButton1Click:Connect(function()
-        local sel = nameDD.label.Text
-        if sel == "Select display name..." then Toast("Please select a name first", AMBER, "⚠"); return end
-        pcall(function()
-            local RS=game:GetService("ReplicatedStorage")
-            local setEv=RS:WaitForChild("Events"):WaitForChild("set")
-            setEv:FireServer("DisplayName", sel)
-        end)
-        Toast("Applied name: "..sel, PINK, "✓")
-    end)
-    FX.Ripple(applyNameBtn, PINK)
-
-    -- ── CARD 3: PANIC + KEYBINDS ──────────────────────────────────
-    local utilCard = MCard(130)
-    MHeader(utilCard, "⚡  QUICK UTILITIES", AMBER)
-
-    -- Panic button
-    local panicBtn=NEW("TextButton",{Text="🚨  PANIC — STOP ALL FEATURES",Size=UDim2.new(1,-24,0,34),Position=UDim2.new(0,12,0,36),BackgroundColor3=C(40,8,8),TextColor3=RED,Font=Enum.Font.GothamBold,TextSize=12,AutoButtonColor=false,ZIndex=553},utilCard); CORNER(8,panicBtn); STROKE(RED,1.5,0.2,panicBtn)
-    panicBtn.MouseEnter:Connect(function() TWEEN(panicBtn,0.1,{BackgroundColor3=C(60,12,12)}) end)
-    panicBtn.MouseLeave:Connect(function() TWEEN(panicBtn,0.1,{BackgroundColor3=C(40,8,8)}) end)
-    panicBtn.MouseButton1Click:Connect(function()
-        Confirm("Panic","Stop ALL active features right now?", function() GBO.Panic.Fire() end)
-    end)
-    FX.Ripple(panicBtn, RED)
-
-    -- Keybind Manager button
-    local kbBtn2=NEW("TextButton",{Text="⌨  KEYBIND MANAGER",Size=UDim2.new(0.5,-16,0,30),Position=UDim2.new(0,12,0,80),BackgroundColor3=BG4,TextColor3=PURPLE,Font=Enum.Font.GothamBold,TextSize=10,AutoButtonColor=false,ZIndex=553},utilCard); CORNER(7,kbBtn2); STROKE(PURPLE,1,0.3,kbBtn2)
-    kbBtn2.MouseButton1Click:Connect(function() GBO.Keybind.OpenUI() end)
-    FX.Ripple(kbBtn2, PURPLE)
-
-    -- Multi-Config button
-    local cfgBtn2=NEW("TextButton",{Text="⚙  PROFILES / CONFIG",Size=UDim2.new(0.5,-16,0,30),Position=UDim2.new(0.5,4,0,80),BackgroundColor3=BG4,TextColor3=GREEN,Font=Enum.Font.GothamBold,TextSize=10,AutoButtonColor=false,ZIndex=553},utilCard); CORNER(7,cfgBtn2); STROKE(GREEN,1,0.3,cfgBtn2)
-    cfgBtn2.MouseButton1Click:Connect(function() GBO.MultiConfig.OpenUI() end)
-    FX.Ripple(cfgBtn2, GREEN)
-
-    -- Panic key label
-    NEW("TextLabel",{Text="Panic Key: "..tostring(GBO.Panic._key):gsub("Enum.KeyCode.",""),Size=UDim2.new(1,-24,0,14),Position=UDim2.new(0,12,0,120),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=553},utilCard)
-
-    -- ── CARD 4: CURSOR TRAIL + VISUAL TOGGLES ─────────────────────
-    local vfxCard = MCard(90)
-    MHeader(vfxCard, "✨  VISUAL SETTINGS", CYAN)
-
-    -- Cursor trail toggle
-    local _trailOn = true
-    local trailPill=NEW("TextButton",{Size=UDim2.new(0,48,0,24),Position=UDim2.new(1,-58,0,36),BackgroundColor3=BG5,Text="",AutoButtonColor=false,ZIndex=553},vfxCard); CORNER(20,trailPill); local trailS=STROKE(CYAN,1.2,0.3,trailPill)
-    local trailTh=NEW("Frame",{Size=UDim2.new(0,17,0,17),Position=UDim2.new(1,-21,0.5,-8.5),BackgroundColor3=CYAN,BorderSizePixel=0,ZIndex=554},trailPill); CORNER(20,trailTh)
-    NEW("TextLabel",{Text="Cursor Trail",Size=UDim2.new(0.75,0,0,24),Position=UDim2.new(0,12,0,36),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=553},vfxCard)
-    trailPill.MouseButton1Click:Connect(function()
-        _trailOn=not _trailOn; FX.SetTrailEnabled(_trailOn)
-        TWEEN(trailPill,0.2,{BackgroundColor3=_trailOn and C(5,38,40) or BG5})
-        TWEEN(trailS,0.2,{Color=_trailOn and CYAN or C(60,55,82),Transparency=_trailOn and 0 or 0.3})
-        TWEEN(trailTh,0.2,{BackgroundColor3=_trailOn and CYAN or C(60,55,82),Position=_trailOn and UDim2.new(1,-21,0.5,-8.5) or UDim2.new(0,4,0.5,-8.5)})
-    end)
-
-    -- UserCard toggle
-    local _ucOn = true
-    local ucPill=NEW("TextButton",{Size=UDim2.new(0,48,0,24),Position=UDim2.new(1,-58,0,62),BackgroundColor3=C(20,10,40),Text="",AutoButtonColor=false,ZIndex=553},vfxCard); CORNER(20,ucPill); local ucS=STROKE(MISC_COL,1.2,0,ucPill)
-    local ucTh=NEW("Frame",{Size=UDim2.new(0,17,0,17),Position=UDim2.new(1,-21,0.5,-8.5),BackgroundColor3=MISC_COL,BorderSizePixel=0,ZIndex=554},ucPill); CORNER(20,ucTh)
-    NEW("TextLabel",{Text="Show User Card",Size=UDim2.new(0.75,0,0,24),Position=UDim2.new(0,12,0,62),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamSemibold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=553},vfxCard)
-    ucPill.MouseButton1Click:Connect(function()
-        _ucOn=not _ucOn; _ucCard.Visible=_ucOn
-        TWEEN(ucPill,0.2,{BackgroundColor3=_ucOn and C(20,10,40) or BG5})
-        TWEEN(ucS,0.2,{Color=_ucOn and MISC_COL or C(60,55,82),Transparency=_ucOn and 0 or 0.3})
-        TWEEN(ucTh,0.2,{BackgroundColor3=_ucOn and MISC_COL or C(60,55,82),Position=_ucOn and UDim2.new(1,-21,0.5,-8.5) or UDim2.new(0,4,0.5,-8.5)})
-    end)
-
-    -- ── CARD 5: SESSION STATS ─────────────────────────────────────
-    local sessCard = MCard(86)
-    MHeader(sessCard, "📊  SESSION STATS", GREEN)
-
-    local function _fmtTime(s) local h=math.floor(s/3600);local m=math.floor((s%3600)/60);local sec=math.floor(s%60);return string.format("%02d:%02d:%02d",h,m,sec) end
-    local _sessTimeLbl=NEW("TextLabel",{Text="",Size=UDim2.new(1,-24,0,18),Position=UDim2.new(0,12,0,32),BackgroundTransparency=1,TextColor3=TEXT1,Font=Enum.Font.GothamBold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=553},sessCard)
-    local _sessCtLbl=NEW("TextLabel",{Text="",Size=UDim2.new(1,-24,0,14),Position=UDim2.new(0,12,0,54),BackgroundTransparency=1,TextColor3=TEXT3,Font=Enum.Font.Gotham,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=553},sessCard)
-    task.spawn(function()
-        while sessCard and sessCard.Parent do
-            local elapsed = tick() - Profile._sessionStart
-            local total = 0
-            for _, v in pairs(Profile.data.usageCount) do total += v end
-            _sessTimeLbl.Text = "⏱  " .. _fmtTime(elapsed)
-            _sessCtLbl.Text   = "Feature uses this session: " .. total .. "  ·  Sessions: " .. Profile.data.sessions
-            task.wait(1)
-        end
-    end)
-
-    -- Drag
-    local d,ds,sp
-    hdr.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then d=true;ds=i.Position;sp=panel.Position end end)
-    UIS.InputChanged:Connect(function(i) if d and i.UserInputType==Enum.UserInputType.MouseMovement then local dt=i.Position-ds;panel.Position=UDim2.new(sp.X.Scale,sp.X.Offset+dt.X,sp.Y.Scale,sp.Y.Offset+dt.Y) end end)
-    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then d=false end end)
-end
-
-GBO.MiscPanel = OpenMiscPanel
-
--- =====================================================================
--- 14 · CLOSE CONFIRMATION HOOK
--- Wraps _G._GBO_HideHub so it asks for confirmation first.
--- =====================================================================
-local _origHide = _G._GBO_HideHub
-_G._GBO_HideHub = function()
-    Confirm("Hide Hub", "Hide the main hub window?",
-        function() if _origHide then _origHide() end end,
-        nil)
-end
-
--- =====================================================================
--- 15 · EXPORTS & FINAL INIT
--- =====================================================================
-_G.GBO = GBO
-
--- Apply ripple to Quick Bar buttons retroactively (they're already built)
-task.defer(function()
-    for _, ch in ipairs(_qbList:GetChildren()) do
-        if ch:IsA("TextButton") then FX.Ripple(ch, GOLD2) end
-    end
-end)
-
--- First XP pull
-task.delay(3, function()
-    pcall(function()
-        local RS = game:GetService("ReplicatedStorage")
-        local stats = RS:FindFirstChild("Stats" .. LocalPlayer.Name)
-        if stats then
-            local lv  = stats:FindFirstChild("Level")
-            local xpV = stats:FindFirstChild("EXP")
-            if lv and xpV then GBO.XPBar.Update(lv.Value, xpV.Value) end
-        end
-    end)
-end)
-
-Toast("GBO Extensions loaded ✓", MISC_COL, "✦")
-
--- Panic key reminder
-task.delay(5, function()
-    Toast("Panic key: DELETE  ·  Misc: click ✦ in Quick Bar", TEXT2, "ℹ")
-end)
-
--- =====================================================================
--- QUICK REFERENCE  (print to console)
--- =====================================================================
--- _G.GBO.Confirm(title, msg, onYes)        -- show confirm dialog
--- _G.GBO.Panic.Fire()                      -- kill all features
--- _G.GBO.Panic.SetKey(Enum.KeyCode.Delete) -- change panic key
--- _G.GBO.Keybind.Register(key, name, kc)   -- add feature keybind
--- _G.GBO.Keybind.OpenUI()                  -- open rebind window
--- _G.GBO.QuickBar.Pin(key, icon, label)    -- pin to quick bar
--- _G.GBO.QuickBar.Unpin(key)               -- remove pin
--- _G.GBO.StatsOverlay.AddEXP(n)            -- feed EXP/hr counter
--- _G.GBO.StatsOverlay.AddFish(n)           -- feed Fish/hr counter
--- _G.GBO.MythicLog.OnChest()               -- record mythic chest
--- _G.GBO.XPBar.Update(level, xp)           -- update XP bar
--- _G.GBO.FX.Ripple(btn, col)               -- wire ripple to button
--- _G.GBO.FX.CardGlow(frame, on, col)       -- toggle card border glow
--- _G.GBO.FX.SetTrailEnabled(bool)          -- cursor trail on/off
--- _G.GBO.MultiConfig.CreateProfile(name)   -- save current config
--- _G.GBO.MultiConfig.LoadProfile(name)     -- load a config
--- _G.GBO.MultiConfig.Export()              -- returns base64 string
--- _G.GBO.MultiConfig.Import(str)           -- load from base64
--- _G.GBO.MultiConfig.OpenUI()              -- open config manager UI
--- _G.GBO.MiscPanel()                       -- toggle Misc window
--- _G.GBO.Profile.AddUse(featureKey)        -- track feature usage
--- =====================================================================
+return Library
